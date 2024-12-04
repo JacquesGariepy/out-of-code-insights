@@ -21,7 +21,7 @@ Out-of-code Insights is a Visual Studio Code extension that allows you to add an
 
 
 
-![Demonstration of Out-of-code Insights features](https://raw.githubusercontent.com/JacquesGariepy/out-of-code-insights/main/media.gif)
+![Demonstration of Out-of-code Insights features](https://youtu.be/H6xjResrJzw)
 
 ## Key Features
 
