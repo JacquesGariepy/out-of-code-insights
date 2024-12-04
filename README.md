@@ -138,6 +138,45 @@ Customize the extension according to your needs by modifying the available setti
 - **Navigate to annotations**: Quickly jump to a specific annotation from the annotations panel.
 - **Advanced customization**: Adjust the extension’s behavior to suit your preferences.
 
+## Tree View and Activity Bar
+
+The **Out-of-Code Insights** extension includes a **Tree View** and an **Activity Bar** for efficient annotation management. Here is a detailed description of these features:
+
+### Tree View
+
+The **Tree View** allows you to visualize and manage annotations in a structured manner. It is accessible via the Activity Bar in Visual Studio Code.
+
+- **Grouping by file**: Annotations are grouped by file, making navigation and management easier.
+- **Annotation display**: Each file contains a list of annotations with details such as the author, date, and annotation message.
+- **Annotation actions**: You can navigate to an annotation, edit it, delete it, or add comments directly from the Tree View.
+
+### Activity Bar
+
+The **Activity Bar** adds a dedicated icon for **Out-of-Code Insights** in the Visual Studio Code sidebar. Clicking this icon opens the Tree View of annotations.
+
+- **Quick access**: The Activity Bar provides quick access to all annotations in your project.
+- **Centralized management**: All annotations are centralized in a single view, making them easier to manage and navigate.
+
+### Example Usage
+
+1. **Open the Tree View**:
+   - Click the **Out-of-Code Insights** icon in the Activity Bar.
+   - The Tree View opens, displaying annotations grouped by file.
+
+2. **Navigate to an annotation**:
+   - Click on an annotation in the Tree View.
+   - The code editor automatically positions itself on the line of the selected annotation.
+
+3. **Edit or delete an annotation**:
+   - Right-click on an annotation in the Tree View.
+   - Select **Edit** or **Delete** from the context menu.
+
+4. **Add a comment**:
+   - Select an annotation in the Tree View.
+   - Click **Reply** to add a comment to the annotation.
+
+These features enhance annotation management by providing an overview and management tools directly integrated into the Visual Studio Code interface.
+
 ## Contribution
 
 Contributions are welcome! Feel free to suggest improvements, report issues, or submit pull requests.
