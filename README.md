@@ -22,6 +22,9 @@ Out-of-code Insights is a Visual Studio Code extension that allows you to add an
 ![feature_add](https://github.com/user-attachments/assets/ea4d463e-a2d5-4eb4-85c8-04746533213f)
 (`add in v1.0.3 - Activity bar`)
 
+![binary file](https://github.com/user-attachments/assets/7096ade5-e84c-49f1-b7b3-1ae68f02b418)
+(`PNG binary file`)
+
 ## Key Features
 
 - **Add annotations**: Insert comments or notes on specific lines **without modifying the source file**, regardless of file type.
