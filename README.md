@@ -15,7 +15,7 @@ Out-of-code Insights is a Visual Studio Code extension that allows you to add an
 - **Threaded discussions**: Reply to annotations to create threads and enhance collaboration.
 - **Advanced annotation management**: Move, filter, sort, and navigate annotations with ease.
 
-![Demonstration of Out-of-code Insights features](media.gif)
+![Demonstration of Out-of-code Insights features](https://raw.githubusercontent.com/JacquesGariepy/out-of-code-insights/main/media.gif)
 
 ## Key Features
 
