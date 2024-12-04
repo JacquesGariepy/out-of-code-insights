@@ -17,7 +17,7 @@ Out-of-code Insights is a Visual Studio Code extension that allows you to add an
 
 
 ![feature_add](https://github.com/user-attachments/assets/ea4d463e-a2d5-4eb4-85c8-04746533213f)
-(`add in v1.0.3 - Activities bar - without modifying the source file`)
+(`add in v1.0.3 - Activity bar`)
 
 
 
