@@ -1,8 +1,16 @@
 # Out-of-code Insights
 
-https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights
-
 Out-of-code Insights is a Visual Studio Code extension that allows you to add annotations, comments, and notes **without modifying your source files**. It is ideal for avoiding clutter in your code with temporary comments or making the code unnecessarily heavy.
+
+## 🌐 Connect with Me
+
+You can find me on these platforms:
+[![Github Badge](https://img.shields.io/badge/-0077B5?style=social&logo=github)](https://github.com/JacquesGariepy)
+[![LinkedIn Badge](https://img.shields.io/badge/-0077B5?style=social&logo=linkedin)](https://linkedin.com/in/jacquesgariepy)
+[![X Badge](https://img.shields.io/badge/-1DA1F2?style=social&logo=x)](https://X.com/jacquesgariepy)
+
+
+
 
 ## Why use Out-of-code Insights?
 
@@ -192,7 +200,7 @@ Contributions are welcome! Feel free to suggest improvements, report issues, or 
 
 ## License
 
-This extension is licensed under the MIT License. See the [LICENSE](LICENSE) file for more information.
+See the [LICENSE](license.txt) file for more information.
 
 ## Conclusion
 
