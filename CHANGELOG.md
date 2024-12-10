@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.7
+- Fix bug
+- Indicate in readme how to reset OpenAI key in VSCode secret storage
+
 ## 1.0.6
 - Added **AI Suggest Annotation** with OpenAI integration.
 - Added **Configure AI Provider and Keys** feature to switch between OpenAI and Copilot.
