@@ -5,10 +5,18 @@ Out-of-code Insights is a Visual Studio Code extension that allows you to add an
 ## 🌐 Connect with Me
 
 You can find me on these platforms:
+
 [![Github Badge](https://img.shields.io/badge/-0077B5?style=social&logo=github)](https://github.com/JacquesGariepy)
 [![LinkedIn Badge](https://img.shields.io/badge/-0077B5?style=social&logo=linkedin)](https://linkedin.com/in/jacquesgariepy)
 [![X Badge](https://img.shields.io/badge/-1DA1F2?style=social&logo=x)](https://X.com/jacquesgariepy)
 
+We’d love to hear your thoughts, feedback, and ideas! Feel free to join the conversation on GitHub Discussions and connect with the community.
+
+[![GitHub Discussions](https://img.shields.io/github/discussions/JacquesGariepy/out-of-code-insights)](https://github.com/JacquesGariepy/out-of-code-insights/discussions)
+
+
+
+[![GitHub Discussions](https://img.shields.io/badge/buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacquesgarx)
 
 
 
@@ -22,10 +30,13 @@ You can find me on these platforms:
 - **Personalization**: Adapt the extension to your needs with various configuration options.
 - **Threaded discussions**: Reply to annotations to create threads and enhance collaboration.
 - **Advanced annotation management**: Move, filter, sort, and navigate annotations with ease.
-
+- **Batch Edit Annotations**: Modify multiple annotations simultaneously to save time and effort.
+- **Keyword Search**: Quickly find annotations by searching for specific keywords.
+- **Filter by Severity**: Categorize and view annotations based on their severity levels.
+- **Show Copilot Suggestion**: Display simulated suggestions from GitHub Copilot directly within your annotations.
+- **Auto-Resolve Stale Annotations**: Automatically handle annotations that are no longer relevant or outdated.
 
 [![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw)
-
 
 ![feature_add](https://github.com/user-attachments/assets/ea4d463e-a2d5-4eb4-85c8-04746533213f)
 (`add in v1.0.3 - Activity bar`)
@@ -43,6 +54,11 @@ You can find me on these platforms:
 - **CodeLens integration**: Manage annotations directly from the editor with CodeLens integration.
 - **Filter and sort annotations**: Filter and sort annotations in the panel for efficient management.
 - **Export and import**: Export your annotations to share or back them up, and import them into other projects.
+- **Batch Edit Annotations**: Modify multiple annotations at once to streamline your workflow.
+- **Keyword Search**: Quickly locate annotations by searching for specific terms or phrases.
+- **Filter by Severity**: Organize annotations based on their severity to prioritize tasks.
+- **Show Copilot Suggestion**: View simulated GitHub Copilot suggestions within your annotations for enhanced productivity.
+- **Auto-Resolve Stale Annotations**: Automatically resolve annotations that are no longer relevant, keeping your workspace clean.
 
 ## Installation
 
@@ -107,6 +123,80 @@ You can find me on these platforms:
 - **Sort annotations**:
   - Sort annotations by date, number of comments, etc., for efficient management.
 
+### Batch Editing Annotations
+
+- **Modify multiple annotations**:
+  - Open the annotations panel.
+  - Select the annotations you wish to edit.
+  - Use the **`Batch Edit Annotations`** command to apply changes to all selected annotations simultaneously.
+
+### Keyword Search
+
+- **Search for annotations by keyword**:
+  - Use the **`Keyword Search`** feature in the annotations panel.
+  - Enter the desired keyword to filter annotations containing that term.
+
+### Filter by Severity
+
+- **Categorize annotations**:
+  - Use the **`Filter by Severity`** option to display annotations based on their assigned severity levels (e.g., info, warning, error).
+
+### Show Copilot Suggestion
+
+- **View simulated suggestions**:
+  - Use the **`Show Copilot Suggestion`** command to display simulated GitHub Copilot suggestions within your annotations.
+
+### Auto-Resolve Stale Annotations
+
+- **Automatic management**:
+  - Enable **`Auto-Resolve Stale Annotations`** to automatically handle annotations that are outdated or no longer relevant.
+
+### Exporting and Importing Annotations
+
+- **Export Annotations to JSON**
+  - Use the `Export Annotations to JSON` command to export all annotations to a JSON file.
+  - Command: `annotations.exportJSON`
+  
+- **Import Annotations from JSON**
+  - Use the `Import Annotations from JSON` command to import annotations from a JSON file.
+  - Command: `annotations.importJSON`
+
+### Managing Annotations
+
+- **Search Annotations by Tag**
+  - Tag your annotations and use the `Search Annotations by Tag` command to filter them.
+  - Command: `annotations.searchByTag`
+
+- **Toggle Annotation Pin**
+  - Pin or unpin annotations to keep important notes visible.
+  - Command: `annotations.pinToggle`
+
+- **Convert Annotation to GitHub Issue**
+  - Convert your annotations into GitHub issues for better tracking and management.
+  - Command: `annotations.convertToIssue`
+
+### Enhanced Features
+
+- **Show Copilot Suggestion (Simulated)**
+  - Display simulated GitHub Copilot suggestions within your annotations to enhance productivity.
+  - Command: `annotations.showCopilotSuggestion`
+
+- **Auto-Resolve Stale Annotations**
+  - Automatically resolve annotations that are outdated or no longer relevant.
+  - Command: `annotations.autoResolveStale`
+
+- **Batch Edit Annotations in File**
+  - Modify multiple annotations simultaneously within a file to streamline your workflow.
+  - Command: `annotations.batchEdit`
+
+- **Keyword Search in Annotations**
+  - Quickly locate annotations by searching for specific keywords.
+  - Command: `annotations.keywordSearch`
+
+- **Filter Annotations by Severity**
+  - Organize annotations based on their severity levels for better prioritization.
+  - Command: `annotations.filterBySeverity`
+
 ### Important Notes
 
 - **File modification**:
@@ -116,6 +206,16 @@ You can find me on these platforms:
 - **Annotation storage**:
   - Annotations are stored in a JSON file named **`annotations.json`**, located by default in the **`.out-of-code-insights`** directory of your project.
   - **Include this file in your version control repository** if you want to preserve annotation history and share comments with your team.
+- **OpenAI API Key Management**:
+  - The extension uses your OpenAI API key for AI-powered features.
+  - The key is securely stored using VS Code's Secret Storage, ensuring that your key is protected and only accessible by this extension.
+  - **To remove or update your OpenAI API key**:
+    1. **Open the Command Palette**:
+       - Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac).
+    2. **Type**: `Developer: Clear Extension Secret Storage`.
+    3. **Select Your Extension**:
+       - In the list that appears, select **Out-of-Code Insights**.
+    - This will clear all secrets stored by the extension, including your OpenAI API key.
 
 ## Configuration
 
@@ -128,6 +228,9 @@ Customize the extension according to your needs by modifying the available setti
   - Customize annotation colors, highlight background, and comment borders for both light and dark themes.
 - **Enable CodeLens** (`annotation.codelens.enable`): Toggles CodeLens integration.
 - **Show commands in CodeLens** (`annotation.codelens.showCommands`): Toggles command display in CodeLens.
+- **Batch Edit Annotations** (`annotation.batchEdit`): Enable or disable the batch editing feature.
+- **Keyword Search** (`annotation.keywordSearch`): Configure settings for keyword-based annotation searching.
+- **Filter by Severity** (`annotation.filterBySeverity`): Set preferences for severity-based annotation filtering.
 - **Advanced settings**:
   - **Change detection delay** (`annotation.debounceDelay`)
   - **Maximum annotations per file** (`annotation.maxAnnotationsPerFile`)
@@ -146,6 +249,11 @@ Customize the extension according to your needs by modifying the available setti
 | Delete an annotation                | `Ctrl+Alt+D`                 | `Cmd+Alt+D`         |
 | Show annotations panel              | `Ctrl+Alt+S`                 | `Cmd+Alt+S`         |
 | Toggle annotation visibility        | `Ctrl+Alt+T`                 | `Cmd+Alt+T`         |
+| Batch Edit Annotations              | `Ctrl+Alt+B`                 | `Cmd+Alt+B`         |
+| Keyword Search                      | `Ctrl+Alt+K`                 | `Cmd+Alt+K`         |
+| Filter by Severity                  | `Ctrl+Alt+F`                 | `Cmd+Alt+F`         |
+| Show Copilot Suggestion             | `Ctrl+Alt+G`                 | `Cmd+Alt+G`         |
+| Auto-Resolve Stale Annotations      | `Ctrl+Alt+R`                 | `Cmd+Alt+R`         |
 
 ## Additional Features
 
@@ -154,6 +262,11 @@ Customize the extension according to your needs by modifying the available setti
 - **Status bar integration**: Displays the number of annotations in the status bar for quick access.
 - **Navigate to annotations**: Quickly jump to a specific annotation from the annotations panel.
 - **Advanced customization**: Adjust the extension’s behavior to suit your preferences.
+- **Batch Edit Annotations**: Efficiently manage multiple annotations with batch editing capabilities.
+- **Keyword Search**: Enhance your workflow by searching annotations using specific keywords.
+- **Filter by Severity**: Organize annotations based on their severity levels for better prioritization.
+- **Show Copilot Suggestion**: Benefit from simulated suggestions to improve your annotation process.
+- **Auto-Resolve Stale Annotations**: Maintain a clean workspace by automatically resolving outdated annotations.
 
 ## Tree View and Activity Bar
 
@@ -164,6 +277,7 @@ The **Out-of-Code Insights** extension includes a **Tree View** and an **Activit
 The **Tree View** allows you to visualize and manage annotations in a structured manner. It is accessible via the Activity Bar in Visual Studio Code.
 
 - **Grouping by file**: Annotations are grouped by file, making navigation and management easier.
+### Example Usage
 - **Annotation display**: Each file contains a list of annotations with details such as the author, date, and annotation message.
 - **Annotation actions**: You can navigate to an annotation, edit it, delete it, or add comments directly from the Tree View.
 
@@ -200,7 +314,7 @@ Contributions are welcome! Feel free to suggest improvements, report issues, or 
 
 ## License
 
-See the [LICENSE](license.txt) file for more information.
+See the [LICENSE](https://github.com/JacquesGariepy/out-of-code-insights/blob/main/license.txt) file for more information.
 
 ## Conclusion
 
@@ -209,3 +323,5 @@ Out-of-code Insights helps you manage comments and notes in your projects **with
 ---
 
 **Try Out-of-code Insights today and streamline your workflow without overloading your code!**
+
+[<img src="media/bmc_qr.png" alt="Buy me a coffee" height="128px"/>](https://www.buymeacoffee.com/jacquesgarX)
