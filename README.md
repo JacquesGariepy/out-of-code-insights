@@ -18,8 +18,6 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 
 [![GitHub Discussions](https://img.shields.io/badge/buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacquesgarx)
 
-
-
 ## Why use Out-of-code Insights?
 
 - **Non-intrusive annotations**: Add comments without altering the source code, keeping your files clean and organized.
@@ -33,7 +31,8 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Batch Edit Annotations**: Modify multiple annotations simultaneously to save time and effort.
 - **Keyword Search**: Quickly find annotations by searching for specific keywords.
 - **Filter by Severity**: Categorize and view annotations based on their severity levels.
-- **Show Copilot Suggestion**: Display simulated suggestions from GitHub Copilot directly within your annotations.
+- **Show AI Suggestion**: Display simulated suggestions from AI.
+- **Show Github Copilot Suggestion**: Display simulated suggestions from GitHub Copilot.
 - **Auto-Resolve Stale Annotations**: Automatically handle annotations that are no longer relevant or outdated.
 
 [![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw)
@@ -57,6 +56,7 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Batch Edit Annotations**: Modify multiple annotations at once to streamline your workflow.
 - **Keyword Search**: Quickly locate annotations by searching for specific terms or phrases.
 - **Filter by Severity**: Organize annotations based on their severity to prioritize tasks.
+- **Show AI Suggestion**: View simulated suggestions from AI to enhance your annotations.
 - **Show Copilot Suggestion**: View simulated GitHub Copilot suggestions within your annotations for enhanced productivity.
 - **Auto-Resolve Stale Annotations**: Automatically resolve annotations that are no longer relevant, keeping your workspace clean.
 
@@ -141,15 +141,32 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Categorize annotations**:
   - Use the **`Filter by Severity`** option to display annotations based on their assigned severity levels (e.g., info, warning, error).
 
+### Show AI Suggestion
+- **View simulated suggestions**:
+  - Use the **`Show AI Suggestion`** command to display simulated suggestions from AI within your annotations. Select a line in the code editor, right-click to bring up the context menu. In the "out-of-code-insight" submenu, select the "AI Suggest Annotation" option, and it will provide an annotation for that line. 
+  - If you want to disabled or enabled AI Suggest, you can do it in the settings.
+  - **Important**: Ensure you have an OpenAI API key configured to access this feature.
+  
+
 ### Show Copilot Suggestion
 
 - **View simulated suggestions**:
-  - Use the **`Show Copilot Suggestion`** command to display simulated GitHub Copilot suggestions within your annotations.
+  - Use the **`Show Copilot Suggestion`** command to display simulated GitHub Copilot suggestions within your annotations. Select @out-of-code-insights to see the suggestions.
+
+![image](https://github.com/user-attachments/assets/47a41c70-b7dd-4057-9330-f1944d456035)
 
 ### Auto-Resolve Stale Annotations
 
 - **Automatic management**:
   - Enable **`Auto-Resolve Stale Annotations`** to automatically handle annotations that are outdated or no longer relevant.
+
+### Configure the annotations.json File Path
+
+- **Set the path to the annotations file**:
+  - Access the extension settings.
+  - Enter the desired path in the **`Path to annotations file`** field. Include the file name (e.g., `annotations.json`), if you not specify the file name, the extension will use the default name (`annotations.json`).
+  - Per default, the annotations file is located in the **`.out-of-code-insights/annotations.json`** directory of your project.
+  - If you change the path, ensure that the directory exists and is accessible. All project using the extension will use this path after the change, else the extension will use the default path in each project.
 
 ### Exporting and Importing Annotations
 
@@ -162,10 +179,7 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
   - Command: `annotations.importJSON`
 
 ### Managing Annotations
-
-- **Search Annotations by Tag**
-  - Tag your annotations and use the `Search Annotations by Tag` command to filter them.
-  - Command: `annotations.searchByTag`
+- If annotations are not visible, you can use the `Toggle Annotation Visibility` command to show or hide them. CTRL+ALT+T (Windows/Linux) or CMD+ALT+T (Mac) is the shortcut for this command. A conflict with another extension can cause this issue, like Github Copilot Chat extension.
 
 - **Toggle Annotation Pin**
   - Pin or unpin annotations to keep important notes visible.
@@ -252,7 +266,7 @@ Customize the extension according to your needs by modifying the available setti
 | Batch Edit Annotations              | `Ctrl+Alt+B`                 | `Cmd+Alt+B`         |
 | Keyword Search                      | `Ctrl+Alt+K`                 | `Cmd+Alt+K`         |
 | Filter by Severity                  | `Ctrl+Alt+F`                 | `Cmd+Alt+F`         |
-| Show Copilot Suggestion             | `Ctrl+Alt+G`                 | `Cmd+Alt+G`         |
+| Show AI Suggestion             | `Ctrl+Alt+G`                 | `Cmd+Alt+G`         |
 | Auto-Resolve Stale Annotations      | `Ctrl+Alt+R`                 | `Cmd+Alt+R`         |
 
 ## Additional Features
@@ -265,7 +279,7 @@ Customize the extension according to your needs by modifying the available setti
 - **Batch Edit Annotations**: Efficiently manage multiple annotations with batch editing capabilities.
 - **Keyword Search**: Enhance your workflow by searching annotations using specific keywords.
 - **Filter by Severity**: Organize annotations based on their severity levels for better prioritization.
-- **Show Copilot Suggestion**: Benefit from simulated suggestions to improve your annotation process.
+- **Show AI Suggestion**: Benefit from simulated suggestions to improve your annotation process.
 - **Auto-Resolve Stale Annotations**: Maintain a clean workspace by automatically resolving outdated annotations.
 
 ## Tree View and Activity Bar
