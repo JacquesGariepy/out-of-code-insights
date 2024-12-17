@@ -1,5 +1,4 @@
-# Out-of-code Insights  [![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/JacquesGariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights)
-
+# Out-of-code Insights [![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/JacquesGariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights)
 
 Out-of-code Insights is a Visual Studio Code extension that allows you to add annotations, comments, and notes **without modifying your source files**. It is ideal for avoiding clutter in your code with temporary comments or making the code unnecessarily heavy.
 
@@ -146,6 +145,8 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **View simulated suggestions**:
   - Use the **`Show AI Suggestion`** command to display simulated suggestions from AI within your annotations. Select a line in the code editor, right-click to bring up the context menu. In the "out-of-code-insight" submenu, select the "AI Suggest Annotation" option, and it will provide an annotation for that line. 
   - If you want to disabled or enabled AI Suggest, you can do it in the settings.
+  - Press `Ctrl+Shift+P` to open the Command Palette.
+    - Type the name of the command (for example, `Update OpenAI Key` or `Reset OpenAI Key`).
   - **Important**: Ensure you have an OpenAI API key configured to access this feature.
   
 
@@ -270,6 +271,30 @@ Customize the extension according to your needs by modifying the available setti
 | Show AI Suggestion             | `Ctrl+Alt+G`                 | `Cmd+Alt+G`         |
 | Auto-Resolve Stale Annotations      | `Ctrl+Alt+R`                 | `Cmd+Alt+R`         |
 
+Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tabular format, suitable for inclusion in your README. Each command can be run by opening the Command Palette (**Ctrl+Shift+P**) and typing its name:
+
+| **Action**                        | **Command**                  | **Description**                                                            |
+|-----------------------------------|------------------------------|----------------------------------------------------------------------------|
+| Add Annotation                    | `annotations.add`            | Adds a new annotation to the current line of code.                         |
+| Reply to Annotation               | `annotations.reply`          | Adds a reply/comment to an existing annotation.                            |
+| Clear All Annotations             | `annotations.clearAll`       | Removes all annotations from the project.                                  |
+| Delete Annotation                 | `annotations.delete`         | Deletes the annotation on the current line.                                |
+| Edit Annotation                   | `annotations.edit`           | Edits the annotation on the current line.                                  |
+| Toggle Annotations Display        | `annotations.toggleDisplay`  | Shows or hides all annotations in the editor.                              |
+| Navigate to Annotation            | `annotations.navigate`       | Jumps directly to the specified annotation.                                |
+| Export Annotations to JSON        | `annotations.exportJSON`     | Exports all annotations to a JSON file.                                    |
+| Import Annotations from JSON      | `annotations.importJSON`     | Imports annotations from a JSON file.                                      |
+| Toggle Annotation Pin             | `annotations.pinToggle`      | Pins or unpins the annotation at the current line.                         |
+| Batch Edit Annotations in File    | `annotations.batchEdit`      | Updates all annotations within the current file at once.                   |
+| Keyword Search in Annotations     | `annotations.keywordSearch`   | Searches annotations by a keyword.                                         |
+| AI Suggest Annotation             | `annotations.aiSuggest`      | Requests an AI-generated annotation for the current line of code.          |
+| Move Annotation Up                | `annotations.moveUp`         | Moves the annotation on the current line up by one line.                   |
+| Move Annotation Down              | `annotations.moveDown`       | Moves the annotation on the current line down by one line.                 |
+| Show Annotations Panel            | `annotations.show`           | Opens the annotations panel to view and manage all annotations.            |
+| Update OpenAI Key                 | `annotations.updateOpenAIKey`| Prompts you to enter a new OpenAI API key.                                 |
+| Reset OpenAI Key                  | `annotations.resetOpenAIKey` | Clears the stored OpenAI API key, requiring a new key on the next AI call. |
+
+
 ## Additional Features
 
 - **Renamed or deleted files**: Automatically updates or removes annotations when files are renamed or deleted.
@@ -336,7 +361,6 @@ See the [LICENSE](https://github.com/JacquesGariepy/out-of-code-insights/blob/ma
 Out-of-code Insights helps you manage comments and notes in your projects **without cluttering your source code**. By providing a platform for non-intrusive annotations, precise change tracking, and seamless integration into your development environment, this extension is a practical tool for developers and teams looking to improve collaboration and productivity.
 
 ---
+[<img src="media/bmc_qr.png" alt="Buy me a coffee" height="128px"/>](https://www.buymeacoffee.com/jacquesgarX)
 
 **Try Out-of-code Insights today and streamline your workflow without overloading your code!**
-
-[<img src="media/bmc_qr.png" alt="Buy me a coffee" height="128px"/>](https://www.buymeacoffee.com/jacquesgarX)
