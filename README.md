@@ -264,7 +264,7 @@ Customize the extension according to your needs by modifying the available setti
 
 ## Extension Settings Overview
 
-You can customize Out-of-Code Insights using the following settings (available in VS Code settings under `annotation` or `llm`):
+You can customize Out-of-Code Insights using the following settings (available in VS Code settings under `annotation` or ``):
 
 - **annotation.provider**: Select the LLM provider to use for AI-powered features. Supported values: `openai`, `anthropic`, `azure`, `cerebras`, `deepseek`, `google`, `groq`, `meta`, `mistralai`, `ollama`, `openrouter`, `togetherai`, `xai`.
 - **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-haiku`, etc.).
@@ -328,6 +328,10 @@ To use AI-powered annotation generation, you can choose from multiple LLM provid
 - If no key is set for the selected provider, the extension will prompt you to enter it on first use.
 - All keys can be managed in the settings for quick and centralized access.
 - The multi-provider system lets you easily switch between LLMs and models according to your needs or quotas.
+
+Thanks to **multi-llm-ts** for enabling the connection to multiple LLMs.  
+🔗 [NPM Package](https://www.npmjs.com/package/multi-llm-ts)  
+📂 [GitHub Repository](https://github.com/nbonamy/multi-llm-ts)
 
 ## Keyboard Shortcuts
 
