@@ -31,8 +31,8 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Batch Edit Annotations**: Modify multiple annotations simultaneously to save time and effort.
 - **Keyword Search**: Quickly find annotations by searching for specific keywords.
 - **Filter by Severity**: Categorize and view annotations based on their severity levels.
+- **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
 - **Show AI Suggestion**: Display simulated suggestions from AI.
-- **Show Github Copilot Suggestion**: Display simulated suggestions from GitHub Copilot.
 - **Auto-Resolve Stale Annotations**: Automatically handle annotations that are no longer relevant or outdated.
 
 [![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw)
@@ -56,8 +56,8 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Batch Edit Annotations**: Modify multiple annotations at once to streamline your workflow.
 - **Keyword Search**: Quickly locate annotations by searching for specific terms or phrases.
 - **Filter by Severity**: Organize annotations based on their severity to prioritize tasks.
+- **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
 - **Show AI Suggestion**: View simulated suggestions from AI to enhance your annotations.
-- **Show Copilot Suggestion**: View simulated GitHub Copilot suggestions within your annotations for enhanced productivity.
 - **Auto-Resolve Stale Annotations**: Automatically resolve annotations that are no longer relevant, keeping your workspace clean.
 
 ## Installation
@@ -141,6 +141,12 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Categorize annotations**:
   - Use the **`Filter by Severity`** option to display annotations based on their assigned severity levels (e.g., info, warning, error).
 
+### Set Annotation Severity
+
+- **Adjust severity**:
+  - Right-click on an annotated line and choose **`Set Annotation Severity`**.
+  - Select the appropriate level (`info`, `warning`, or `error`) to better classify the annotation.
+
 ### Show AI Suggestion
 - **View simulated suggestions**:
   - Use the **`Show AI Suggestion`** command to display simulated suggestions from AI within your annotations. Select a line in the code editor, right-click to bring up the context menu. In the "out-of-code-insight" submenu, select the "AI Suggest Annotation" option, and it will provide an annotation for that line. 
@@ -150,10 +156,8 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
   - **Important**: Ensure you have an OpenAI API key configured to access this feature.
   
 
-### Show Copilot Suggestion
 
 - **View simulated suggestions**:
-  - Use the **`Show Copilot Suggestion`** command to display simulated GitHub Copilot suggestions within your annotations. Select @out-of-code-insights to see the suggestions.
 
 ![image](https://github.com/user-attachments/assets/47a41c70-b7dd-4057-9330-f1944d456035)
 
@@ -170,6 +174,11 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
   - Per default, the annotations file is located in the **`.out-of-code-insights/annotations.json`** directory of your project.
   - If you change the path, ensure that the directory exists and is accessible. All project using the extension will use this path after the change, else the extension will use the default path in each project.
 
+### Default Severity Setting
+
+- **Specify a default severity**:
+  - In the extension settings, modify **`Default Severity`** to define the severity level applied when creating new annotations.
+
 ### Exporting and Importing Annotations
 
 - **Export Annotations to JSON**
@@ -181,7 +190,6 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
   - Command: `annotations.importJSON`
 
 ### Managing Annotations
-- If annotations are not visible, you can use the `Toggle Annotation Visibility` command to show or hide them. CTRL+ALT+T (Windows/Linux) or CMD+ALT+T (Mac) is the shortcut for this command. A conflict with another extension can cause this issue, like Github Copilot Chat extension.
 
 - **Toggle Annotation Pin**
   - Pin or unpin annotations to keep important notes visible.
@@ -193,9 +201,6 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 
 ### Enhanced Features
 
-- **Show Copilot Suggestion (Simulated)**
-  - Display simulated GitHub Copilot suggestions within your annotations to enhance productivity.
-  - Command: `annotations.showCopilotSuggestion`
 
 - **Auto-Resolve Stale Annotations**
   - Automatically resolve annotations that are outdated or no longer relevant.
@@ -247,6 +252,7 @@ Customize the extension according to your needs by modifying the available setti
 - **Batch Edit Annotations** (`annotation.batchEdit`): Enable or disable the batch editing feature.
 - **Keyword Search** (`annotation.keywordSearch`): Configure settings for keyword-based annotation searching.
 - **Filter by Severity** (`annotation.filterBySeverity`): Set preferences for severity-based annotation filtering.
+- **Default Severity** (`annotation.defaultSeverity`): Choose the severity level automatically applied to new annotations.
 - **Advanced settings**:
   - **Change detection delay** (`annotation.debounceDelay`)
   - **Maximum annotations per file** (`annotation.maxAnnotationsPerFile`)
@@ -255,6 +261,73 @@ Customize the extension according to your needs by modifying the available setti
 
 1. Go to **`File`** > **`Preferences`** > **`Settings`** (or **`Code`** > **`Preferences`** > **`Settings`** on Mac).
 2. Search for **`annotation`** to view all available settings.
+
+## Extension Settings Overview
+
+You can customize Out-of-Code Insights using the following settings (available in VS Code settings under `annotation` or `llm`):
+
+- **annotation.provider**: Select the LLM provider to use for AI-powered features. Supported values: `openai`, `anthropic`, `azure`, `cerebras`, `deepseek`, `google`, `groq`, `meta`, `mistralai`, `ollama`, `openrouter`, `togetherai`, `xai`.
+- **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-haiku`, etc.).
+- **llm.apiKeys**: Object containing API keys for all supported LLM providers. Example:
+  ```json
+  "llm.apiKeys": {
+    "openai": "sk-...",
+    "anthropic": "...",
+    "azure": "...",
+    "mistralai": "...",
+    "groq": "...",
+    "ollama": "...",
+    "google": "...",
+    "openrouter": "...",
+    "togetherai": "...",
+    "xai": "..."
+  }
+  ```
+- **annotation.colors.light.annotation**: Annotation color for light theme.
+- **annotation.colors.light.highlightBackground**: Highlight background for annotations in light theme.
+- **annotation.colors.light.commentBorder**: Comment border color in light theme.
+- **annotation.colors.dark.annotation**: Annotation color for dark theme.
+- **annotation.colors.dark.highlightBackground**: Highlight background for annotations in dark theme.
+- **annotation.colors.dark.commentBorder**: Comment border color in dark theme.
+- **annotation.debounceDelay**: Debounce delay (ms) for refreshing annotations.
+- **annotation.maxAnnotationsPerFile**: Maximum number of annotations per file.
+- **annotation.username**: Username to display as the annotation author.
+- **annotation.codelens.enable**: Enable or disable CodeLens for annotations.
+- **annotation.codelens.showCommands**: Show or hide commands in CodeLens.
+- **annotation.github.repository**: GitHub repository (format: `owner/repo`) for creating issues from annotations.
+- **annotation.enableAiSuggest**: Enable or disable the AI Suggest Annotation feature.
+- **annotation.path**: Custom path to the annotations file or directory.
+- **annotation.defaultSeverity**: Default severity for new annotations (`info`, `warning`, `error`).
+
+---
+
+## LLM Provider and API Key Configuration
+
+To use AI-powered annotation generation, you can choose from multiple LLM providers (OpenAI, Anthropic, Azure, MistralAI, Groq, Ollama, Google, and more).
+
+### 1. Select the LLM Provider and Model
+
+- Open the extension settings (File > Preferences > Settings or `Ctrl+,`).
+- Set `annotation.provider` to your desired LLM provider (e.g., `openai`, `anthropic`, `mistralai`, etc.).
+- Set `annotation.model` to the model you want to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-haiku`, etc.).
+
+### 2. Enter Your API Key
+
+- On the first AI request for a given provider, the extension will automatically prompt you for the corresponding API key in a secure dialog.
+- You can also manually enter or update all your API keys in the settings, under the `llm.apiKeys` object (see above).
+- Keys are securely stored using VS Code's Secret Storage.
+- If you switch providers, the extension will prompt for the new provider's API key if it is not already set.
+- You can update or reset any key at any time in the settings or via the dedicated command.
+
+### 3. Usage
+
+- Once the provider, model, and key are configured, use the **AI Suggest Annotation** command (`annotations.aiSuggest`) to generate an AI-powered annotation for the current line.
+- You can change providers or models at any time in the settings; the relevant key will be requested if needed.
+
+### Notes
+- If no key is set for the selected provider, the extension will prompt you to enter it on first use.
+- All keys can be managed in the settings for quick and centralized access.
+- The multi-provider system lets you easily switch between LLMs and models according to your needs or quotas.
 
 ## Keyboard Shortcuts
 
@@ -294,7 +367,6 @@ Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tab
 | Update OpenAI Key                 | `annotations.updateOpenAIKey`| Prompts you to enter a new OpenAI API key.                                 |
 | Reset OpenAI Key                  | `annotations.resetOpenAIKey` | Clears the stored OpenAI API key, requiring a new key on the next AI call. |
 
-
 ## Additional Features
 
 - **Renamed or deleted files**: Automatically updates or removes annotations when files are renamed or deleted.
@@ -305,6 +377,7 @@ Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tab
 - **Batch Edit Annotations**: Efficiently manage multiple annotations with batch editing capabilities.
 - **Keyword Search**: Enhance your workflow by searching annotations using specific keywords.
 - **Filter by Severity**: Organize annotations based on their severity levels for better prioritization.
+- **Set Annotation Severity**: Assign severity levels to existing annotations.
 - **Show AI Suggestion**: Benefit from simulated suggestions to improve your annotation process.
 - **Auto-Resolve Stale Annotations**: Maintain a clean workspace by automatically resolving outdated annotations.
 
@@ -361,6 +434,7 @@ See the [LICENSE](https://github.com/JacquesGariepy/out-of-code-insights/blob/ma
 Out-of-code Insights helps you manage comments and notes in your projects **without cluttering your source code**. By providing a platform for non-intrusive annotations, precise change tracking, and seamless integration into your development environment, this extension is a practical tool for developers and teams looking to improve collaboration and productivity.
 
 ---
-[<img src="media/bmc_qr.png" alt="Buy me a coffee" height="128px"/>](https://www.buymeacoffee.com/jacquesgarX)
 
 **Try Out-of-code Insights today and streamline your workflow without overloading your code!**
+
+[<img src="media/bmc_qr.png" alt="Buy me a coffee" height="128px"/>](https://www.buymeacoffee.com/jacquesgarX)
