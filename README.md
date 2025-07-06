@@ -1,5 +1,4 @@
 # Out-of-code Insights [![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/JacquesGariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights)
-https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights
 
 Out-of-code Insights is a Visual Studio Code extension that allows you to add annotations, comments, and notes **without modifying your source files**. It is ideal for avoiding clutter in your code with temporary comments or making the code unnecessarily heavy.
 
@@ -58,8 +57,49 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Keyword Search**: Quickly locate annotations by searching for specific terms or phrases.
 - **Filter by Severity**: Organize annotations based on their severity to prioritize tasks.
 - **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
+- **Edit Annotation Tags**: Add or modify tags on annotations to better categorize them.
 - **Show AI Suggestion**: View simulated suggestions from AI to enhance your annotations.
 - **Auto-Resolve Stale Annotations**: Automatically resolve annotations that are no longer relevant, keeping your workspace clean.
+- **Navigation Stack**: Quickly jump back and forth between recently viewed annotations.
+
+## ✨ Advanced Features (New in v1.0.14)
+
+### 🔗 Linked Multi-File Annotations
+Create relationships between annotations across different files to improve code traceability and documentation:
+- **Create links**: Connect related annotations with contextual relationships (implements, references, depends-on, etc.)
+- **Visual indicators**: 🔗 icon in TreeView shows linked annotations
+- **Smart navigation**: `Ctrl+Alt+L` to quickly jump between linked annotations
+- **Comprehensive visualization**: "Show All Links" command opens an interactive view with statistics and navigation
+
+### 📋 Customizable Annotation Templates
+Standardize your annotation format with reusable templates:
+- **Pre-built templates**: Bug, TODO, Refactor, Performance, Security, Documentation
+- **Custom templates**: Create your own with variable substitution (`{{description}}`, `{{priority}}`, etc.)
+- **Quick access**: `Ctrl+Shift+Alt+T` to apply templates instantly
+- **Team consistency**: Share templates across your development team
+
+### 🔍 Smart Review Mode
+Systematically review annotations with advanced filtering and tracking:
+- **Structured review**: Navigate through annotations sequentially with `F8`/`Shift+F8`
+- **Advanced filtering**: Filter by author, date, severity, tags, and status
+- **Progress tracking**: Visual progress bar shows reviewed vs. total annotations
+- **Review statistics**: Get insights on annotation distribution and completion
+
+### 📋 Kanban-style Workspace
+Manage annotations visually with a dedicated Kanban board:
+- **Visual organization**: Drag & drop annotations between customizable columns (To Do, In Progress, Review, Done)
+- **Smart filtering**: Filter by author, severity, tags, or file
+- **Intelligent deletion**: Choose to remove from kanban or delete completely
+- **Custom columns**: Create workflow-specific columns for your team
+- **Quick navigation**: Double-click cards to jump to code location
+
+### ⚡ Executable Code Snippets
+Attach and execute code directly from annotations:
+- **Code attachment**: Add reusable code snippets to annotations
+- **Preview changes**: See modifications before applying them
+- **Variable support**: Use placeholders (`$1`, `$2`) for dynamic snippets
+- **Execution history**: Track applied snippets for better code management
+- **Multiple languages**: Support for all programming languages
 
 ## Installation
 
@@ -72,6 +112,29 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 4. **Install the extension**:
    - Click **"Install"** next to the appropriate result.
 5. **Restart Visual Studio Code** (if required).
+
+## Quick Start Guide
+
+### Your First Annotation
+1. **Open any file** in your project
+2. **Position your cursor** on the line you want to annotate
+3. **Right-click** → "Out-of-Code Insight" → "Add Annotation"
+4. **Enter your annotation** message and press Enter
+5. **See your annotation** appear in the Activity Bar sidebar
+
+### Essential Workflow
+1. **Add annotations** during code review or development (`Ctrl+Alt+A`)
+2. **Organize with templates** for consistent formatting (`Ctrl+Shift+Alt+T`)
+3. **Link related annotations** across files (`Ctrl+Alt+L`)
+4. **Review systematically** with Review Mode (`F8`/`Shift+F8`)
+5. **Visualize progress** with the Kanban board (`Ctrl+Alt+K`)
+
+### Common Use Cases
+- **Code Review**: Add review comments without modifying source files
+- **Technical Documentation**: Document complex logic and architectural decisions
+- **Bug Tracking**: Track issues with linked corrections and code snippets
+- **Team Collaboration**: Share insights and TODOs with your team
+- **Project Management**: Organize tasks visually with the Kanban board
 
 ## Usage
 
@@ -166,6 +229,118 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 
 - **Automatic management**:
   - Enable **`Auto-Resolve Stale Annotations`** to automatically handle annotations that are outdated or no longer relevant.
+
+## 🚀 Using Advanced Features
+
+### Creating and Managing Linked Annotations
+
+**Create a Link:**
+1. Position cursor on an existing annotation
+2. Right-click → "Out-of-Code Insight" → "Create Link to Another Annotation"
+3. Choose between linking to existing annotation or creating a new one
+4. Select relationship type (implements, references, depends-on, etc.)
+5. Navigate with `Ctrl+Alt+L` or click 🔗 indicators in TreeView
+
+**Visualize All Links:**
+- Use "Show All Links" command to open interactive link visualization
+- View statistics, outgoing/incoming relationships, and navigate directly
+
+### Working with Annotation Templates
+
+**Apply a Template:**
+1. Position cursor where you want to add an annotation
+2. Use `Ctrl+Shift+Alt+T` or "Apply Template" command
+3. Select from pre-built templates (Bug, TODO, Refactor, etc.)
+4. Fill in template variables with your specific information
+
+**Create Custom Templates:**
+1. Use "Create Annotation Template" command
+2. Define template name, content with variables (`{{variableName}}`)
+3. Set default severity and tags
+4. Save and share with your team
+
+### Using Review Mode
+
+**Start a Review Session:**
+1. Open Command Palette (`Ctrl+Shift+P`) → "Start Review Mode"
+2. Configure filters (optional): author, date range, severity, tags
+3. Navigate with `F8` (next) / `Shift+F8` (previous)
+4. Mark annotations as viewed or resolved during review
+5. View progress and statistics in status bar
+
+### Managing the Kanban Board
+
+**Open Kanban:**
+- Use `Ctrl+Alt+K` or "Show Kanban Board" command
+- Drag & drop annotations between columns
+- Add custom columns for your workflow
+- Filter view by author, severity, or tags
+
+**Kanban Actions:**
+- **Move annotations**: Drag between columns or use "Move to Column"
+- **Smart deletion**: Choose to remove from kanban only or delete completely
+- **Quick navigation**: Double-click cards to open file location
+- **Custom columns**: Add workflow-specific columns (e.g., "Testing", "Deployed")
+
+### Working with Code Snippets
+
+**Add Snippets to Annotations:**
+1. Right-click on annotation → "Add Code Snippet to Annotation"
+2. Enter code with optional variables (`$1`, `$2`, `${1:placeholder}`)
+3. Set language and description
+4. Use "Preview Snippet Changes" before applying
+5. Apply with "Apply Code Snippet" command
+
+## 💡 Practical Examples & Best Practices
+
+### Example 1: Code Review Workflow
+```
+1. Reviewer adds annotation: "Consider using async/await here for better readability"
+2. Create template: "REVIEW: {{suggestion}} - Priority: {{priority}}"
+3. Link to implementation: annotation → corrected code in another file
+4. Add code snippet: "async function fetchData() { ... }"
+5. Move to Kanban: "To Do" → "In Progress" → "Review" → "Done"
+```
+
+### Example 2: Bug Tracking System
+```
+1. Bug report: "BUG: Authentication fails on token refresh"
+2. Link related annotations:
+   - Bug annotation → Implementation file
+   - Implementation → Test file  
+   - Test file → Documentation
+3. Attach fix snippet: "if (token.isExpired()) { await refreshToken(); }"
+4. Use Review Mode to systematically check all auth-related annotations
+```
+
+### Example 3: Team Documentation
+```
+1. Architect creates templates:
+   - "ARCHITECTURE: {{component}} - Purpose: {{purpose}}"
+   - "TODO: {{task}} - Assigned: {{developer}} - Due: {{date}}"
+2. Team uses templates for consistency
+3. Link annotations create knowledge graph
+4. Kanban board shows project progress
+5. Review Mode ensures nothing is missed
+```
+
+### Pre-built Templates Available
+- **Bug**: Report bugs with steps to reproduce and expected vs actual results
+- **TODO**: Task tracking with priority and assignment
+- **Refactor**: Code improvement suggestions with rationale
+- **Performance**: Performance issues with metrics and improvement plans
+- **Security**: Security concerns with risk assessment
+- **Documentation**: Documentation gaps with content guidelines
+- **Question**: Questions for team discussion with context
+
+### Best Practices
+- **Use consistent templates** across your team for better communication
+- **Link related annotations** to create a knowledge graph of your codebase
+- **Review annotations regularly** using Review Mode to keep them current
+- **Organize with Kanban** to visualize project progress and bottlenecks
+- **Attach code snippets** for quick fixes and examples
+- **Tag annotations** with project phases, components, or priorities
+- **Export/import** annotations when sharing across projects or teams
 
 ### Configure the annotations.json File Path
 
@@ -265,7 +440,7 @@ Customize the extension according to your needs by modifying the available setti
 
 ## Extension Settings Overview
 
-You can customize Out-of-Code Insights using the following settings (available in VS Code settings under `annotation` or ``):
+You can customize Out-of-Code Insights using the following settings (available in VS Code settings under `annotation` or `llm`):
 
 - **annotation.provider**: Select the LLM provider to use for AI-powered features. Supported values: `openai`, `anthropic`, `azure`, `cerebras`, `deepseek`, `google`, `groq`, `meta`, `mistralai`, `ollama`, `openrouter`, `togetherai`, `xai`.
 - **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-haiku`, etc.).
@@ -330,10 +505,6 @@ To use AI-powered annotation generation, you can choose from multiple LLM provid
 - All keys can be managed in the settings for quick and centralized access.
 - The multi-provider system lets you easily switch between LLMs and models according to your needs or quotas.
 
-Thanks to **multi-llm-ts** for enabling the connection to multiple LLMs.  
-🔗 [NPM Package](https://www.npmjs.com/package/multi-llm-ts)  
-📂 [GitHub Repository](https://github.com/nbonamy/multi-llm-ts)
-
 ## Keyboard Shortcuts
 
 | **Action**                          | **Shortcut (Windows/Linux)** | **Shortcut (Mac)**  |
@@ -348,6 +519,12 @@ Thanks to **multi-llm-ts** for enabling the connection to multiple LLMs.
 | Filter by Severity                  | `Ctrl+Alt+F`                 | `Cmd+Alt+F`         |
 | Show AI Suggestion             | `Ctrl+Alt+G`                 | `Cmd+Alt+G`         |
 | Auto-Resolve Stale Annotations      | `Ctrl+Alt+R`                 | `Cmd+Alt+R`         |
+| **Advanced Features**               |                               |                     |
+| Create Link to Annotation          | `Ctrl+Alt+L`                 | `Cmd+Alt+L`         |
+| Apply Annotation Template          | `Ctrl+Shift+Alt+T`           | `Cmd+Shift+Alt+T`   |
+| Show Kanban Board                  | `Ctrl+Alt+K`                 | `Cmd+Alt+K`         |
+| Next Annotation (Review Mode)      | `F8`                         | `F8`                |
+| Previous Annotation (Review Mode)  | `Shift+F8`                   | `Shift+F8`          |
 
 Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tabular format, suitable for inclusion in your README. Each command can be run by opening the Command Palette (**Ctrl+Shift+P**) and typing its name:
 
@@ -358,6 +535,7 @@ Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tab
 | Clear All Annotations             | `annotations.clearAll`       | Removes all annotations from the project.                                  |
 | Delete Annotation                 | `annotations.delete`         | Deletes the annotation on the current line.                                |
 | Edit Annotation                   | `annotations.edit`           | Edits the annotation on the current line.                                  |
+| Edit Annotation Tags             | `annotations.editTags`       | Adds or removes tags on the current annotation.                            |
 | Toggle Annotations Display        | `annotations.toggleDisplay`  | Shows or hides all annotations in the editor.                              |
 | Navigate to Annotation            | `annotations.navigate`       | Jumps directly to the specified annotation.                                |
 | Export Annotations to JSON        | `annotations.exportJSON`     | Exports all annotations to a JSON file.                                    |
@@ -371,6 +549,20 @@ Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tab
 | Show Annotations Panel            | `annotations.show`           | Opens the annotations panel to view and manage all annotations.            |
 | Update OpenAI Key                 | `annotations.updateOpenAIKey`| Prompts you to enter a new OpenAI API key.                                 |
 | Reset OpenAI Key                  | `annotations.resetOpenAIKey` | Clears the stored OpenAI API key, requiring a new key on the next AI call. |
+| **Advanced Features**             |                              |                                                                            |
+| Create Link to Another Annotation| `annotations.createLink`     | Creates a relationship link between two annotations across files.           |
+| Navigate to Linked Annotation    | `annotations.navigateToLinked`| Navigates to annotations linked to the current one.                       |
+| Show All Links                    | `annotations.showAllLinks`   | Opens interactive visualization of all annotation links.                   |
+| Apply Annotation Template        | `annotations.applyTemplate`  | Applies a pre-built or custom template to create structured annotations.   |
+| Create Annotation Template       | `annotations.createTemplate` | Creates a new custom annotation template with variables.                   |
+| Manage Templates                  | `annotations.manageTemplates`| Opens template management interface.                                       |
+| Start Review Mode                 | `annotations.startReview`    | Begins systematic review of annotations with filtering options.            |
+| Stop Review Mode                  | `annotations.stopReview`     | Ends the current review session and shows statistics.                     |
+| Next Annotation                   | `annotations.nextAnnotation` | Navigates to the next annotation in review mode.                          |
+| Previous Annotation               | `annotations.prevAnnotation` | Navigates to the previous annotation in review mode.                      |
+| Show Kanban Board                 | `annotations.showKanban`     | Opens the visual Kanban board for annotation management.                  |
+| Add Code Snippet to Annotation   | `annotations.addSnippet`     | Attaches an executable code snippet to an annotation.                     |
+| Apply Code Snippet               | `annotations.applySnippet`   | Executes and applies a code snippet from an annotation.                   |
 
 ## Additional Features
 
@@ -425,6 +617,51 @@ The **Activity Bar** adds a dedicated icon for **Out-of-Code Insights** in the V
    - Click **Reply** to add a comment to the annotation.
 
 These features enhance annotation management by providing an overview and management tools directly integrated into the Visual Studio Code interface.
+
+## 🔧 Troubleshooting
+
+### Common Issues and Solutions
+
+#### "Annotations not showing in editor"
+- **Check visibility**: Use `Ctrl+Alt+T` to toggle annotation display
+- **Verify file path**: Ensure annotations.json is in the correct location (`.out-of-code-insights/` by default)
+- **Restart VS Code**: Sometimes a restart is needed after installation
+
+#### "Template variables not working"
+- **Use correct syntax**: Variables should be `{{variableName}}` with double curly braces
+- **Check template format**: Ensure template is properly saved and contains variables
+- **Verify input**: Make sure you're entering values for all template variables
+
+#### "Linked annotations not navigating correctly"
+- **Check file paths**: Ensure linked files exist and paths are correct
+- **Verify line numbers**: Line numbers should match the actual annotation location
+- **Use relative paths**: For better portability, use relative paths when linking
+
+#### "Kanban board not updating"
+- **Refresh manually**: Use the refresh button in the Kanban board
+- **Check column assignments**: Ensure annotations are assigned to valid columns
+- **Restart extension**: Disable and re-enable the extension if needed
+
+#### "Code snippets not applying"
+- **Position correctly**: Ensure cursor is on the annotation line before applying
+- **Check snippet syntax**: Variables should use `$1`, `$2`, `${1:placeholder}` format
+- **Verify language**: Make sure the snippet language matches the target file
+
+#### "Review Mode not starting"
+- **Check filters**: Ensure filter settings aren't excluding all annotations
+- **Verify annotations exist**: Make sure there are annotations to review
+- **Reset filters**: Clear all filters and try again
+
+#### "Performance issues with large projects"
+- **Increase limits**: Adjust `annotation.maxAnnotationsPerFile` in settings
+- **Use filters**: Filter annotations by file, author, or date to reduce load
+- **Close unused features**: Close Kanban board and Review Mode when not needed
+
+### Getting Help
+- **Check settings**: Review all extension settings in VS Code preferences
+- **Console logs**: Open Developer Tools (F12) to check for error messages
+- **Extension page**: Visit the VS Code marketplace page for updates and known issues
+- **Community support**: Use GitHub Discussions for questions and community help
 
 ## Contribution
 
