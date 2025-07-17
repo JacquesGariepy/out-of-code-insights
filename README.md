@@ -15,7 +15,6 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 [![GitHub Discussions](https://img.shields.io/github/discussions/JacquesGariepy/out-of-code-insights)](https://github.com/JacquesGariepy/out-of-code-insights/discussions)
 
 
-
 [![GitHub Discussions](https://img.shields.io/badge/buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacquesgarx)
 
 ## Why use Out-of-code Insights?
@@ -32,15 +31,15 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Keyword Search**: Quickly find annotations by searching for specific keywords.
 - **Filter by Severity**: Categorize and view annotations based on their severity levels.
 - **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
-- **Show AI Suggestion**: Display simulated suggestions from AI.
+- **Show AI Suggestion**: Display simulated suggestions from AI. 
 - **Auto-Resolve Stale Annotations**: Automatically handle annotations that are no longer relevant or outdated.
 
-[![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw)
+[![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw) (v1.0.3)
+
+![Annotations](https://github.com/user-attachments/assets/beedc87b-c914-48d0-b7fa-cfe8194074f5)
 
 ![feature_add](https://github.com/user-attachments/assets/ea4d463e-a2d5-4eb4-85c8-04746533213f)
-(`add in v1.0.3 - Activity bar`)
 
-![binary file](https://github.com/user-attachments/assets/7096ade5-e84c-49f1-b7b3-1ae68f02b418)
 
 (`PNG binary file`)
 
@@ -62,9 +61,12 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Auto-Resolve Stale Annotations**: Automatically resolve annotations that are no longer relevant, keeping your workspace clean.
 - **Navigation Stack**: Quickly jump back and forth between recently viewed annotations.
 
-## ✨ Advanced Features (New in v1.0.14)
+## ✨ Features
 
 ### 🔗 Linked Multi-File Annotations
+
+![linked](https://github.com/user-attachments/assets/573270ea-2057-41df-994d-970b5347f65b)
+
 Create relationships between annotations across different files to improve code traceability and documentation:
 - **Create links**: Connect related annotations with contextual relationships (implements, references, depends-on, etc.)
 - **Visual indicators**: 🔗 icon in TreeView shows linked annotations
@@ -78,7 +80,9 @@ Standardize your annotation format with reusable templates:
 - **Quick access**: `Ctrl+Shift+Alt+T` to apply templates instantly
 - **Team consistency**: Share templates across your development team
 
-### 🔍 Smart Review Mode
+### 🔍 Review Mode
+![review](https://github.com/user-attachments/assets/7726ea14-bd24-4e3c-be42-ac03f516d864)
+
 Systematically review annotations with advanced filtering and tracking:
 - **Structured review**: Navigate through annotations sequentially with `F8`/`Shift+F8`
 - **Advanced filtering**: Filter by author, date, severity, tags, and status
@@ -87,6 +91,9 @@ Systematically review annotations with advanced filtering and tracking:
 
 ### 📋 Kanban-style Workspace
 Manage annotations visually with a dedicated Kanban board:
+![Kanban](https://github.com/user-attachments/assets/499bbbec-f773-47c8-9c5a-84f3ad5bb079)
+
+
 - **Visual organization**: Drag & drop annotations between customizable columns (To Do, In Progress, Review, Done)
 - **Smart filtering**: Filter by author, severity, tags, or file
 - **Intelligent deletion**: Choose to remove from kanban or delete completely
@@ -100,6 +107,9 @@ Attach and execute code directly from annotations:
 - **Variable support**: Use placeholders (`$1`, `$2`) for dynamic snippets
 - **Execution history**: Track applied snippets for better code management
 - **Multiple languages**: Support for all programming languages
+
+### Annotation History
+![STACK](https://github.com/user-attachments/assets/7d821ca0-d38f-48df-81ae-58fc94fcb3ce)
 
 ## Installation
 
@@ -211,17 +221,65 @@ Attach and execute code directly from annotations:
   - Right-click on an annotated line and choose **`Set Annotation Severity`**.
   - Select the appropriate level (`info`, `warning`, or `error`) to better classify the annotation.
 
-### Show AI Suggestion
-- **View simulated suggestions**:
-  - Use the **`Show AI Suggestion`** command to display simulated suggestions from AI within your annotations. Select a line in the code editor, right-click to bring up the context menu. In the "out-of-code-insight" submenu, select the "AI Suggest Annotation" option, and it will provide an annotation for that line. 
-  - If you want to disabled or enabled AI Suggest, you can do it in the settings.
-  - Press `Ctrl+Shift+P` to open the Command Palette.
-    - Type the name of the command (for example, `Update OpenAI Key` or `Reset OpenAI Key`).
-  - **Important**: Ensure you have an OpenAI API key configured to access this feature.
-  
+## 🤖 AI-Powered Features
 
+### Multi-LLM Provider Support
 
-- **View simulated suggestions**:
+![LLM](https://github.com/user-attachments/assets/202f50fe-438d-4ecc-86e8-65c75c3bebe6)
+Out-of-Code Insights now supports **all major LLM providers**, giving you flexibility in choosing your AI assistant:
+
+**Supported Providers:**
+- OpenAI
+- Anthropic (Claude)
+- Google (Gemini)
+- Mistral AI
+- Azure OpenAI
+- Groq
+- Ollama (local)
+- And many more...
+
+**Quick Setup:**
+1. Open VS Code Settings (`Ctrl+,`)
+2. Search for "annotation.provider"
+3. Select your preferred LLM provider
+4. Add your API key in `annotation.llm.apiKeys.[provider]`
+
+### Custom AI Profiles
+
+Create specialized AI profiles for different analysis needs:
+
+**Creating a Custom Profile:**
+1. Right-click → "Out-of-Code Insight" → "AI Analysis" → "AI: Manage Custom Profiles"
+2. Select "Create New Profile"
+3. Configure:
+   - **Profile ID**: Unique identifier (e.g., `security-auditor`)
+   - **Name**: Display name
+   - **Analysis Prompt**: What the AI should look for
+   - **Default Tags**: Automatically applied tags
+   - **Severity & Priority**: Default annotation settings
+
+**Example Custom Profiles:**
+- **Security Auditor**: Focuses on vulnerabilities and security best practices
+- **Performance Optimizer**: Identifies bottlenecks and optimization opportunities
+- **Code Reviewer**: Comprehensive code quality analysis
+- **Documentation Helper**: Suggests missing documentation
+
+### Enhanced AI Analysis
+
+**AI Suggest with Profile** (`Ctrl+Alt+I`):
+- Select from both user profiles and AI profiles
+- Option to add custom instructions
+- Context-aware suggestions based on surrounding code
+
+**AI Analyze File**:
+- Analyze entire files with selected AI profile
+- Pre-analysis confirmation with file details
+- Batch review of suggested annotations
+
+**Custom Prompts**:
+- Add specific instructions to any AI analysis
+- Prompts stack with profile behavior
+- Perfect for one-off requirements
 
 ![image](https://github.com/user-attachments/assets/47a41c70-b7dd-4057-9330-f1944d456035)
 
@@ -229,6 +287,63 @@ Attach and execute code directly from annotations:
 
 - **Automatic management**:
   - Enable **`Auto-Resolve Stale Annotations`** to automatically handle annotations that are outdated or no longer relevant.
+
+### Batch Creation System
+
+**Batch Create Mixed Items**:
+This feature allows you to create multiple types of items in a single operation to improve your productivity:
+
+- **Access**: Right-click → "Out-of-Code Insight" → "AI Analysis" → "Batch Create Mixed Items"
+- **Multiple selection**: Choose any combination of items to create
+- **Available types**:
+  - 📝 **Annotations**: Generate multiple annotations with AI to analyze your code
+  - 📋 **Templates**: Create reusable templates to standardize your annotations
+  - 🔗 **Links**: Connect existing annotations to create logical connections
+  - 💻 **Snippets**: Generate reusable code snippets
+
+**Usage examples**:
+1. **Complete code review**: Create annotations + templates for a standardized review
+2. **Feature documentation**: Create links between annotations + example code snippets
+3. **Refactoring**: Create refactoring templates + annotations for areas to modify
+
+**Details by type**:
+
+📋 **Template Batch Creation**:
+- Create up to 10 annotation templates at once
+- Define for each template: name, message with variables, tags, and severity
+- Templates are immediately available via `Ctrl+Shift+Alt+T`
+
+🔗 **Link Batch Creation**:
+- Select multiple existing annotations to link
+- Create named link groups (e.g., "Authentication flow")
+- Ideal for tracing implementations across multiple files
+
+💻 **Snippet Batch Creation**:
+- **From selection**: Transform selected code into reusable snippet
+- **With AI**: Generate snippets based on your needs (e.g., "error handling patterns")
+- **Manual input**: Create multiple snippets with custom code and descriptions
+
+## 📋 Key Commands
+
+### AI Commands
+- **AI: Analyze Entire File** - Analyze complete file with current AI profile
+- **AI: Analyze File with Profile** - Choose specific profile for analysis
+- **AI: Batch Generate Annotations** - Create multiple annotations with focus areas
+- **AI: Manage Custom Profiles** - Create, edit, delete, import/export AI profiles
+- **AI Suggest with Profile** - Get AI suggestions with profile selection
+- **Batch Create Mixed Items** - Create templates, links, and snippets in batch
+
+### Profile Commands
+- **Select User Profile** - Switch between user and AI profiles
+- **Manage User Profiles** - Manage your personal profiles
+
+### Keyboard Shortcuts
+- `Ctrl+Alt+I` - AI Suggest Annotation
+- `Ctrl+Alt+A` - Add Annotation
+- `Ctrl+Alt+E` - Edit Annotation
+- `Ctrl+Alt+L` - Navigate to Linked Annotation
+- `F8` - Next Annotation (Review Mode)
+- `Shift+F8` - Previous Annotation (Review Mode)
 
 ## 🚀 Using Advanced Features
 
@@ -442,13 +557,15 @@ Customize the extension according to your needs by modifying the available setti
 
 You can customize Out-of-Code Insights using the following settings (available in VS Code settings under `annotation` or `llm`):
 
+### AI Provider Settings
+
 - **annotation.provider**: Select the LLM provider to use for AI-powered features. Supported values: `openai`, `anthropic`, `azure`, `cerebras`, `deepseek`, `google`, `groq`, `meta`, `mistralai`, `ollama`, `openrouter`, `togetherai`, `xai`.
-- **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-haiku`, etc.).
-- **llm.apiKeys**: Object containing API keys for all supported LLM providers. Example:
+- **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-opus`, etc.).
+- **annotation.llm.apiKeys**: Object containing API keys for all supported LLM providers. Example:
   ```json
-  "llm.apiKeys": {
+  "annotation.llm.apiKeys": {
     "openai": "sk-...",
-    "anthropic": "...",
+    "anthropic": "sk-ant-...",
     "azure": "...",
     "mistralai": "...",
     "groq": "...",
