@@ -140,14 +140,6 @@
                 "icon": "$(comment-discussion)"
             },
             {
-                "command": "annotations.updateOpenAIKey",
-                "title": "Update OpenAI Key"
-            },
-            {
-                "command": "annotations.resetOpenAIKey",
-                "title": "Reset OpenAI Key"
-            },
-            {
                 "command": "stack.back",
                 "title": "Stack Back",
                 "icon": "$(arrow-left)"
