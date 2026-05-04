@@ -51,9 +51,18 @@ updates:
       day: monday
       time: "06:00"
       timezone: America/Toronto
+    open-pull-requests-limit: 3
     labels:
       - dependencies
       - ci
     commit-message:
       prefix: chore(ci)
       include: scope
+    groups:
+      workflow-actions:
+        patterns:
+          - "actions/*"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
