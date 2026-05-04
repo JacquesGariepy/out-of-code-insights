@@ -80,7 +80,6 @@ suite('Extension activation', () => {
             'annotations.previousAnnotation',
             'annotations.removeLink',
             'annotations.reply',
-            'annotations.resetOpenAIKey',
             'annotations.reviewMode.filter',
             'annotations.selectProfile',
             'annotations.setSeverity',
@@ -91,7 +90,6 @@ suite('Extension activation', () => {
             'annotations.stopReview',
             'annotations.toggleDisplay',
             'annotations.updateApiKey',
-            'annotations.updateOpenAIKey',
             'stack.back',
             'stack.forward',
         ];
