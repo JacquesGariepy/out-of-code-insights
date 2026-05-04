@@ -1,0 +1,8 @@
+node_modules/
+out/
+dist/
+*.vsix
+package-lock.json
+.vscode-test/
+CHANGELOG.md
+LICENSE

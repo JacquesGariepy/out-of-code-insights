@@ -1,0 +1,62 @@
+name: Good First Issue
+description: Propose a well-scoped task suitable for a first-time contributor
+title: "[Good First Issue]: "
+labels: ["good-first-issue"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose a task that is well-defined and approachable
+        for someone contributing to this project for the first time.
+
+  - type: input
+    id: task
+    attributes:
+      label: Task description
+      description: One or two sentences describing what needs to be done.
+      placeholder: "e.g., Extract escapeHtml() from KanbanView.ts into src/common/utils.ts"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How will we know the task is complete?
+      placeholder: |
+        - [ ] escapeHtml is exported from src/common/utils.ts
+        - [ ] KanbanView.ts imports it from there
+        - [ ] All existing tests pass
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Relevant files
+      description: Files a contributor should read before starting.
+      placeholder: |
+        - src/views/KanbanView.ts
+        - src/common/utils.ts
+    validations:
+      required: false
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Estimated effort
+      options:
+        - XS (less than 1 hour)
+        - S (1 to 4 hours)
+        - M (4 to 16 hours)
+      default: 0
+    validations:
+      required: true
+
+  - type: input
+    id: skills
+    attributes:
+      label: Required skills
+      placeholder: "TypeScript, VS Code extension API"
+    validations:
+      required: false

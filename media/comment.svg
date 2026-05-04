@@ -1,0 +1,14 @@
+<svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    width="48"
+    height="48"
+    fill="currentColor"
+>
+    <!-- Circle for the comment icon -->
+    <circle cx="12" cy="12" r="10" fill="#0366d6" />
+    <!-- Three lines representing the annotation -->
+    <line x1="8" y1="9" x2="16" y2="9" stroke="#fff" stroke-width="2" stroke-linecap="round" />
+    <line x1="8" y1="12" x2="16" y2="12" stroke="#fff" stroke-width="2" stroke-linecap="round" />
+    <line x1="8" y1="15" x2="12" y2="15" stroke="#fff" stroke-width="2" stroke-linecap="round" />
+</svg>

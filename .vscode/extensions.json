@@ -1,0 +1,8 @@
+{
+    "recommendations": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "amodio.tsl-problem-matcher",
+        "ms-vscode.extension-test-runner"
+    ]
+}

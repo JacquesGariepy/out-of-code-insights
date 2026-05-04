@@ -1,0 +1,19 @@
+{
+    "typescript.tsdk": "./node_modules/typescript/lib",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.eslint": "explicit"
+    },
+    "eslint.workingDirectories": ["."],
+    "files.exclude": {
+        "out": true,
+        "dist": true
+    },
+    "search.exclude": {
+        "out": true,
+        "dist": true,
+        "node_modules": true,
+        ".vscode-test": true,
+        "coverage": true
+    }
+}

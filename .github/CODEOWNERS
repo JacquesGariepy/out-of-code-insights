@@ -1,0 +1,28 @@
+# CODEOWNERS — automatic review requests for sensitive paths.
+# Syntax: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Five rules: a default owner for the whole repo, plus four narrow
+# rules covering the paths that most often warrant a careful review.
+
+# 1. Default owner — every PR gets the maintainer as reviewer
+*                                @JacquesGariepy
+
+# 2. Domain logic (annotations, AI providers, kanban, profiles)
+/src/                            @JacquesGariepy
+
+# 3. Build, lint, packaging, and CI configuration
+/.github/workflows/              @JacquesGariepy
+/package.json                    @JacquesGariepy
+/tsconfig.json                   @JacquesGariepy
+/webpack.config.js               @JacquesGariepy
+
+# 4. Public-facing legal and governance documents
+/LICENSE                         @JacquesGariepy
+/SECURITY.md                     @JacquesGariepy
+/CODE_OF_CONDUCT.md              @JacquesGariepy
+/CONTRIBUTING.md                 @JacquesGariepy
+
+# 5. End-user and contributor documentation
+/README.md                       @JacquesGariepy
+/CHANGELOG.md                    @JacquesGariepy
+/docs/                           @JacquesGariepy

@@ -1,4 +1,8 @@
-# Out-of-code Insights [![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/JacquesGariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights)
+# Out-of-code Insights
+
+[![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/JacquesGariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](./LICENSE)
+[![CI](https://github.com/JacquesGariepy/out-of-code-insights/actions/workflows/ci.yml/badge.svg)](https://github.com/JacquesGariepy/out-of-code-insights/actions/workflows/ci.yml)
 
 Out-of-code Insights is a Visual Studio Code extension that allows you to add annotations, comments, and notes **without modifying your source files**. It is ideal for avoiding clutter in your code with temporary comments or making the code unnecessarily heavy.
 
@@ -39,9 +43,6 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 ![Annotations](https://github.com/user-attachments/assets/beedc87b-c914-48d0-b7fa-cfe8194074f5)
 
 ![feature_add](https://github.com/user-attachments/assets/ea4d463e-a2d5-4eb4-85c8-04746533213f)
-
-
-(`PNG binary file`)
 
 ## Key Features
 
@@ -110,6 +111,13 @@ Attach and execute code directly from annotations:
 
 ### Annotation History
 ![STACK](https://github.com/user-attachments/assets/7d821ca0-d38f-48df-81ae-58fc94fcb3ce)
+
+## Requirements
+
+- **Visual Studio Code:** version `1.95.0` or later
+- **Node.js:** `18+` (only required if you build from source)
+- **Operating system:** Windows, macOS, or Linux
+- **AI features (optional):** an API key for one of the supported LLM providers (OpenAI, Anthropic, Azure, Cerebras, DeepSeek, Google, Groq, Meta, Mistral, Ollama, OpenRouter, TogetherAI, xAI)
 
 ## Installation
 
@@ -345,6 +353,130 @@ This feature allows you to create multiple types of items in a single operation 
 - `F8` - Next Annotation (Review Mode)
 - `Shift+F8` - Previous Annotation (Review Mode)
 
+## 📚 Command Reference
+
+For the full command reference grouped by feature, see
+[docs/commands.md](./docs/commands.md).
+
+### Quick reference -- most-used commands
+
+| Command | Keybinding (Win/Linux) | Description |
+|---|---|---|
+| Add Annotation | `Ctrl+Alt+A` | Insert annotation on current line |
+| Edit Annotation | `Ctrl+Alt+E` | Edit annotation on current line |
+| Toggle Display | `Ctrl+Alt+T` | Show or hide all annotations |
+| Show Kanban Board | `Ctrl+Alt+K` | Open Kanban view |
+| AI Suggest | `Ctrl+Alt+I` | Generate AI annotation for current line |
+| Next Annotation | `F8` | Navigate to next annotation (review mode) |
+| Navigate to Linked | `Ctrl+Alt+L` | Jump to linked annotation |
+| Apply Template | `Ctrl+Shift+Alt+T` | Apply annotation template |
+
+### Annotation lifecycle
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.add` | Add Annotation | `Ctrl+Alt+A` |
+| `annotations.edit` | Edit Annotation | `Ctrl+Alt+E` |
+| `annotations.delete` | Delete Annotation | `Ctrl+Alt+D` |
+| `annotations.reply` | Reply to Annotation |  -  |
+| `annotations.clearAll` | Clear All Annotations |  -  |
+| `annotations.pinToggle` | Toggle Annotation Pin |  -  |
+| `annotations.setSeverity` | Set Annotation Severity |  -  |
+| `annotations.markAsViewed` | Mark Annotation as Viewed |  -  |
+| `annotations.batchEdit` | Batch Edit Annotations in File |  -  |
+
+### Display & navigation
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.show` | Show Annotations Panel | `Ctrl+Alt+S` |
+| `annotations.toggleDisplay` | Toggle Annotations Display | `Ctrl+Alt+T` |
+| `annotations.navigate` | Navigate to Annotation |  -  |
+| `annotations.moveUp` | Move Annotation Up |  -  |
+| `annotations.moveDown` | Move Annotation Down |  -  |
+| `annotations.nextAnnotation` | Next Annotation | `F8` |
+| `annotations.previousAnnotation` | Previous Annotation | `Shift+F8` |
+| `stack.back` | Navigation Stack  -  Back | `Alt+Left` |
+| `stack.forward` | Navigation Stack  -  Forward | `Alt+Right` |
+
+### Search
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.keywordSearch` | Keyword Search in Annotations |  -  |
+
+### Linked annotations
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.createLink` | Create Annotation Link |  -  |
+| `annotations.removeLink` | Remove Annotation Link |  -  |
+| `annotations.navigateToLinked` | Navigate to Linked Annotation | `Ctrl+Alt+L` |
+| `annotations.showLinks` | Show All Links |  -  |
+
+### Templates
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.createTemplate` | Create Annotation Template |  -  |
+| `annotations.applyTemplate` | Apply Template | `Ctrl+Shift+Alt+T` |
+| `annotations.manageTemplates` | Manage Templates |  -  |
+
+### Code snippets
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.addSnippet` | Add Code Snippet to Annotation |  -  |
+| `annotations.applySnippet` | Apply Code Snippet |  -  |
+| `annotations.previewSnippet` | Preview Snippet Changes |  -  |
+
+### Review mode
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.startReview` | Start Review Mode |  -  |
+| `annotations.stopReview` | Stop Review Mode |  -  |
+| `annotations.reviewMode.filter` | Filter Annotations for Review |  -  |
+
+### Kanban board
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.showKanban` | Show Kanban Board | `Ctrl+Alt+K` |
+| `annotations.addKanbanColumn` | Add Kanban Column |  -  |
+| `annotations.moveToColumn` | Move Annotation to Column |  -  |
+
+### Import / export
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.exportJSON` | Export Annotations to JSON |  -  |
+| `annotations.importJSON` | Import Annotations from JSON |  -  |
+
+### User profiles
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.selectProfile` | Select User Profile |  -  |
+| `annotations.manageProfiles` | Manage User Profiles |  -  |
+
+### AI features
+
+| Command ID | Title | Default keybinding |
+|---|---|---|
+| `annotations.aiSuggest` | AI Suggest Annotation | `Ctrl+Alt+I` |
+| `annotations.aiSuggestWithProfile` | AI Suggest with Profile |  -  |
+| `annotations.aiAnalyzeFile` | AI: Analyze Entire File |  -  |
+| `annotations.aiAnalyzeFileWithProfile` | AI: Analyze File with Profile |  -  |
+| `annotations.aiBatchAnnotate` | AI: Batch Generate Annotations |  -  |
+| `annotations.batchCreateMixed` | Batch Create Mixed Items (templates / links / snippets) |  -  |
+| `annotations.manageAIProfiles` | AI: Manage Custom Profiles |  -  |
+| `annotations.updateApiKey` | Update AI Provider API Key |  -  |
+| `annotations.updateOpenAIKey` | Update OpenAI Key *(legacy)* |  -  |
+| `annotations.resetOpenAIKey` | Reset OpenAI Key *(legacy)* |  -  |
+
+For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./docs/ai-features.md).
+
 ## 🚀 Using Advanced Features
 
 ### Creating and Managing Linked Annotations
@@ -486,16 +618,7 @@ This feature allows you to create multiple types of items in a single operation 
   - Pin or unpin annotations to keep important notes visible.
   - Command: `annotations.pinToggle`
 
-- **Convert Annotation to GitHub Issue**
-  - Convert your annotations into GitHub issues for better tracking and management.
-  - Command: `annotations.convertToIssue`
-
 ### Enhanced Features
-
-
-- **Auto-Resolve Stale Annotations**
-  - Automatically resolve annotations that are outdated or no longer relevant.
-  - Command: `annotations.autoResolveStale`
 
 - **Batch Edit Annotations in File**
   - Modify multiple annotations simultaneously within a file to streamline your workflow.
@@ -504,10 +627,6 @@ This feature allows you to create multiple types of items in a single operation 
 - **Keyword Search in Annotations**
   - Quickly locate annotations by searching for specific keywords.
   - Command: `annotations.keywordSearch`
-
-- **Filter Annotations by Severity**
-  - Organize annotations based on their severity levels for better prioritization.
-  - Command: `annotations.filterBySeverity`
 
 ### Important Notes
 
@@ -652,7 +771,6 @@ Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tab
 | Clear All Annotations             | `annotations.clearAll`       | Removes all annotations from the project.                                  |
 | Delete Annotation                 | `annotations.delete`         | Deletes the annotation on the current line.                                |
 | Edit Annotation                   | `annotations.edit`           | Edits the annotation on the current line.                                  |
-| Edit Annotation Tags             | `annotations.editTags`       | Adds or removes tags on the current annotation.                            |
 | Toggle Annotations Display        | `annotations.toggleDisplay`  | Shows or hides all annotations in the editor.                              |
 | Navigate to Annotation            | `annotations.navigate`       | Jumps directly to the specified annotation.                                |
 | Export Annotations to JSON        | `annotations.exportJSON`     | Exports all annotations to a JSON file.                                    |
@@ -669,14 +787,14 @@ Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tab
 | **Advanced Features**             |                              |                                                                            |
 | Create Link to Another Annotation| `annotations.createLink`     | Creates a relationship link between two annotations across files.           |
 | Navigate to Linked Annotation    | `annotations.navigateToLinked`| Navigates to annotations linked to the current one.                       |
-| Show All Links                    | `annotations.showAllLinks`   | Opens interactive visualization of all annotation links.                   |
+| Show All Links                    | `annotations.showLinks`      | Opens interactive visualization of all annotation links.                   |
 | Apply Annotation Template        | `annotations.applyTemplate`  | Applies a pre-built or custom template to create structured annotations.   |
 | Create Annotation Template       | `annotations.createTemplate` | Creates a new custom annotation template with variables.                   |
 | Manage Templates                  | `annotations.manageTemplates`| Opens template management interface.                                       |
 | Start Review Mode                 | `annotations.startReview`    | Begins systematic review of annotations with filtering options.            |
 | Stop Review Mode                  | `annotations.stopReview`     | Ends the current review session and shows statistics.                     |
 | Next Annotation                   | `annotations.nextAnnotation` | Navigates to the next annotation in review mode.                          |
-| Previous Annotation               | `annotations.prevAnnotation` | Navigates to the previous annotation in review mode.                      |
+| Previous Annotation               | `annotations.previousAnnotation` | Navigates to the previous annotation in review mode.                  |
 | Show Kanban Board                 | `annotations.showKanban`     | Opens the visual Kanban board for annotation management.                  |
 | Add Code Snippet to Annotation   | `annotations.addSnippet`     | Attaches an executable code snippet to an annotation.                     |
 | Apply Code Snippet               | `annotations.applySnippet`   | Executes and applies a code snippet from an annotation.                   |
@@ -780,13 +898,45 @@ These features enhance annotation management by providing an overview and manage
 - **Extension page**: Visit the VS Code marketplace page for updates and known issues
 - **Community support**: Use GitHub Discussions for questions and community help
 
+## Known Issues
+
+- **`AnnotationManager` God Object**  -  the core class is currently ~3,450 lines and concentrates 13 responsibilities. A decomposition into focused services is on the v2 roadmap (tracked as a `good first issue (architecture)`). Functionality is unaffected; the code is harder to navigate for new contributors.
+- **HTML inline in webviews**  -  three webviews embed HTML/CSS/JS inside TypeScript template literals, which prevents IDE syntax highlighting and complicates debugging. Extraction to standalone files is planned.
+- **No automated UI tests yet**  -  the test suite covers integration smoke paths only. Exhaustive UI test coverage is a backlog item.
+- **`npm install` reports transitive vulnerabilities**  -  these come from third-party transitive dependencies (notably in dev tooling). They do not affect runtime; we track upstream fixes and run `npm audit` regularly.
+
+If you hit any other issue, please [open a GitHub Issue](https://github.com/JacquesGariepy/out-of-code-insights/issues) using the bug report template.
+
+## Changelog
+
+Release notes for every published version live in [CHANGELOG.md](./CHANGELOG.md), formatted per [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## Further reading
+
+In-depth documentation lives in [`docs/`](./docs/README.md):
+
+- [**ROADMAP.md**](./ROADMAP.md): proposed features for upcoming releases (with effort estimates and value rationale).
+- [**commands.md**](./docs/commands.md): full command and keyboard shortcut reference.
+- [**onboarding.md**](./docs/onboarding.md): step-by-step guide for new contributors.
+- [**ai-features.md**](./docs/ai-features.md): end-to-end guide for every AI-powered command.
+- [**llm-providers.md**](./docs/llm-providers.md): supported providers, model selection, API-key setup.
+- [**architecture.md**](./docs/architecture.md): high-level architecture for contributors.
+
 ## Contribution
 
-Contributions are welcome! Feel free to suggest improvements, report issues, or submit pull requests.
+Contributions are welcome! Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the development setup, build/test workflow, code style rules, and pull request process. Security disclosures: see [SECURITY.md](./SECURITY.md). Community standards: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
+
+Good entry points for new contributors are issues labelled `good first issue` and `help wanted`.
 
 ## License
 
-See the [LICENSE](https://github.com/JacquesGariepy/out-of-code-insights/blob/main/license.txt) file for more information.
+This project is licensed under the **Mozilla Public License 2.0 (MPL-2.0)**: a permissive copyleft license that lets you use the extension in proprietary projects while requiring that modifications to MPL-2.0 source files remain available under MPL-2.0. See the [LICENSE](./LICENSE) file for the full text.
+
+By contributing to this project you agree that your contributions will be licensed under MPL-2.0; no Contributor License Agreement (CLA) is required.
+
+The icon assets from `@vscode/codicons` are licensed under
+[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) (Microsoft Corporation).
+See [NOTICE](./NOTICE) for the full third-party attribution list.
 
 ## Conclusion
 

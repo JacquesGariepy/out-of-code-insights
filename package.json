@@ -1,0 +1,1018 @@
+{
+    "name": "out-of-code-insights",
+    "displayName": "Out-of-Code Insights",
+    "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
+    "icon": "media/logo.png",
+    "publisher": "jacquesgariepy",
+    "version": "1.0.18",
+    "license": "MPL-2.0",
+    "author": {
+        "name": "Jacques Gariépy",
+        "email": "jacques.gariepy@outlook.com"
+    },
+    "engines": {
+        "vscode": "^1.95.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/JacquesGariepy/out-of-code-insights.git"
+    },
+    "homepage": "https://github.com/JacquesGariepy/out-of-code-insights",
+    "bugs": {
+        "url": "https://github.com/JacquesGariepy/out-of-code-insights/issues"
+    },
+    "categories": [
+        "Other",
+        "Programming Languages",
+        "AI"
+    ],
+    "keywords": [
+        "annotations",
+        "comments",
+        "collaboration",
+        "code review",
+        "productivity",
+        "openai",
+        "chat",
+        "ai"
+    ],
+    "activationEvents": [
+        "onStartupFinished"
+    ],
+    "extensionKind": [
+        "workspace"
+    ],
+    "main": "./dist/extension.js",
+    "contributes": {
+        "chatParticipants": [
+            {
+                "id": "chat.code",
+                "name": "out-of-code-insights",
+                "fullName": "out-of-code-insights",
+                "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
+                "isSticky": true
+            }
+        ],
+        "commands": [
+            {
+                "command": "annotations.add",
+                "title": "Add Annotation",
+                "icon": "$(comment-add)"
+            },
+            {
+                "command": "annotations.reply",
+                "title": "Reply to Annotation",
+                "icon": "$(reply)"
+            },
+            {
+                "command": "annotations.clearAll",
+                "title": "Clear All Annotations",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "annotations.delete",
+                "title": "Delete Annotation",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "annotations.edit",
+                "title": "Edit Annotation",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "annotations.toggleDisplay",
+                "title": "Toggle Annotations Display",
+                "icon": "$(eye)"
+            },
+            {
+                "command": "annotations.navigate",
+                "title": "Navigate to Annotation",
+                "icon": "$(arrow-right)"
+            },
+            {
+                "command": "annotations.exportJSON",
+                "title": "Export Annotations to JSON",
+                "icon": "$(cloud-upload)"
+            },
+            {
+                "command": "annotations.importJSON",
+                "title": "Import Annotations from JSON",
+                "icon": "$(cloud-download)"
+            },
+            {
+                "command": "annotations.pinToggle",
+                "title": "Toggle Annotation Pin",
+                "icon": "$(pin)"
+            },
+            {
+                "command": "annotations.setSeverity",
+                "title": "Set Annotation Severity",
+                "icon": "$(alert)"
+            },
+            {
+                "command": "annotations.batchEdit",
+                "title": "Batch Edit Annotations in File",
+                "icon": "$(edit)"
+            },
+            {
+                "command": "annotations.keywordSearch",
+                "title": "Keyword Search in Annotations",
+                "icon": "$(search)"
+            },
+            {
+                "command": "annotations.aiSuggest",
+                "title": "AI Suggest Annotation",
+                "icon": "$(zap)"
+            },
+            {
+                "command": "annotations.moveUp",
+                "title": "Move Annotation Up",
+                "icon": "$(arrow-up)"
+            },
+            {
+                "command": "annotations.moveDown",
+                "title": "Move Annotation Down",
+                "icon": "$(arrow-down)"
+            },
+            {
+                "command": "annotations.show",
+                "title": "Show Annotations Panel",
+                "icon": "$(comment-discussion)"
+            },
+            {
+                "command": "annotations.updateOpenAIKey",
+                "title": "Update OpenAI Key"
+            },
+            {
+                "command": "annotations.resetOpenAIKey",
+                "title": "Reset OpenAI Key"
+            },
+            {
+                "command": "stack.back",
+                "title": "Stack Back",
+                "icon": "$(arrow-left)"
+            },
+            {
+                "command": "stack.forward",
+                "title": "Stack Forward",
+                "icon": "$(arrow-right)"
+            },
+            {
+                "command": "annotations.navigateToLinked",
+                "title": "Navigate to Linked Annotation",
+                "icon": "$(link-external)"
+            },
+            {
+                "command": "annotations.createLink",
+                "title": "Create Annotation Link",
+                "icon": "$(link)"
+            },
+            {
+                "command": "annotations.removeLink",
+                "title": "Remove Annotation Link",
+                "icon": "$(link-remove)"
+            },
+            {
+                "command": "annotations.showLinks",
+                "title": "Show All Links",
+                "icon": "$(references)"
+            },
+            {
+                "command": "annotations.createTemplate",
+                "title": "Create Annotation Template",
+                "icon": "$(file-code)"
+            },
+            {
+                "command": "annotations.applyTemplate",
+                "title": "Apply Template",
+                "icon": "$(file-symlink-file)"
+            },
+            {
+                "command": "annotations.manageTemplates",
+                "title": "Manage Templates",
+                "icon": "$(files)"
+            },
+            {
+                "command": "annotations.startReview",
+                "title": "Start Review Mode",
+                "icon": "$(play)"
+            },
+            {
+                "command": "annotations.stopReview",
+                "title": "Stop Review Mode",
+                "icon": "$(stop)"
+            },
+            {
+                "command": "annotations.nextAnnotation",
+                "title": "Next Annotation",
+                "icon": "$(arrow-down)"
+            },
+            {
+                "command": "annotations.previousAnnotation",
+                "title": "Previous Annotation",
+                "icon": "$(arrow-up)"
+            },
+            {
+                "command": "annotations.markAsViewed",
+                "title": "Mark as Viewed",
+                "icon": "$(check)"
+            },
+            {
+                "command": "annotations.showKanban",
+                "title": "Show Kanban Board",
+                "icon": "$(project)"
+            },
+            {
+                "command": "annotations.addKanbanColumn",
+                "title": "Add Kanban Column",
+                "icon": "$(add)"
+            },
+            {
+                "command": "annotations.moveToColumn",
+                "title": "Move to Column",
+                "icon": "$(arrow-swap)"
+            },
+            {
+                "command": "annotations.reviewMode.filter",
+                "title": "Filter Annotations for Review",
+                "icon": "$(filter)"
+            },
+            {
+                "command": "annotations.addSnippet",
+                "title": "Add Code Snippet to Annotation",
+                "icon": "$(code)"
+            },
+            {
+                "command": "annotations.applySnippet",
+                "title": "Apply Code Snippet",
+                "icon": "$(check)"
+            },
+            {
+                "command": "annotations.previewSnippet",
+                "title": "Preview Snippet Changes",
+                "icon": "$(eye)"
+            },
+            {
+                "command": "annotations.selectProfile",
+                "title": "Select User Profile",
+                "icon": "$(account)"
+            },
+            {
+                "command": "annotations.manageProfiles",
+                "title": "Manage User Profiles",
+                "icon": "$(accounts)"
+            },
+            {
+                "command": "annotations.aiSuggestWithProfile",
+                "title": "AI Suggest with Profile",
+                "icon": "$(zap)"
+            },
+            {
+                "command": "annotations.aiAnalyzeFile",
+                "title": "AI: Analyze Entire File",
+                "icon": "$(file-code)"
+            },
+            {
+                "command": "annotations.aiBatchAnnotate",
+                "title": "AI: Batch Generate Annotations",
+                "icon": "$(checklist)"
+            },
+            {
+                "command": "annotations.aiAnalyzeFileWithProfile",
+                "title": "AI: Analyze File with Profile",
+                "icon": "$(file-code)"
+            },
+            {
+                "command": "annotations.updateApiKey",
+                "title": "Update AI Provider API Key",
+                "icon": "$(key)"
+            },
+            {
+                "command": "annotations.manageAIProfiles",
+                "title": "AI: Manage Custom Profiles",
+                "icon": "$(settings-gear)"
+            },
+            {
+                "command": "annotations.batchCreateMixed",
+                "title": "Batch Create Mixed Items",
+                "icon": "$(checklist)"
+            },
+            {
+                "command": "outOfCodeInsights.showLogs",
+                "title": "Out-of-Code Insights: Show Logs",
+                "icon": "$(output)"
+            }
+        ],
+        "submenus": [
+            {
+                "id": "outOfCodeInsightsSubMenu",
+                "label": "Out-of-Code Insight"
+            },
+            {
+                "id": "aiAnalysisSubMenu",
+                "label": "AI Analysis"
+            }
+        ],
+        "menus": {
+            "editor/lineNumber/context": [
+                {
+                    "submenu": "outOfCodeInsightsSubMenu",
+                    "group": "navigation"
+                }
+            ],
+            "editor/context": [
+                {
+                    "submenu": "outOfCodeInsightsSubMenu",
+                    "group": "navigation",
+                    "when": "editorTextFocus"
+                }
+            ],
+            "outOfCodeInsightsSubMenu": [
+                {
+                    "command": "annotations.add",
+                    "group": "_submenu",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.edit",
+                    "group": "_submenu",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.delete",
+                    "group": "_submenu",
+                    "order": 3
+                },
+                {
+                    "submenu": "aiAnalysisSubMenu",
+                    "group": "_submenu",
+                    "order": 4,
+                    "when": "config.annotation.enableAiSuggest"
+                },
+                {
+                    "command": "annotations.moveUp",
+                    "group": "_submenu",
+                    "order": 5
+                },
+                {
+                    "command": "annotations.moveDown",
+                    "group": "_submenu",
+                    "order": 6
+                },
+                {
+                    "command": "annotations.pinToggle",
+                    "group": "_submenu",
+                    "order": 7
+                },
+                {
+                    "command": "annotations.setSeverity",
+                    "group": "_submenu",
+                    "order": 8
+                },
+                {
+                    "command": "annotations.createLink",
+                    "group": "_submenu",
+                    "order": 9
+                },
+                {
+                    "command": "annotations.navigateToLinked",
+                    "group": "_submenu",
+                    "order": 10,
+                    "when": "hasLinkedAnnotations"
+                },
+                {
+                    "command": "annotations.showLinks",
+                    "group": "_submenu",
+                    "order": 11
+                },
+                {
+                    "command": "annotations.toggleDisplay",
+                    "group": "_submenu",
+                    "order": 12
+                },
+                {
+                    "command": "annotations.show",
+                    "group": "_submenu"
+                },
+                {
+                    "command": "annotations.exportJSON",
+                    "group": "_submenu_2"
+                },
+                {
+                    "command": "annotations.importJSON",
+                    "group": "_submenu_2"
+                },
+                {
+                    "command": "annotations.clearAll",
+                    "group": "_submenu_2"
+                },
+                {
+                    "command": "annotations.keywordSearch",
+                    "group": "_submenu_3"
+                },
+                {
+                    "command": "annotations.createLink",
+                    "group": "_submenu_3",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.navigateToLinked",
+                    "group": "_submenu_3",
+                    "order": 3
+                },
+                {
+                    "command": "annotations.removeLink",
+                    "group": "_submenu_3",
+                    "order": 4
+                },
+                {
+                    "command": "annotations.createTemplate",
+                    "group": "_submenu_4",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.applyTemplate",
+                    "group": "_submenu_4",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.manageTemplates",
+                    "group": "_submenu_4",
+                    "order": 3
+                },
+                {
+                    "command": "annotations.addSnippet",
+                    "group": "_submenu_4",
+                    "order": 4
+                },
+                {
+                    "command": "annotations.applySnippet",
+                    "group": "_submenu_4",
+                    "order": 5
+                },
+                {
+                    "command": "annotations.previewSnippet",
+                    "group": "_submenu_4",
+                    "order": 6
+                }
+            ],
+            "aiAnalysisSubMenu": [
+                {
+                    "command": "annotations.aiSuggest",
+                    "group": "1_basic",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.aiSuggestWithProfile",
+                    "group": "1_basic",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.aiAnalyzeFile",
+                    "group": "2_analyze",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.aiAnalyzeFileWithProfile",
+                    "group": "2_analyze",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.aiBatchAnnotate",
+                    "group": "3_batch",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.batchCreateMixed",
+                    "group": "3_batch",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.manageAIProfiles",
+                    "group": "4_profiles",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.selectProfile",
+                    "group": "4_profiles",
+                    "order": 2
+                }
+            ],
+            "view/item/context": [
+                {
+                    "command": "annotations.edit",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 1
+                },
+                {
+                    "command": "annotations.delete",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 2
+                },
+                {
+                    "command": "annotations.pinToggle",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 3
+                },
+                {
+                    "command": "annotations.setSeverity",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 4
+                },
+                {
+                    "command": "annotations.aiSuggest",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked) && config.annotation.enableAiSuggest",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 5
+                },
+                {
+                    "command": "annotations.createLink",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 6
+                },
+                {
+                    "command": "annotations.showLinks",
+                    "when": "view == annotationsView && viewItem == annotation-linked",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 7
+                },
+                {
+                    "command": "annotations.moveToColumn",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 8
+                },
+                {
+                    "command": "annotations.markAsViewed",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "editor": true,
+                    "order": 9
+                }
+            ],
+            "view/title": [
+                {
+                    "command": "annotations.toggleDisplay",
+                    "when": "view == annotationsView",
+                    "group": "navigation@1",
+                    "icon": "$(eye)",
+                    "order": 1
+                },
+                {
+                    "command": "annotations.aiSuggest",
+                    "when": "view == annotationsView && config.annotation.enableAiSuggest",
+                    "group": "navigation@2",
+                    "icon": "$(zap)",
+                    "order": 2
+                },
+                {
+                    "command": "annotations.keywordSearch",
+                    "when": "view == annotationsView",
+                    "group": "navigation@3",
+                    "icon": "$(search)",
+                    "order": 3
+                },
+                {
+                    "command": "annotations.exportJSON",
+                    "when": "view == annotationsView",
+                    "group": "navigation@4",
+                    "icon": "$(cloud-upload)",
+                    "order": 4
+                },
+                {
+                    "command": "annotations.importJSON",
+                    "when": "view == annotationsView",
+                    "group": "navigation@5",
+                    "icon": "$(cloud-download)",
+                    "order": 5
+                },
+                {
+                    "command": "annotations.show",
+                    "when": "view == annotationsView",
+                    "group": "navigation@6",
+                    "title": "Show Annotations Panel",
+                    "icon": "$(notebook-render-output)",
+                    "order": 7
+                },
+                {
+                    "command": "annotations.showKanban",
+                    "when": "view == annotationsView",
+                    "group": "navigation@7",
+                    "icon": "$(project)",
+                    "order": 8
+                },
+                {
+                    "command": "annotations.startReview",
+                    "when": "view == annotationsView",
+                    "group": "navigation@8",
+                    "icon": "$(play)",
+                    "order": 9
+                },
+                {
+                    "command": "annotations.stopReview",
+                    "when": "view == annotationsView",
+                    "group": "navigation@8",
+                    "icon": "$(stop)",
+                    "order": 10
+                },
+                {
+                    "command": "annotations.manageTemplates",
+                    "when": "view == annotationsView",
+                    "group": "navigation@9",
+                    "icon": "$(files)",
+                    "order": 11
+                }
+            ]
+        },
+        "keybindings": [
+            {
+                "command": "annotations.add",
+                "key": "ctrl+alt+a",
+                "mac": "cmd+alt+a",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.delete",
+                "key": "ctrl+alt+d",
+                "mac": "cmd+alt+d",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.edit",
+                "key": "ctrl+alt+e",
+                "mac": "cmd+alt+e",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.show",
+                "key": "ctrl+alt+s",
+                "mac": "cmd+alt+s",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.toggleDisplay",
+                "key": "ctrl+alt+t",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.aiSuggest",
+                "key": "ctrl+alt+i",
+                "mac": "cmd+alt+i",
+                "when": "editorTextFocus && config.annotation.enableAiSuggest"
+            },
+            {
+                "command": "stack.back",
+                "key": "alt+left",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "stack.forward",
+                "key": "alt+right",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.navigateToLinked",
+                "key": "ctrl+alt+l",
+                "mac": "cmd+alt+l",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.applyTemplate",
+                "key": "ctrl+shift+alt+t",
+                "mac": "cmd+shift+alt+t",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.nextAnnotation",
+                "key": "f8",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.previousAnnotation",
+                "key": "shift+f8",
+                "when": "editorTextFocus"
+            },
+            {
+                "command": "annotations.showKanban",
+                "key": "ctrl+alt+k",
+                "mac": "cmd+alt+k",
+                "when": "editorTextFocus"
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Out-of-Code Insights Configuration",
+            "description": "Configure annotation colors, delays, providers, model, and other settings.",
+            "properties": {
+                "annotation.colors.light.annotation": {
+                    "type": "string",
+                    "default": "#0366d6",
+                    "description": "Color of annotations in light theme"
+                },
+                "annotation.provider": {
+                    "type": "string",
+                    "default": "openai",
+                    "description": "LLM provider to use (openai, anthropic, azure, cerebras, deepseek, google, groq, meta, mistralai, ollama, openrouter, togetherai, xai, claude)."
+                },
+                "annotation.model": {
+                    "type": "string",
+                    "default": "gpt-4o-mini",
+                    "description": "Model to use for the selected provider."
+                },
+                "llm.apiKeys": {
+                    "type": "object",
+                    "default": {},
+                    "description": "API keys for all supported LLM providers.",
+                    "properties": {
+                        "openai": {
+                            "type": "string",
+                            "default": "",
+                            "description": "OpenAI API key"
+                        },
+                        "anthropic": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Anthropic API key"
+                        },
+                        "azure": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Azure OpenAI API key"
+                        },
+                        "mistralai": {
+                            "type": "string",
+                            "default": "",
+                            "description": "MistralAI API key"
+                        },
+                        "groq": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Groq API key"
+                        },
+                        "ollama": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Ollama API key"
+                        },
+                        "google": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Google API key"
+                        },
+                        "openrouter": {
+                            "type": "string",
+                            "default": "",
+                            "description": "OpenRouter API key"
+                        },
+                        "togetherai": {
+                            "type": "string",
+                            "default": "",
+                            "description": "TogetherAI API key"
+                        },
+                        "xai": {
+                            "type": "string",
+                            "default": "",
+                            "description": "xAI API key"
+                        },
+                        "claude": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Claude (Anthropic) API key"
+                        }
+                    }
+                },
+                "annotation.colors.light.highlightBackground": {
+                    "type": "string",
+                    "default": "#f1f8ff",
+                    "description": "Highlight background for annotations in light theme"
+                },
+                "annotation.colors.light.commentBorder": {
+                    "type": "string",
+                    "default": "#e1e4e8",
+                    "description": "Comment border color in light theme"
+                },
+                "annotation.colors.dark.annotation": {
+                    "type": "string",
+                    "default": "#58a6ff",
+                    "description": "Color of annotations in dark theme"
+                },
+                "annotation.colors.dark.highlightBackground": {
+                    "type": "string",
+                    "default": "#182030",
+                    "description": "Highlight background for annotations in dark theme"
+                },
+                "annotation.colors.dark.commentBorder": {
+                    "type": "string",
+                    "default": "#30363d",
+                    "description": "Comment border color in dark theme"
+                },
+                "annotation.debounceDelay": {
+                    "type": "number",
+                    "default": 10,
+                    "description": "Debounce delay for refreshing annotations",
+                    "minimum": 0
+                },
+                "annotation.maxAnnotationsPerFile": {
+                    "type": "number",
+                    "default": 1000,
+                    "description": "Maximum number of annotations per file",
+                    "minimum": 0
+                },
+                "annotation.username": {
+                    "type": "string",
+                    "default": "Anonymous",
+                    "description": "Username for annotations"
+                },
+                "annotation.codelens.enable": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable CodeLens for annotations"
+                },
+                "annotation.codelens.showCommands": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show commands in CodeLens"
+                },
+                "annotation.github.repository": {
+                    "type": "string",
+                    "default": "",
+                    "description": "GitHub repository in the format 'owner/repo' to create issues from annotations."
+                },
+                "annotation.enableAiSuggest": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable or disable the AI Suggest Annotation feature."
+                },
+                "annotation.path": {
+                    "type": "string",
+                    "default": ".out-of-code-insights/annotations.json",
+                    "description": "Custom path to the annotations file or directory. If a directory is given, an annotations.json file will be created inside it."
+                },
+                "annotation.defaultSeverity": {
+                    "type": "string",
+                    "enum": [
+                        "info",
+                        "warning",
+                        "error"
+                    ],
+                    "default": "info",
+                    "description": "Default severity level for new annotations."
+                },
+                "annotation.userProfile": {
+                    "type": "string",
+                    "enum": [
+                        "developer",
+                        "analyst",
+                        "architect",
+                        "custom"
+                    ],
+                    "default": "developer",
+                    "description": "User profile for annotation generation (affects AI suggestions and templates)."
+                },
+                "annotation.enableProfileBasedSuggestions": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable profile-based AI suggestions for annotations."
+                },
+                "annotation.claudeUseSDK": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Use Claude Code SDK with automatic fallback to REST API if SDK fails."
+                },
+                "annotation.language": {
+                    "type": "string",
+                    "enum": [
+                        "en",
+                        "fr"
+                    ],
+                    "enumDescriptions": [
+                        "English",
+                        "Français"
+                    ],
+                    "default": "en",
+                    "description": "Language for the extension interface"
+                },
+                "outOfCodeInsights.logLevel": {
+                    "type": "string",
+                    "enum": ["debug", "info", "warn", "error"],
+                    "enumDescriptions": [
+                        "All messages including verbose debug output",
+                        "Informational messages and above (default)",
+                        "Warnings and errors only",
+                        "Errors only"
+                    ],
+                    "default": "info",
+                    "description": "Minimum log level written to the Out-of-Code Insights output channel and log file."
+                }
+            }
+        },
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "annotations",
+                    "title": "Out-of-Code Insights",
+                    "icon": "media/annotations.svg"
+                }
+            ]
+        },
+        "views": {
+            "annotations": [
+                {
+                    "id": "annotationsView",
+                    "name": "Out-of-Code Insights",
+                    "icon": "media/annotations.svg"
+                },
+                {
+                    "id": "stackView",
+                    "name": "Stack",
+                    "icon": "media/annotations.svg"
+                }
+            ],
+            "explorer": [
+                {
+                    "id": "annotationsExplorerView",
+                    "name": "Annotations",
+                    "icon": "media/eye.svg"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "compile": "webpack --mode development",
+        "build": "npm run compile",
+        "watch:webpack": "webpack --mode development --watch",
+        "watch:tsc": "tsc -w --preserveWatchOutput",
+        "dev": "concurrently -k \"npm run watch:tsc\" \"npm run watch:webpack\"",
+        "vscode:prepublish": "npm run package",
+        "package": "webpack --mode production --devtool hidden-source-map",
+        "package:vsix": "vsce package --no-dependencies",
+        "lint": "eslint src --ext .ts",
+        "lint:ci": "eslint src --ext .ts --max-warnings 0",
+        "lint:fix": "eslint src --ext .ts --fix",
+        "format": "prettier --write \"src/**/*.{ts,json}\" \"*.{json,md}\"",
+        "format:check": "prettier --check \"src/**/*.{ts,json}\" \"*.{json,md}\"",
+        "typecheck": "tsc --noEmit",
+        "check": "npm run typecheck && npm run lint:ci && npm run format:check",
+        "pretest": "npm run typecheck && npm run compile-tests",
+        "compile-tests": "tsc -p ./",
+        "test": "node ./out/test/runTest.js",
+        "coverage": "c8 --reporter=text --reporter=lcov npm test",
+        "coverage:check": "c8 check-coverage --lines 15 --functions 15 --branches 10",
+        "test:unit": "mocha out/test/suite/unit/**/*.js --timeout 5000"
+    },
+    "devDependencies": {
+        "@types/diff": "^6.0.0",
+        "@types/fs-extra": "^11.0.4",
+        "@types/glob": "^8.1.0",
+        "@types/lodash": "^4.17.13",
+        "@types/mocha": "^10.0.10",
+        "@types/node": "^16.11.7",
+        "@types/vscode": "^1.95.0",
+        "@typescript-eslint/eslint-plugin": "^5.30.0",
+        "@typescript-eslint/parser": "^5.30.0",
+        "@vscode/test-electron": "^2.5.2",
+        "@vscode/vsce": "^3.9.1",
+        "c8": "^10.1.2",
+        "concurrently": "^9.2.1",
+        "esbuild": "^0.25.12",
+        "eslint": "^8.13.0",
+        "eslint-config-prettier": "^10.1.8",
+        "eslint-plugin-prettier": "^5.5.5",
+        "glob": "^13.0.6",
+        "mocha": "^11.7.5",
+        "prettier": "^3.8.3",
+        "terser-webpack-plugin": "^5.3.10",
+        "ts-loader": "^9.5.1",
+        "typescript": "^5.9.3",
+        "webpack": "^5.97.0",
+        "webpack-cli": "^5.1.4",
+        "webpack-dev-server": "^5.1.0"
+    },
+    "dependencies": {
+        "@anthropic-ai/claude-code": "^2.1.126",
+        "@octokit/rest": "21.0.2",
+        "@vscode/codicons": "^0.0.36",
+        "abort-controller": "^3.0.0",
+        "diff": "^7.0.0",
+        "fs-extra": "^11.2.0",
+        "lodash": "^4.17.21",
+        "multi-llm-ts": "^4.0.0",
+        "node-abort-controller": "^3.1.1",
+        "openai": "^4.76.0",
+        "path-browserify": "^1.0.1",
+        "vscode-nls": "^5.2.0"
+    }
+}

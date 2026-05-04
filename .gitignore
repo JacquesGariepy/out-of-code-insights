@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build output
+out/
+dist/
+*.vsix
+*.tsbuildinfo
+
+# Local debug logs
+logs/
+
+# Local marker and scratch files
+*.tct
+
+# Test artifacts and coverage
+.vscode-test/
+coverage/
+test-fixtures/**/*.js
+test-fixtures/**/*.js.map
+
+# Editor & OS
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*~
+
+# Secrets
+.env
+.env.*
+
+# This extension's own annotation data store, when this repo is the workspace
+.out-of-code-insights/
+
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+!.vscode/extensions.json

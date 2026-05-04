@@ -1,0 +1,60 @@
+# Source / build / dev artifacts
+src/**
+out/**
+test-fixtures/**
+**/*.ts
+!out/**/*.d.ts
+**/*.map
+tsconfig.json
+webpack.config.js
+esbuild.js
+node_modules/**
+
+# VS Code workspace + tests
+.vscode/**
+.vscode-test/**
+.github/**
+
+# Linting / formatting / config
+.eslintrc.json
+.prettierrc.json
+.prettierignore
+.editorconfig
+
+# Git
+.gitignore
+.gitattributes
+.git/**
+
+# Project documentation that lives on the repo, not the package
+docs/**
+CONTRIBUTING.md
+SECURITY.md
+CODE_OF_CONDUCT.md
+ROADMAP.md
+NOTICE
+
+# Duplicate license file (LICENSE is the canonical copy)
+license.txt
+
+# Large demo media not needed at runtime
+**/*.gif
+
+# Local marker files
+**/*.tct
+
+# Tooling config files not needed at runtime
+.c8rc
+.nvmrc
+typedoc.json
+.prettierignore
+.prettierrc.json
+.eslintrc.json
+.editorconfig
+package-lock.json
+
+# Workspace-local data
+.out-of-code-insights/**
+
+# Local-only / aux files
+*.vsix

@@ -1,0 +1,61 @@
+Out-of-Code Insights
+Copyright 2024-2026 Jacques Gariepy
+SPDX-License-Identifier: MPL-2.0
+
+This product includes software developed by third parties.
+
+================================================================================
+THIRD-PARTY NOTICES
+================================================================================
+
+--------------------------------------------------------------------------------
+@anthropic-ai/claude-code
+--------------------------------------------------------------------------------
+The @anthropic-ai/claude-code package declares "SEE LICENSE IN README.md" in
+its package.json. As of version 1.0.128, the package is distributed under the
+MIT License. See: https://www.npmjs.com/package/@anthropic-ai/claude-code
+
+MIT License
+Copyright (c) Anthropic PBC
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+--------------------------------------------------------------------------------
+@vscode/codicons -- VS Code Codicons icon set
+--------------------------------------------------------------------------------
+Copyright (c) Microsoft Corporation
+Licensed under the Creative Commons Attribution 4.0 International (CC-BY-4.0).
+
+The icon assets from @vscode/codicons are used in this extension's UI.
+Attribution: VS Code Codicons by Microsoft Corporation
+Source: https://github.com/microsoft/vscode-codicons
+License: https://creativecommons.org/licenses/by/4.0/
+
+You are free to:
+  Share -- copy and redistribute the material in any medium or format
+  Adapt -- remix, transform, and build upon the material
+  for any purpose, even commercially, under the following terms:
+  Attribution -- You must give appropriate credit, provide a link to the
+  license, and indicate if changes were made.
+
+================================================================================
+All other runtime dependencies use MIT, Apache-2.0, or BSD-3-Clause licenses,
+all compatible with MPL-2.0. See docs/THIRD_PARTY_LICENSES.md for the full
+list.
+================================================================================

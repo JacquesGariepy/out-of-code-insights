@@ -1,0 +1,97 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Out-of-Code Insights
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for taking the time to report a bug.
+        Please do NOT use this form for security vulnerabilities.
+        See [SECURITY.md](../SECURITY.md) for private disclosure instructions.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open VS Code with the extension installed
+        2. Open any file
+        3. Right-click and select "Add Annotation"
+        4. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include error messages if any.
+    validations:
+      required: true
+
+  - type: input
+    id: vscode_version
+    attributes:
+      label: VS Code version
+      placeholder: "e.g., 1.95.0  (Help > About)"
+    validations:
+      required: true
+
+  - type: input
+    id: extension_version
+    attributes:
+      label: Extension version
+      placeholder: "e.g., 1.0.17  (Extensions panel > Out-of-Code Insights)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 10
+        - Windows 11
+        - macOS 13+
+        - Ubuntu / Debian
+        - Other Linux
+      multiple: false
+    validations:
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js version
+      description: Run `node --version` in a terminal.
+      placeholder: "e.g., v20.11.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: |
+        Paste relevant output from the VS Code Developer Console
+        (Help > Toggle Developer Tools > Console tab).
+        Redact any API keys or personal file paths before posting.
+    validations:
+      required: false

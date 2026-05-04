@@ -1,0 +1,59 @@
+version: 2
+updates:
+  # npm: production and dev dependencies
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Toronto
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore(deps)
+      prefix-development: chore(deps-dev)
+      include: scope
+    groups:
+      types:
+        patterns:
+          - "@types/*"
+      eslint:
+        patterns:
+          - "eslint*"
+          - "@typescript-eslint/*"
+      webpack:
+        patterns:
+          - "webpack*"
+          - "ts-loader"
+          - "terser-webpack-plugin"
+      llm-providers:
+        patterns:
+          - "openai"
+          - "@anthropic-ai/*"
+          - "multi-llm-ts"
+      security:
+        patterns:
+          - "serialize-javascript"
+          - "diff"
+          - "esbuild"
+    ignore:
+      # Pin Node typings to the runtime VS Code ships with
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions workflows -- keep pinned SHAs current
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Toronto
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: chore(ci)
+      include: scope

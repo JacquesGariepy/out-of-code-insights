@@ -1,0 +1,8 @@
+{
+    "lines": 15,
+    "functions": 15,
+    "branches": 10,
+    "statements": 15,
+    "reporter": ["text", "lcov"],
+    "exclude": ["out/test/**", "node_modules/**", "dist/**"]
+}

@@ -1,0 +1,55 @@
+name: Feature Request
+description: Propose an idea or improvement for Out-of-Code Insights
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting an improvement.
+        Check [ROADMAP.md](../../ROADMAP.md) to see if your idea is already planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this feature address? What friction do you experience?
+      placeholder: "e.g., I cannot export annotations as PDF for audit reports."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature you would like to see.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you have tried.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Critical -- blocks my workflow entirely
+        - High -- significant friction every day
+        - Medium -- occasional inconvenience
+        - Low -- nice to have
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, mockups, links to related issues or tools.
+    validations:
+      required: false

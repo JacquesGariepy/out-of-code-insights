@@ -1,0 +1,46 @@
+{
+    "root": true,
+    "parser": "@typescript-eslint/parser",
+    "parserOptions": {
+        "ecmaVersion": 2022,
+        "sourceType": "module"
+    },
+    "plugins": ["@typescript-eslint"],
+    "extends": [
+        "eslint:recommended",
+        "plugin:@typescript-eslint/recommended",
+        "prettier"
+    ],
+    "rules": {
+        "@typescript-eslint/no-explicit-any": "warn",
+        "@typescript-eslint/no-unused-vars": [
+            "warn",
+            { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+        ],
+        "@typescript-eslint/no-non-null-assertion": "warn",
+        "@typescript-eslint/no-empty-function": "warn",
+        "@typescript-eslint/no-var-requires": "warn",
+        "no-console": ["warn", { "allow": ["warn", "error"] }],
+        "no-throw-literal": "error",
+        "eqeqeq": ["error", "smart"],
+        "curly": ["error", "multi-line"],
+        "semi": ["error", "always"],
+        "prefer-const": "error",
+        "no-var": "error",
+        "no-empty": "warn",
+        "no-case-declarations": "warn"
+    },
+    "ignorePatterns": [
+        "node_modules/",
+        "out/",
+        "dist/",
+        "*.d.ts"
+    ],
+    "overrides": [
+        {
+            "files": ["webpack.config.js"],
+            "parserOptions": { "sourceType": "commonjs" },
+            "rules": { "@typescript-eslint/no-var-requires": "off" }
+        }
+    ]
+}

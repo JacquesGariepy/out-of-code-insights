@@ -1,0 +1,29 @@
+# Normalize line endings to LF on checkout
+* text=auto eol=lf
+
+# Source files
+*.ts text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.txt text eol=lf
+.editorconfig text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+
+# Binary assets -- never diff or merge
+*.png binary
+*.gif binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.vsix binary
+*.tct -text
+
+# Linguist overrides
+media/ linguist-documentation
+test-fixtures/ linguist-vendored
