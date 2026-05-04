@@ -63,6 +63,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build extension bundle (required by VS Code test host)
+        run: npm run compile
+
       - name: Compile tests
         run: npm run compile-tests
 
