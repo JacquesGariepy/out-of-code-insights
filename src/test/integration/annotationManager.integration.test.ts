@@ -29,6 +29,7 @@ interface MockAnnotation {
     lineHash?: string;
     contextBefore?: string[];
     contextAfter?: string[];
+    trackingAnchor?: AnchorData;
     origin?: {
         kind: 'copy-paste';
         sourceId: string;
@@ -2204,6 +2205,14 @@ function getCutLinesForChange(
     return exclusive.length > 0 ? exclusive : inclusive;
 }
 
+function contentChangesEraseLine(contentChanges: readonly ContentChange[], line: number): boolean {
+    return contentChanges.some(change =>
+        change.text.replace(/\r\n/g, '').length === 0 &&
+        line >= change.range.start.line &&
+        line <= change.range.end.line
+    );
+}
+
 /**
  * Mirror of the post-fix AnnotationManager.handleDocumentChange covering:
  *   1. tryRestoreFromRecentDeletions with restoredThisEvent tracking
@@ -2274,6 +2283,7 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         if (restoredThisEvent.has(id)) { continue; }
 
         const oldLine = annotation.line;
+        const erasureTouchesOldLine = contentChangesEraseLine(ev.contentChanges, oldLine);
         const undoRemovesCopiedAnnotation =
             ev.isUndoRedo &&
             annotation.origin?.kind === 'copy-paste' &&
@@ -2286,6 +2296,14 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
             state.annotations.delete(id);
             removed.push(id);
             continue;
+        }
+
+        if (!erasureTouchesOldLine && annotation.trackingAnchor) {
+            const trackingLine = findAnchor(ev.doc, annotation.trackingAnchor, -1);
+            if (trackingLine !== null && trackingLine !== oldLine) {
+                applySetLine(annotation, trackingLine, ev.doc);
+                continue;
+            }
         }
 
         const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
@@ -2334,6 +2352,14 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         if (arithmeticOutOfRange) { markedDeleted = true; }
 
         if (markedDeleted || lineDisplaced) {
+            if (!erasureTouchesOldLine && annotation.trackingAnchor) {
+                const trackingLine = findAnchor(ev.doc, annotation.trackingAnchor, -1);
+                if (trackingLine !== null) {
+                    applySetLine(annotation, trackingLine, ev.doc);
+                    continue;
+                }
+            }
+
             const allowFindAnchor = !pureCutTouchedLine && !arithmeticOutOfRange;
             if (allowFindAnchor && annotation.lineHash) {
                 const anchor: AnchorData = {
@@ -2932,6 +2958,80 @@ suite('F5 regression: undo after copy+paste removes the copied annotation', () =
         const original = state.annotations.get('anno1');
         assert.ok(original, 'original annotation should remain');
         assert.strictEqual(original.line, 1);
+    });
+});
+
+suite('F5 regression: copied annotation can be cut and pasted again', () => {
+    const file = 'copyCut.ts';
+    const fileKey = 'file://copyCut.ts';
+    const baseLines = [
+        'start();',       // 0
+        'tracked();',     // 1 <-- original annotation
+        'next();',        // 2
+        'end();',         // 3
+    ];
+    const baseDoc = makeDoc(baseLines);
+    const anchor = captureAnchor(baseDoc, 1);
+
+    const state = makeState();
+    snapshotDoc(state, fileKey, baseDoc);
+    state.annotations.set('orig', {
+        id: 'orig', file, line: 1,
+        lineHash: anchor.lineHash,
+        contextBefore: anchor.contextBefore,
+        contextAfter: anchor.contextAfter,
+        message: 'copied note',
+    } as MockAnnotation & { message?: string });
+
+    const block = 'tracked();\nnext();\n';
+    const afterCopyPasteLines = [...baseLines, 'tracked();', 'next();'];
+    const afterCopyPasteDoc = makeDoc(afterCopyPasteLines);
+    runFullPipeline(state, {
+        fileKey, file, doc: afterCopyPasteDoc,
+        contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: block }],
+        clipboardText: block,
+    });
+    const duplicate = Array.from(state.annotations.values()).find(a => a.id !== 'orig');
+    assert.ok(duplicate, 'copy-paste should create duplicate before the cut scenario');
+    duplicate.trackingAnchor = {
+        lineHash: hashLine('tracked();'),
+        contextBefore: [],
+        contextAfter: ['next();'],
+    };
+
+    // Now cut the copied block. This is NOT Undo: the copied annotation must
+    // enter recentDeletions and follow the subsequent paste like normal text.
+    const afterCutCopiedLines = [...afterCopyPasteLines.slice(0, 4)];
+    const afterCutCopiedDoc = makeDoc(afterCutCopiedLines);
+    const cutOut = runFullPipeline(state, {
+        fileKey, file, doc: afterCutCopiedDoc,
+        contentChanges: [{ range: { start: { line: 4 }, end: { line: 6 } }, text: '' }],
+        clipboardText: block,
+    });
+    const liveAfterCut = liveCount(state, file);
+    const bufferAfterCut = state.recentDeletions.size;
+
+    const afterPasteCopiedLines = [...afterCutCopiedLines.slice(0, 2), 'tracked();', 'next();', ...afterCutCopiedLines.slice(2)];
+    const afterPasteCopiedDoc = makeDoc(afterPasteCopiedLines);
+    const pasteOut = runFullPipeline(state, {
+        fileKey, file, doc: afterPasteCopiedDoc,
+        contentChanges: [{ range: { start: { line: 2 }, end: { line: 2 } }, text: block }],
+        clipboardText: block,
+    });
+
+    test('cut of copied annotation defers it instead of deleting it', () => {
+        assert.ok(cutOut.deferred.includes(duplicate.id));
+        assert.deepStrictEqual(cutOut.removed, []);
+        assert.strictEqual(liveAfterCut, 1, 'only original remains live while copy is in cut buffer');
+        assert.strictEqual(bufferAfterCut, 1);
+    });
+
+    test('paste restores the copied annotation at the new paste location', () => {
+        assert.deepStrictEqual(pasteOut.restored, [duplicate.id]);
+        const movedCopy = state.annotations.get(duplicate.id);
+        assert.ok(movedCopy, 'copied annotation should be restored');
+        assert.strictEqual(movedCopy.line, 2);
+        assert.strictEqual(liveCount(state, file), 2);
     });
 });
 

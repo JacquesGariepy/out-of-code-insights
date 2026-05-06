@@ -3787,13 +3787,16 @@ export class AnnotationManager extends EventEmitter {
                 return;
             }
 
-            const lineFromTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
-            if (
-                lineFromTrackingAnchor !== null &&
-                lineFromTrackingAnchor !== oldLine
-            ) {
-                this.setAnnotationLine(annotation, lineFromTrackingAnchor, document);
-                return;
+            const erasureTouchesOldLine = this.contentChangesEraseLine(event.contentChanges, oldLine);
+            if (!erasureTouchesOldLine) {
+                const lineFromTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
+                if (
+                    lineFromTrackingAnchor !== null &&
+                    lineFromTrackingAnchor !== oldLine
+                ) {
+                    this.setAnnotationLine(annotation, lineFromTrackingAnchor, document);
+                    return;
+                }
             }
 
             const trackingTargetLine = annotation.anchor?.targetLine;
@@ -3876,10 +3879,12 @@ export class AnnotationManager extends EventEmitter {
             }
 
             if (markedDeleted || lineDisplaced) {
-                const lineFromDisplacedTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
-                if (lineFromDisplacedTrackingAnchor !== null) {
-                    this.setAnnotationLine(annotation, lineFromDisplacedTrackingAnchor, document);
-                    return;
+                if (!erasureTouchesOldLine) {
+                    const lineFromDisplacedTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
+                    if (lineFromDisplacedTrackingAnchor !== null) {
+                        this.setAnnotationLine(annotation, lineFromDisplacedTrackingAnchor, document);
+                        return;
+                    }
                 }
 
                 // Pure deletion (Ctrl+X / Backspace on the annotated line, text='')
@@ -4195,6 +4200,17 @@ export class AnnotationManager extends EventEmitter {
         }
 
         return exclusive.length > 0 ? exclusive : inclusive;
+    }
+
+    private contentChangesEraseLine(
+        contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+        line: number
+    ): boolean {
+        return contentChanges.some(change =>
+            change.text.replace(/\r\n/g, '').length === 0 &&
+            line >= change.range.start.line &&
+            line <= change.range.end.line
+        );
     }
 
     private shouldRemoveCopiedAnnotationOnUndo(
