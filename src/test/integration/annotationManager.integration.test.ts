@@ -596,6 +596,8 @@ interface DeferredEntry {
     annotation: MockAnnotation;
     deletedAt: number;
     offsetInBlock: number;
+    cutText?: string;
+    cutLineHashes?: string[];
 }
 
 class ClipboardBuffer {
@@ -2089,6 +2091,74 @@ interface FullPipelineOutcome {
     deferred: string[];
 }
 
+function normalizeClipboardText(text: string): string {
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function stripSingleTrailingLineBreak(text: string): string {
+    return text.endsWith('\n') ? text.slice(0, -1) : text;
+}
+
+function splitClipboardLines(text: string): string[] {
+    return stripSingleTrailingLineBreak(normalizeClipboardText(text)).split('\n');
+}
+
+function clipboardTextMatches(changeText: string, clipboardText: string): boolean {
+    const normalizedChange = normalizeClipboardText(changeText);
+    const normalizedClipboard = normalizeClipboardText(clipboardText);
+    return normalizedChange === normalizedClipboard ||
+        stripSingleTrailingLineBreak(normalizedChange) ===
+        stripSingleTrailingLineBreak(normalizedClipboard);
+}
+
+function normalizedTextEquals(a: string | undefined, b: string | undefined): boolean {
+    if (!a || !b) { return false; }
+    return stripSingleTrailingLineBreak(normalizeClipboardText(a)) ===
+        stripSingleTrailingLineBreak(normalizeClipboardText(b));
+}
+
+function deferredPasteMatchesChange(
+    deferred: DeferredEntry,
+    changeText: string,
+    clipboardText: string
+): boolean {
+    if (changeText.length === 0) { return false; }
+    if (normalizedTextEquals(deferred.cutText, changeText)) {
+        return true;
+    }
+    if (deferred.cutLineHashes?.length) {
+        const insertedHashes = splitClipboardLines(changeText).map(line => hashLine(line));
+        if (
+            insertedHashes.length === deferred.cutLineHashes.length &&
+            insertedHashes.every((hash, index) => hash === deferred.cutLineHashes?.[index])
+        ) {
+            return true;
+        }
+    }
+    return clipboardTextMatches(changeText, clipboardText) &&
+        normalizedTextEquals(deferred.cutText, clipboardText);
+}
+
+function getCutLinesForChange(
+    oldLines: readonly string[],
+    change: ContentChange,
+    offsetInBlock: number
+): string[] {
+    const start = Math.max(0, change.range.start.line);
+    const end = Math.max(start + 1, change.range.end.line);
+    const exclusive = oldLines.slice(start, end);
+    if (offsetInBlock < exclusive.length) {
+        return exclusive;
+    }
+
+    const inclusive = oldLines.slice(start, Math.min(oldLines.length, end + 1));
+    if (offsetInBlock < inclusive.length) {
+        return inclusive;
+    }
+
+    return exclusive.length > 0 ? exclusive : inclusive;
+}
+
 /**
  * Mirror of the post-fix AnnotationManager.handleDocumentChange covering:
  *   1. tryRestoreFromRecentDeletions with restoredThisEvent tracking
@@ -2101,18 +2171,22 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
     const restoredThisEvent = new Set<string>();
     const restored: string[] = [];
     const deferred: string[] = [];
+    const clipboardText = ev.clipboardText ?? '';
 
     // Phase: try to recover deferred (cut) annotations against this document.
     if (state.recentDeletions.size > 0) {
         const recovered: string[] = [];
         for (const [id, def] of state.recentDeletions) {
             let found: number | null = null;
+            let sawMatchingPaste = false;
             for (const change of ev.contentChanges) {
+                if (!deferredPasteMatchesChange(def, change.text, clipboardText)) {
+                    continue;
+                }
+                sawMatchingPaste = true;
                 const insertedLines = change.text.split('\n');
                 const startLine = change.range.start.line;
-                const endLine = change.range.end.line;
-                const lineDelta = insertedLines.length - (endLine - startLine + 1);
-                if (lineDelta <= 0) { continue; }
+                if (change.text.length === 0) { continue; }
                 if (def.offsetInBlock >= insertedLines.length) { continue; }
                 const expected = hashLine(insertedLines[def.offsetInBlock]);
                 if (expected === def.annotation.lineHash) {
@@ -2120,7 +2194,7 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                     break;
                 }
             }
-            if (found === null && def.annotation.lineHash) {
+            if (found === null && sawMatchingPaste && def.annotation.lineHash) {
                 const anchor: AnchorData = {
                     lineHash: def.annotation.lineHash,
                     contextBefore: def.annotation.contextBefore ?? [],
@@ -2214,9 +2288,11 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 }
             }
             let offsetInBlock = 0;
+            let cutLinesForAnnotation: string[] | undefined;
             for (const ch of ev.contentChanges) {
                 if (annotation.line >= ch.range.start.line && annotation.line <= ch.range.end.line) {
                     offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
+                    cutLinesForAnnotation = getCutLinesForChange(oldLines, ch, offsetInBlock);
                     break;
                 }
             }
@@ -2225,6 +2301,8 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 annotation: { ...annotation },
                 deletedAt: Date.now(),
                 offsetInBlock,
+                cutText: cutLinesForAnnotation?.join('\n'),
+                cutLineHashes: cutLinesForAnnotation?.map(line => hashLine(line)),
             });
             deferred.push(id);
         } else if (currentLine !== oldLine) {
@@ -2458,6 +2536,103 @@ suite('F5 regression: cut multi-line block then paste -- count stays at 1, lands
     test('event 2 (paste): no duplicate annotation created alongside the restored one', () => {
         assert.strictEqual(pasteOut.duplicatesCreated, 0);
         assert.strictEqual(liveCount(state, file), 1, 'cut+paste must move, never duplicate');
+    });
+});
+
+suite('F5 regression: cut multi-line block then edit before paste -- annotation stays suspended', () => {
+    const file = 'src/sample.ts';
+    const fileKey = 'file://sample.ts';
+    const baseLines = [
+        'const start = 1;',                  // 0
+        'function setup() {',                // 1
+        '    return start;',                 // 2
+        '}',                                 // 3
+        '',                                  // 4
+        'async function run() {',            // 5
+        '    try {',                         // 6
+        '        await work();',             // 7
+        '    } catch (error) {',             // 8
+        '        report(error);',            // 9
+        '    }',                             // 10
+        '}',                                 // 11
+        '',                                  // 12
+        'function target() {',               // 13
+        '',                                  // 14 <-- annotation above console.error
+        '    console.error(error);',         // 15
+        '}',                                 // 16
+        'export { run, target };',           // 17
+    ];
+    const baseDoc = makeDoc(baseLines);
+    const anchor = captureAnchor(baseDoc, 14, { walkForward: 0, walkBackward: 0 });
+    const cutBlockLines = ['', '    console.error(error);'];
+    const cutBlockText = cutBlockLines.join('\n');
+
+    const state = makeState();
+    snapshotDoc(state, fileKey, baseDoc);
+    state.annotations.set('anno1', {
+        id: 'anno1', file, line: 14,
+        lineHash: anchor.lineHash,
+        contextBefore: anchor.contextBefore,
+        contextAfter: anchor.contextAfter,
+        message: 'watch error path',
+    } as MockAnnotation & { message?: string });
+
+    // EVENT 1: Ctrl+X on lines 14..15. The annotation enters recentDeletions
+    // with cutText bound to the full selected block, including the blank line.
+    const afterCutLines = [...baseLines.slice(0, 14), ...baseLines.slice(16)];
+    const afterCutDoc = makeDoc(afterCutLines);
+    const cutOut = runFullPipeline(state, {
+        fileKey, file, doc: afterCutDoc,
+        contentChanges: [{ range: { start: { line: 14 }, end: { line: 16 } }, text: '' }],
+        clipboardText: `${cutBlockText}\n`,
+    });
+    const liveAfterCut = liveCount(state, file);
+    const bufferAfterCut = state.recentDeletions.size;
+
+    // EVENT 2: user moves to line 10 and inserts a local newline before pasting.
+    // This must not recover the blank-line annotation to the cursor location.
+    const afterLocalEditLines = [...afterCutLines.slice(0, 10), '', ...afterCutLines.slice(10)];
+    const afterLocalEditDoc = makeDoc(afterLocalEditLines);
+    const editOut = runFullPipeline(state, {
+        fileKey, file, doc: afterLocalEditDoc,
+        contentChanges: [{ range: { start: { line: 10 }, end: { line: 10 } }, text: '\n' }],
+        clipboardText: `${cutBlockText}\n`,
+    });
+    const liveAfterLocalEdit = liveCount(state, file);
+    const bufferAfterLocalEdit = state.recentDeletions.size;
+
+    // EVENT 3: actual paste of the cut block at line 10 restores the annotation
+    // block-relative to the pasted content.
+    const afterPasteLines = [
+        ...afterLocalEditLines.slice(0, 10),
+        ...cutBlockLines,
+        ...afterLocalEditLines.slice(10),
+    ];
+    const afterPasteDoc = makeDoc(afterPasteLines);
+    const pasteOut = runFullPipeline(state, {
+        fileKey, file, doc: afterPasteDoc,
+        contentChanges: [{ range: { start: { line: 10 }, end: { line: 10 } }, text: `${cutBlockText}\n` }],
+        clipboardText: `${cutBlockText}\n`,
+    });
+
+    test('event 1 (cut): annotation is removed from live map and stored in the cut buffer', () => {
+        assert.strictEqual(cutOut.deferred.length, 1);
+        assert.strictEqual(liveAfterCut, 0);
+        assert.strictEqual(bufferAfterCut, 1);
+    });
+
+    test('event 2 (local edit before paste): no recovery occurs at the cursor line', () => {
+        assert.deepStrictEqual(editOut.restored, []);
+        assert.strictEqual(liveAfterLocalEdit, 0);
+        assert.strictEqual(bufferAfterLocalEdit, 1);
+    });
+
+    test('event 3 (paste): annotation is restored to the pasted blank line', () => {
+        assert.deepStrictEqual(pasteOut.restored, ['anno1']);
+        const annotation = state.annotations.get('anno1');
+        assert.ok(annotation, 'annotation should be live after paste');
+        assert.strictEqual(annotation.line, 10);
+        assert.strictEqual(state.recentDeletions.size, 0);
     });
 });
 

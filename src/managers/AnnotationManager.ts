@@ -82,6 +82,10 @@ export class AnnotationManager extends EventEmitter {
         deletedAt: number;
         /** Offset of annotation.line within the deleted block (for block-relative paste recovery). */
         offsetInBlock: number;
+        /** Exact text removed by the cut/delete event, when known from the previous document snapshot. */
+        cutText?: string;
+        /** Hashes for each removed line; used to verify that a later edit is the matching paste. */
+        cutLineHashes?: string[];
     }> = new Map();
     /** Annotations silently removed via cut-expiry, kept briefly for Undo toast. */
     private deletedRecently: Map<string, { annotation: Annotation; removedAt: number }> = new Map();
@@ -3637,6 +3641,8 @@ export class AnnotationManager extends EventEmitter {
                 preChangeLinesByAnnotationId.set(annotation.id, annotation.line);
             }
         });
+        const clipboardTextForCutRecovery =
+            this.recentDeletions.size > 0 ? await this.readClipboardTextSafely() : '';
 
         // IDs handled by the cut/paste recovery phase below. Mutual exclusion: any
         // annotation restored from recentDeletions in this event MUST be skipped by
@@ -3650,6 +3656,10 @@ export class AnnotationManager extends EventEmitter {
         const expiredAnnotations: Annotation[] = [];
         for (const [id, deferred] of this.recentDeletions) {
             if (now - deferred.deletedAt > this.clipboardWindowMs) {
+                if (this.deferredClipboardStillMatches(deferred, clipboardTextForCutRecovery)) {
+                    deferred.deletedAt = now;
+                    continue;
+                }
                 expiredAnnotations.push(deferred.annotation);
                 this.recentDeletions.delete(id);
                 this.deletedRecently.set(id, { annotation: deferred.annotation, removedAt: now });
@@ -3662,10 +3672,15 @@ export class AnnotationManager extends EventEmitter {
             const recovered: string[] = [];
             for (const [id, deferred] of this.recentDeletions) {
                 let found: number | null = null;
+                let sawMatchingPaste = false;
 
                 // Primary: block-relative position from a paste contentChange.
                 // Avoids false negatives caused by sparse context (e.g. leading empty lines).
                 for (const change of event.contentChanges) {
+                    if (!this.deferredPasteMatchesChange(deferred, change.text, clipboardTextForCutRecovery)) {
+                        continue;
+                    }
+                    sawMatchingPaste = true;
                     const insertedLines = change.text.split('\n');
                     const startLine = change.range.start.line;
                     if (change.text.length === 0) { continue; }
@@ -3679,7 +3694,7 @@ export class AnnotationManager extends EventEmitter {
 
                 // Fallback: full-document findAnchor (covers same-file atomic paste
                 // and clipboard recovery triggered by non-paste events).
-                if (found === null && deferred.annotation.lineHash) {
+                if (found === null && sawMatchingPaste && deferred.annotation.lineHash) {
                     const anchor: AnchorData = {
                         lineHash: deferred.annotation.lineHash,
                         contextBefore: deferred.annotation.contextBefore ?? [],
@@ -3886,10 +3901,14 @@ export class AnnotationManager extends EventEmitter {
                 // Defer: remove from live map, hold in clipboard buffer.
                 // A paste event within clipboardWindowMs will restore it silently.
                 let offsetInBlock = 0;
+                let cutLinesForAnnotation: string[] | undefined;
                 for (const ch of event.contentChanges) {
                     if (annotation.line >= ch.range.start.line &&
                         annotation.line <= ch.range.end.line) {
                         offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
+                        cutLinesForAnnotation = oldLines
+                            ? this.getCutLinesForChange(oldLines, ch, offsetInBlock)
+                            : undefined;
                         break;
                     }
                 }
@@ -3899,6 +3918,8 @@ export class AnnotationManager extends EventEmitter {
                     annotation: { ...annotation },
                     deletedAt: Date.now(),
                     offsetInBlock,
+                    cutText: cutLinesForAnnotation?.join('\n'),
+                    cutLineHashes: cutLinesForAnnotation?.map(line => hashLine(line)),
                 });
                 this.log(
                     `cut/displace: deferred annotation ${annotation.id} from ${relativeFilePath}:${oldLine} ` +
@@ -4051,6 +4072,14 @@ export class AnnotationManager extends EventEmitter {
         return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
     }
 
+    private async readClipboardTextSafely(): Promise<string> {
+        try {
+            return await vscode.env.clipboard.readText();
+        } catch {
+            return '';
+        }
+    }
+
     private stripSingleTrailingLineBreak(text: string): string {
         return text.endsWith('\n') ? text.slice(0, -1) : text;
     }
@@ -4065,6 +4094,78 @@ export class AnnotationManager extends EventEmitter {
         return normalizedChange === normalizedClipboard ||
             this.stripSingleTrailingLineBreak(normalizedChange) ===
             this.stripSingleTrailingLineBreak(normalizedClipboard);
+    }
+
+    private normalizedTextEquals(a: string | undefined, b: string | undefined): boolean {
+        if (!a || !b) { return false; }
+        return this.stripSingleTrailingLineBreak(this.normalizeClipboardText(a)) ===
+            this.stripSingleTrailingLineBreak(this.normalizeClipboardText(b));
+    }
+
+    private deferredClipboardStillMatches(
+        deferred: {
+            cutText?: string;
+            annotation: Annotation;
+        },
+        clipboardText: string
+    ): boolean {
+        if (this.normalizedTextEquals(deferred.cutText, clipboardText)) {
+            return true;
+        }
+
+        const normalizedClipboard = this.stripSingleTrailingLineBreak(
+            this.normalizeClipboardText(clipboardText)
+        );
+        return normalizedClipboard.length > 0 &&
+            deferred.annotation.lineHash !== undefined &&
+            this.splitClipboardLines(normalizedClipboard).some(line =>
+                hashLine(line) === deferred.annotation.lineHash
+            );
+    }
+
+    private deferredPasteMatchesChange(
+        deferred: {
+            cutText?: string;
+            cutLineHashes?: string[];
+        },
+        changeText: string,
+        clipboardText: string
+    ): boolean {
+        if (changeText.length === 0) { return false; }
+        if (this.normalizedTextEquals(deferred.cutText, changeText)) {
+            return true;
+        }
+        if (deferred.cutLineHashes?.length) {
+            const insertedHashes = this.splitClipboardLines(changeText).map(line => hashLine(line));
+            if (
+                insertedHashes.length === deferred.cutLineHashes.length &&
+                insertedHashes.every((hash, index) => hash === deferred.cutLineHashes?.[index])
+            ) {
+                return true;
+            }
+        }
+        return this.clipboardTextMatches(changeText, clipboardText) &&
+            this.normalizedTextEquals(deferred.cutText, clipboardText);
+    }
+
+    private getCutLinesForChange(
+        oldLines: readonly string[],
+        change: vscode.TextDocumentContentChangeEvent,
+        offsetInBlock: number
+    ): string[] {
+        const start = Math.max(0, change.range.start.line);
+        const end = Math.max(start + 1, change.range.end.line);
+        const exclusive = oldLines.slice(start, end);
+        if (offsetInBlock < exclusive.length) {
+            return exclusive;
+        }
+
+        const inclusive = oldLines.slice(start, Math.min(oldLines.length, end + 1));
+        if (offsetInBlock < inclusive.length) {
+            return inclusive;
+        }
+
+        return exclusive.length > 0 ? exclusive : inclusive;
     }
 
     private collectCopySourceCandidates(
