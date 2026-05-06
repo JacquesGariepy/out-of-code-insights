@@ -185,6 +185,39 @@ export interface FindAnchorOptions {
     allowUniqueHashFallback?: boolean;
 }
 
+function scoreAnchorContextAtLine(
+    doc: TextDocumentLike,
+    anchor: AnchorData,
+    line: number
+): number {
+    let score = 0;
+
+    const beforeStart = line - anchor.contextBefore.length;
+    for (let j = 0; j < anchor.contextBefore.length; j++) {
+        if (anchor.contextBefore[j] === '') { continue; }
+        const docIdx = beforeStart + j;
+        if (
+            docIdx >= 0 &&
+            normalizeLine(doc.lineAt(docIdx).text) === anchor.contextBefore[j]
+        ) {
+            score += 2;
+        }
+    }
+
+    for (let j = 0; j < anchor.contextAfter.length; j++) {
+        if (anchor.contextAfter[j] === '') { continue; }
+        const docIdx = line + 1 + j;
+        if (
+            docIdx < doc.lineCount &&
+            normalizeLine(doc.lineAt(docIdx).text) === anchor.contextAfter[j]
+        ) {
+            score += 2;
+        }
+    }
+
+    return score;
+}
+
 /**
  * Try to find where an annotated line moved to inside a document.
  *
@@ -222,15 +255,6 @@ export function findAnchor(
         return null;
     }
 
-    // Fast path: stored position still valid
-    if (storedLine >= 0 && storedLine < lineCount) {
-        if (hashLine(doc.lineAt(storedLine).text) === anchor.lineHash) {
-            return storedLine;
-        }
-    }
-
-    // Adaptive score threshold: empty lines ('') are ubiquitous and add noise, not
-    // signal.  Count only meaningful (non-empty) context entries to set the bar.
     const meaningfulCtx = meaningfulBefore + meaningfulAfter;
     // threshold=4 needs 2+ meaningful lines; relax to 2 when context is sparse.
     // For empty-hash anchors we already required >=1 meaningful context above,
@@ -240,6 +264,20 @@ export function findAnchor(
             ? 4
             : meaningfulCtx >= 2 ? 4 : 2;
 
+    // Fast path: stored position still valid
+    if (storedLine >= 0 && storedLine < lineCount) {
+        if (hashLine(doc.lineAt(storedLine).text) === anchor.lineHash) {
+            if (anchor.lineHash !== EMPTY_LINE_HASH) {
+                return storedLine;
+            }
+            if (scoreAnchorContextAtLine(doc, anchor, storedLine) >= scoreThreshold) {
+                return storedLine;
+            }
+        }
+    }
+
+    // Adaptive score threshold: empty lines ('') are ubiquitous and add noise, not
+    // signal.  Count only meaningful (non-empty) context entries to set the bar.
     let bestLine = -1;
     let bestScore = -1;
     let candidateCount = 0;
@@ -252,32 +290,7 @@ export function findAnchor(
         candidateCount++;
         lastCandidate = i;
 
-        let score = 0;
-
-        // Score lines before the candidate -- skip empty context slots (too ambiguous)
-        const beforeStart = i - anchor.contextBefore.length;
-        for (let j = 0; j < anchor.contextBefore.length; j++) {
-            if (anchor.contextBefore[j] === '') { continue; }
-            const docIdx = beforeStart + j;
-            if (
-                docIdx >= 0 &&
-                normalizeLine(doc.lineAt(docIdx).text) === anchor.contextBefore[j]
-            ) {
-                score += 2;
-            }
-        }
-
-        // Score lines after the candidate -- same rule
-        for (let j = 0; j < anchor.contextAfter.length; j++) {
-            if (anchor.contextAfter[j] === '') { continue; }
-            const docIdx = i + 1 + j;
-            if (
-                docIdx < lineCount &&
-                normalizeLine(doc.lineAt(docIdx).text) === anchor.contextAfter[j]
-            ) {
-                score += 2;
-            }
-        }
+        const score = scoreAnchorContextAtLine(doc, anchor, i);
 
         if (score > bestScore) {
             bestScore = score;

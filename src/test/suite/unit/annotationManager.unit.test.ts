@@ -221,6 +221,107 @@ suite('annotation tracking: copy+paste resolver behavior', () => {
     });
 });
 
+suite('annotation tracking: blank-line annotation follows nearby moved code', () => {
+    function makeSampleLines(): string[] {
+        return [
+            '',
+            '',
+            'interface User {',
+            '  id: number;',
+            '  name: string;',
+            '  email: string;',
+            '}',
+            '',
+            '',
+            'async function displayUser(userId: number): Promise<void> {',
+            '  try {',
+            '    const user = await fetchUser(userId);',
+            '    console.log(user.name);',
+            '  } catch (error) {',
+            '',
+            '    console.error(error);',
+            '  }',
+            '}',
+            '',
+            '',
+            '', // annotation render line, user-facing line 21
+            'function fetchUser(id: number): Promise<User> {',
+            '  return fetch(`/api/users/${id}`)',
+            '    .then((response) => response.json())',
+            '}',
+            '',
+            '',
+            'export { User, fetchUser, displayUser };',
+        ];
+    }
+
+    function resolveRenderLineAfterMove(
+        moveStart: number,
+        moveCount: number,
+        insertAt: number
+    ): number {
+        const beforeLines = makeSampleLines();
+        const beforeDoc = makeDoc(beforeLines);
+        const renderLine = 20;
+        const trackingAnchor = captureAnchor(beforeDoc, renderLine);
+        assert.strictEqual(trackingAnchor.targetLine, 21);
+        if (trackingAnchor.targetLine === undefined) {
+            throw new Error('tracking anchor should have a target line');
+        }
+        const trackingTargetLine = trackingAnchor.targetLine;
+
+        const afterLines = [...beforeLines];
+        const moved = afterLines.splice(moveStart, moveCount);
+        afterLines.splice(insertAt, 0, ...moved);
+        const moves = detectMoves(beforeLines, afterLines);
+        const trackingMove = moves.find(
+            move => trackingTargetLine >= move.oldStart && trackingTargetLine <= move.oldEnd
+        );
+        assert.ok(trackingMove, 'the tracking target should be detected inside the moved block');
+        const movedRenderLine =
+            trackingMove.newStart +
+            (trackingTargetLine - trackingMove.oldStart) +
+            (renderLine - trackingTargetLine);
+        const afterDoc = makeDoc(afterLines);
+
+        const foundTarget = findAnchor(
+            afterDoc,
+            {
+                lineHash: trackingAnchor.lineHash,
+                contextBefore: trackingAnchor.contextBefore,
+                contextAfter: trackingAnchor.contextAfter,
+            },
+            trackingTargetLine,
+            { allowUniqueHashFallback: true }
+        );
+        if (foundTarget === null) {
+            throw new Error('tracking target should resolve');
+        }
+
+        const resolvedRenderLine = foundTarget + (renderLine - trackingTargetLine);
+        assert.strictEqual(movedRenderLine, resolvedRenderLine);
+        return resolvedRenderLine;
+    }
+
+    test('blank line above fetchUser tracks the function header instead of jumping to a later blank line', () => {
+        const resolvedRenderLine = resolveRenderLineAfterMove(21, 1, 22);
+        assert.strictEqual(resolvedRenderLine, 21);
+        assert.notStrictEqual(resolvedRenderLine, 30, 'must not jump to the blank line before export');
+    });
+
+    test('moving only the fetchUser header upward keeps the annotation with the header', () => {
+        const resolvedRenderLine = resolveRenderLineAfterMove(21, 1, 19);
+        assert.strictEqual(resolvedRenderLine, 18);
+        assert.notStrictEqual(resolvedRenderLine, 29, 'must not jump to the blank line before export');
+    });
+
+    test('moving fetchUser header plus the return line upward keeps the blank-line annotation attached', () => {
+        const resolvedRenderLine = resolveRenderLineAfterMove(21, 2, 8);
+        assert.strictEqual(resolvedRenderLine, 7);
+        assert.notStrictEqual(resolvedRenderLine, 27, 'must not remain near the original function body');
+    });
+});
+
 suite('annotation tracking: drag-and-drop via two sequential ContentChange events', () => {
     test('annotation follows through delete-then-insert sequence', () => {
         // Simulate drag: user moves line 3 to line 0.

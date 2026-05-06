@@ -163,8 +163,16 @@ export class AnnotationManager extends EventEmitter {
             if (this.annotationsEnabled) {
                 await this.loadKanbanColumns(); // Load kanban columns first
                 await this.loadAnnotations();
-                // Snapshot documents that are already open before the extension activated
-                vscode.workspace.textDocuments.forEach(doc => this.snapshotDocument(doc));
+                // Snapshot and repair documents that are already open before activation.
+                let repairedOpenDocumentAnchors = false;
+                for (const doc of vscode.workspace.textDocuments) {
+                    this.snapshotDocument(doc);
+                    repairedOpenDocumentAnchors =
+                        this.repairBlankLineTrackingAnchors(doc) || repairedOpenDocumentAnchors;
+                }
+                if (repairedOpenDocumentAnchors) {
+                    await this.saveAnnotations();
+                }
                 this.log('Registering additional commands...');
                 this.registerAdditionalCommands(); // Register only non-core commands
                 this.log('Registering CodeLens provider...');
@@ -1683,20 +1691,25 @@ export class AnnotationManager extends EventEmitter {
         if (doc && newLine >= 0 && newLine < doc.lineCount) {
             // Caller has chosen newLine deliberately (e.g. after a paste-recover or
             // arithmetic shift); do not walk to a different line.
-            const anchor = captureAnchor(doc, newLine, { walkForward: 0, walkBackward: 0 });
-            annotation.lineHash = anchor.lineHash;
-            annotation.contextBefore = anchor.contextBefore;
-            annotation.contextAfter = anchor.contextAfter;
-            // Keep structured anchor in sync (preserve symbol metadata if present).
-            if (annotation.anchor) {
-                annotation.anchor = {
-                    ...annotation.anchor,
-                    targetLine: newLine,
-                    anchorTextHash: anchor.lineHash,
-                    contextBefore: anchor.contextBefore,
-                    contextAfter: anchor.contextAfter,
-                };
-            }
+            const exactAnchor = captureAnchor(doc, newLine, { walkForward: 0, walkBackward: 0 });
+            const trackingAnchor = captureAnchor(doc, newLine);
+            annotation.lineHash = exactAnchor.lineHash;
+            annotation.contextBefore = exactAnchor.contextBefore;
+            annotation.contextAfter = exactAnchor.contextAfter;
+
+            annotation.anchor = {
+                ...(annotation.anchor ?? {
+                    kind: 'line' as const,
+                    originalLine: newLine,
+                    symbolName: null,
+                    symbolKind: null,
+                    symbolSignature: null,
+                }),
+                targetLine: trackingAnchor.targetLine ?? newLine,
+                anchorTextHash: trackingAnchor.lineHash,
+                contextBefore: trackingAnchor.contextBefore,
+                contextAfter: trackingAnchor.contextAfter,
+            };
         }
     }
 
@@ -1748,7 +1761,7 @@ export class AnnotationManager extends EventEmitter {
             return;
         }
         try {
-            const annotationsArray = Array.from(this.annotations.values());
+            const annotationsArray = this.getPersistableAnnotations();
             const content = JSON.stringify(annotationsArray, null, 2);
             const fileData = Buffer.from(content, 'utf8');
             await vscode.workspace.fs.writeFile(uri, fileData);
@@ -1764,11 +1777,18 @@ export class AnnotationManager extends EventEmitter {
             this.log('No workspace folder open; skipping annotation save.');
             return;
         }
-        const annotationsArray = Array.from(this.annotations.values());
+        const annotationsArray = this.getPersistableAnnotations();
         const content = JSON.stringify(annotationsArray, null, 2);
         const fileData = Buffer.from(content, 'utf8');
         const fileUri = vscode.Uri.file(annotationFilePath);
         await vscode.workspace.fs.writeFile(fileUri, fileData);
+    }
+
+    private getPersistableAnnotations(): Omit<Annotation, 'resolvedAnchor'>[] {
+        return Array.from(this.annotations.values()).map(annotation => {
+            const { resolvedAnchor: _resolvedAnchor, ...persisted } = annotation;
+            return persisted;
+        });
     }
 
     private async saveKanbanColumns(): Promise<void> {
@@ -1806,7 +1826,12 @@ export class AnnotationManager extends EventEmitter {
             const content = Buffer.from(fileData).toString('utf8');
             const rawArray = JSON.parse(content) as Annotation[];
             // Defensive sanity: drop entries with no id/message (data corruption).
-            const valid = rawArray.filter(a => a && typeof a.id === 'string' && typeof a.message === 'string');
+            const valid = rawArray
+                .filter(a => a && typeof a.id === 'string' && typeof a.message === 'string')
+                .map(a => {
+                    delete a.resolvedAnchor;
+                    return a;
+                });
             // Migrate legacy schema (assigns fileUri, marks suspicious entries as stale)
             // then collapse exact (file, timestamp, message) triplets.
             const migrated = valid.map(a => this.migrateLegacyAnnotation(a));
@@ -3283,37 +3308,33 @@ export class AnnotationManager extends EventEmitter {
         doc: vscode.TextDocument,
         cursorLine: number
     ): Promise<void> {
-        const sym = await this.resolveSymbolForLine(doc, cursorLine);
-        // Capture exactly at the resolver's chosen line. NO further walking:
-        // a previous defensive fallback re-walked from the cursor whenever
-        // captured.lineHash === EMPTY_LINE_HASH, which moved annotations
-        // 1-2 lines below the user's click on blank lines. We accept an
-        // empty hash here -- contextBefore/contextAfter still pin the
-        // annotation, findAnchor can re-locate via context, and the legacy
-        // migration only marks stale when context is ALSO empty.
-        const captured = captureAnchor(doc, sym.targetLine, { walkForward: 0, walkBackward: 0 });
-        const targetLine = sym.targetLine;
+        // Store two anchors:
+        //   - exactAnchor is the line where the user asked to render the note.
+        //   - trackingAnchor may walk from a blank line to nearby code, so a note
+        //     placed on the blank line above a function can still follow that
+        //     function when the line is dragged or pasted elsewhere.
+        const exactAnchor = captureAnchor(doc, cursorLine, { walkForward: 0, walkBackward: 0 });
+        const trackingAnchor = captureAnchor(doc, cursorLine);
+        const targetLine = cursorLine;
+        const trackingLine = trackingAnchor.targetLine ?? cursorLine;
 
         annotation.fileUri = doc.uri.toString();
         annotation.languageId = doc.languageId;
         annotation.line = targetLine;
-        annotation.lineHash = captured.lineHash;
-        annotation.contextBefore = captured.contextBefore;
-        annotation.contextAfter = captured.contextAfter;
+        annotation.lineHash = exactAnchor.lineHash;
+        annotation.contextBefore = exactAnchor.contextBefore;
+        annotation.contextAfter = exactAnchor.contextAfter;
 
-        const isMeaningfulHash = captured.lineHash !== EMPTY_LINE_HASH;
-        const symbolName = isMeaningfulHash ? sym.symbolName : null;
-        const symbolKind = isMeaningfulHash ? sym.symbolKind : null;
         const anchor: AnnotationAnchor = {
-            kind: symbolName ? 'symbol' : 'line',
+            kind: 'line',
             originalLine: cursorLine,
-            targetLine,
-            symbolName: symbolName ?? null,
-            symbolKind: symbolKind ?? null,
+            targetLine: trackingLine,
+            symbolName: null,
+            symbolKind: null,
             symbolSignature: null,
-            anchorTextHash: captured.lineHash,
-            contextBefore: captured.contextBefore,
-            contextAfter: captured.contextAfter,
+            anchorTextHash: trackingAnchor.lineHash,
+            contextBefore: trackingAnchor.contextBefore,
+            contextAfter: trackingAnchor.contextAfter,
         };
         annotation.anchor = anchor;
 
@@ -3322,8 +3343,38 @@ export class AnnotationManager extends EventEmitter {
             status: 'attached',
             line: targetLine,
             confidence: 1,
-            reason: anchor.kind === 'symbol' ? `Symbol ${symbolName}` : 'Line anchor',
+            reason: 'Line anchor',
         };
+    }
+
+    private resolveTrackingAnchorLine(
+        annotation: Annotation,
+        doc: vscode.TextDocument
+    ): number | null {
+        const structuredAnchor = annotation.anchor;
+        if (
+            !structuredAnchor?.anchorTextHash ||
+            structuredAnchor.anchorTextHash === EMPTY_LINE_HASH
+        ) {
+            return null;
+        }
+
+        const foundTargetLine = findAnchor(
+            doc,
+            {
+                lineHash: structuredAnchor.anchorTextHash,
+                contextBefore: structuredAnchor.contextBefore ?? [],
+                contextAfter: structuredAnchor.contextAfter ?? [],
+            },
+            structuredAnchor.targetLine,
+            { allowUniqueHashFallback: true }
+        );
+        if (foundTargetLine === null) {
+            return null;
+        }
+
+        const renderLine = foundTargetLine + (annotation.line - structuredAnchor.targetLine);
+        return renderLine >= 0 && renderLine < doc.lineCount ? renderLine : null;
     }
 
     /**
@@ -3348,14 +3399,29 @@ export class AnnotationManager extends EventEmitter {
         const lineCount = doc.lineCount;
         const storedLine = annotation.line;
         const storedHash = annotation.lineHash;
+        const structuredAnchor = annotation.anchor;
+        const renderLineFromTracking = this.resolveTrackingAnchorLine(annotation, doc);
+        if (renderLineFromTracking !== null && structuredAnchor) {
+            const targetMoved = renderLineFromTracking !== storedLine;
+            return {
+                status: targetMoved ? 'moved' : 'attached',
+                line: renderLineFromTracking,
+                confidence: targetMoved ? 0.85 : 1,
+                reason: targetMoved
+                    ? `Relocated tracking target from line ${structuredAnchor.targetLine + 1}`
+                    : 'Tracking anchor match at stored target line',
+            };
+        }
 
         // New-schema annotations may intentionally target blank lines. Keep
-        // those attached at the stored line when the line still matches; only
-        // legacy empty-line anchors are treated as stale data.
-        const hasStructuredAnchor = annotation.anchor !== undefined;
+        // non-empty lines attached at the stored line when the line still
+        // matches. Empty lines need context/tracking because their hash matches
+        // every blank line in the file.
+        const hasStructuredAnchor = structuredAnchor !== undefined;
         if (
             hasStructuredAnchor &&
             storedHash &&
+            storedHash !== EMPTY_LINE_HASH &&
             storedLine >= 0 &&
             storedLine < lineCount &&
             hashLine(doc.lineAt(storedLine).text) === storedHash
@@ -3386,7 +3452,7 @@ export class AnnotationManager extends EventEmitter {
         }
 
         // 1. Symbol-aware: if anchor recorded a symbol, prefer it.
-        const sym = annotation.anchor;
+        const sym = structuredAnchor;
         if (sym?.kind === 'symbol' && sym.symbolName) {
             // Symbol probe is async via executeDocumentSymbolProvider; that lives
             // in resolveSymbolForLine. To stay synchronous here we rely on the
@@ -3699,6 +3765,30 @@ export class AnnotationManager extends EventEmitter {
             }
 
             const oldLine = annotation.line;
+            const lineFromTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
+            if (
+                lineFromTrackingAnchor !== null &&
+                lineFromTrackingAnchor !== oldLine
+            ) {
+                this.setAnnotationLine(annotation, lineFromTrackingAnchor, document);
+                return;
+            }
+
+            const trackingTargetLine = annotation.anchor?.targetLine;
+            if (trackingTargetLine !== undefined) {
+                const trackingMove = moves.find(
+                    m => trackingTargetLine >= m.oldStart && trackingTargetLine <= m.oldEnd
+                );
+                if (trackingMove) {
+                    const newTrackingTarget =
+                        trackingMove.newStart + (trackingTargetLine - trackingMove.oldStart);
+                    const newRenderLine = newTrackingTarget + (oldLine - trackingTargetLine);
+                    if (newRenderLine >= 0 && newRenderLine < document.lineCount) {
+                        this.setAnnotationLine(annotation, newRenderLine, document);
+                    }
+                    return;
+                }
+            }
 
             const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
             if (move) {
@@ -3764,6 +3854,12 @@ export class AnnotationManager extends EventEmitter {
             }
 
             if (markedDeleted || lineDisplaced) {
+                const lineFromDisplacedTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
+                if (lineFromDisplacedTrackingAnchor !== null) {
+                    this.setAnnotationLine(annotation, lineFromDisplacedTrackingAnchor, document);
+                    return;
+                }
+
                 // Pure deletion (Ctrl+X / Backspace on the annotated line, text='')
                 // means the cut content is gone from the document. findAnchor may
                 // still produce a low-context FALSE POSITIVE at line 0 or 1 when
@@ -3771,7 +3867,10 @@ export class AnnotationManager extends EventEmitter {
                 // happens to recur near the top of the document. Skip relocation
                 // for pure cuts and defer directly to the clipboard buffer; a
                 // paste event will restore via the offsetInBlock primary path.
-                const allowFindAnchor = !pureCutTouchedLine && !arithmeticOutOfRange;
+                const allowFindAnchor =
+                    annotation.lineHash !== EMPTY_LINE_HASH &&
+                    !pureCutTouchedLine &&
+                    !arithmeticOutOfRange;
                 if (allowFindAnchor && annotation.lineHash) {
                     const anchor: AnchorData = {
                         lineHash: annotation.lineHash,
@@ -4245,7 +4344,7 @@ export class AnnotationManager extends EventEmitter {
         // Restore silently-deleted annotations if their content reappears after reload.
         this.tryRestoreFromDeletedRecently(document, relativeFilePath);
 
-        let changed = false;
+        let changed = this.repairBlankLineTrackingAnchors(document);
 
         for (const annotation of this.annotations.values()) {
             if (!this.annotationMatchesDocument(annotation, document)) {
@@ -4291,6 +4390,77 @@ export class AnnotationManager extends EventEmitter {
         if (editor) {
             await this.refreshAnnotations();
         }
+    }
+
+    private repairBlankLineTrackingAnchors(document: vscode.TextDocument): boolean {
+        let changed = false;
+
+        for (const annotation of this.annotations.values()) {
+            if (!this.annotationMatchesDocument(annotation, document)) {
+                continue;
+            }
+            if (annotation.lineHash !== EMPTY_LINE_HASH) {
+                continue;
+            }
+            if (annotation.line < 0 || annotation.line >= document.lineCount) {
+                continue;
+            }
+
+            const exactAnchor: AnchorData = {
+                lineHash: annotation.lineHash,
+                contextBefore: annotation.contextBefore ?? [],
+                contextAfter: annotation.contextAfter ?? [],
+            };
+            const exactLine = findAnchor(document, exactAnchor, annotation.line);
+            if (exactLine === null) {
+                continue;
+            }
+
+            const exactRecapture = captureAnchor(document, exactLine, {
+                walkForward: 0,
+                walkBackward: 0,
+            });
+            const trackingAnchor = captureAnchor(document, exactLine);
+            if (trackingAnchor.lineHash === EMPTY_LINE_HASH) {
+                continue;
+            }
+
+            const current = annotation.anchor;
+            if (
+                current &&
+                annotation.line === exactLine &&
+                current.targetLine === trackingAnchor.targetLine &&
+                current.anchorTextHash === trackingAnchor.lineHash &&
+                JSON.stringify(annotation.contextBefore ?? []) === JSON.stringify(exactRecapture.contextBefore) &&
+                JSON.stringify(annotation.contextAfter ?? []) === JSON.stringify(exactRecapture.contextAfter) &&
+                JSON.stringify(current.contextBefore ?? []) === JSON.stringify(trackingAnchor.contextBefore) &&
+                JSON.stringify(current.contextAfter ?? []) === JSON.stringify(trackingAnchor.contextAfter)
+            ) {
+                continue;
+            }
+
+            annotation.line = exactLine;
+            annotation.lineHash = exactRecapture.lineHash;
+            annotation.contextBefore = exactRecapture.contextBefore;
+            annotation.contextAfter = exactRecapture.contextAfter;
+            annotation.anchor = {
+                ...(current ?? {
+                    kind: 'line' as const,
+                    originalLine: exactLine,
+                    symbolName: null,
+                    symbolKind: null,
+                    symbolSignature: null,
+                }),
+                targetLine: trackingAnchor.targetLine ?? annotation.line,
+                anchorTextHash: trackingAnchor.lineHash,
+                contextBefore: trackingAnchor.contextBefore,
+                contextAfter: trackingAnchor.contextAfter,
+            };
+            annotation.resolvedAnchor = undefined;
+            changed = true;
+        }
+
+        return changed;
     }
 
     // applyAnnotations with targeted clearDecorations

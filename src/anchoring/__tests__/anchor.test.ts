@@ -308,6 +308,27 @@ suite('EMPTY_LINE_HASH (data-integrity regression)', () => {
         // resolution succeeds at the blank line.
         assert.strictEqual(result, 1);
     });
+
+    test('empty-line fast path requires matching context, not only a blank stored line', () => {
+        const doc = makeDoc([
+            'wrong_before',
+            '',              // stale stored line: hash matches, context does not
+            'wrong_after',
+            'before_line',
+            '',              // correct location
+            'after_line',
+        ]);
+        const result = findAnchor(
+            doc,
+            {
+                lineHash: EMPTY_LINE_HASH,
+                contextBefore: ['before_line'],
+                contextAfter: ['after_line'],
+            },
+            1
+        );
+        assert.strictEqual(result, 4);
+    });
 });
 
 // ---------------------------------------------------------------------------
