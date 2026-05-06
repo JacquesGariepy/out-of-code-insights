@@ -40,7 +40,7 @@ interface MockAnnotation {
 }
 
 interface ContentChange {
-    range: { start: { line: number }; end: { line: number } };
+    range: { start: { line: number; character?: number }; end: { line: number; character?: number } };
     text: string;
 }
 
@@ -67,10 +67,36 @@ function applySetLine(
     annotation.line = newLine;
     if (doc && newLine >= 0 && newLine < doc.lineCount) {
         const anchor = captureAnchor(doc, newLine);
-        annotation.lineHash = anchor.lineHash;
-        annotation.contextBefore = anchor.contextBefore;
-        annotation.contextAfter = anchor.contextAfter;
+        const exactAnchor = captureAnchor(doc, newLine, { walkForward: 0, walkBackward: 0 });
+        annotation.lineHash = exactAnchor.lineHash;
+        annotation.contextBefore = exactAnchor.contextBefore;
+        annotation.contextAfter = exactAnchor.contextAfter;
+        annotation.trackingAnchor = anchor;
     }
+}
+
+function applySetLineWithTrackingLine(
+    annotation: MockAnnotation,
+    renderLine: number,
+    trackingLine: number,
+    doc: TextDocumentLike
+): void {
+    const clampedRenderLine = clampDocLine(renderLine, doc);
+    const clampedTrackingLine = clampDocLine(trackingLine, doc);
+    const exactAnchor = captureAnchor(doc, clampedRenderLine, { walkForward: 0, walkBackward: 0 });
+    const trackingAnchor = captureAnchor(doc, clampedTrackingLine, {
+        walkForward: 0,
+        walkBackward: 0,
+    });
+    annotation.line = clampedRenderLine;
+    annotation.lineHash = exactAnchor.lineHash;
+    annotation.contextBefore = exactAnchor.contextBefore;
+    annotation.contextAfter = exactAnchor.contextAfter;
+    annotation.trackingAnchor = trackingAnchor;
+}
+
+function clampDocLine(line: number, doc: TextDocumentLike): number {
+    return Math.max(0, Math.min(line, doc.lineCount - 1));
 }
 
 /**
@@ -604,6 +630,9 @@ interface DeferredEntry {
     annotation: MockAnnotation;
     deletedAt: number;
     offsetInBlock: number;
+    trackingOffsetInBlock?: number;
+    renderOffsetFromTracking?: number;
+    trackingLineHash?: string;
     cutText?: string;
     cutLineHashes?: string[];
 }
@@ -2208,9 +2237,57 @@ function getCutLinesForChange(
 function contentChangesEraseLine(contentChanges: readonly ContentChange[], line: number): boolean {
     return contentChanges.some(change =>
         change.text.replace(/\r\n/g, '').length === 0 &&
-        line >= change.range.start.line &&
-        line <= change.range.end.line
+        contentChangeTouchesLine(change, line)
     );
+}
+
+function contentChangeTouchesLine(change: ContentChange, line: number): boolean {
+    return line >= change.range.start.line && line <= getTouchedEndLine(change);
+}
+
+function getTouchedEndLine(change: ContentChange): number {
+    if (
+        change.text === '' &&
+        change.range.end.character === 0 &&
+        change.range.end.line > change.range.start.line
+    ) {
+        return change.range.end.line - 1;
+    }
+    return change.range.end.line;
+}
+
+function getAnnotationTrackingLine(annotation: MockAnnotation): number {
+    return annotation.trackingAnchor?.targetLine ?? annotation.line;
+}
+
+function getAnnotationTrackingHash(annotation: MockAnnotation): string | undefined {
+    return annotation.trackingAnchor?.lineHash ?? annotation.lineHash;
+}
+
+function contentChangesEraseAnnotation(contentChanges: readonly ContentChange[], annotation: MockAnnotation): boolean {
+    return contentChangesEraseLine(contentChanges, annotation.line) ||
+        contentChangesEraseLine(contentChanges, getAnnotationTrackingLine(annotation));
+}
+
+function resolveTrackingAnchor(
+    annotation: MockAnnotation,
+    doc: TextDocumentLike
+): { renderLine: number; targetLine: number } | null {
+    const trackingAnchor = annotation.trackingAnchor;
+    if (!trackingAnchor?.lineHash) {
+        return null;
+    }
+    const foundTargetLine = findAnchor(doc, trackingAnchor, trackingAnchor.targetLine ?? -1, {
+        allowUniqueHashFallback: true,
+    });
+    if (foundTargetLine === null) {
+        return null;
+    }
+    const renderLine = foundTargetLine + (annotation.line - (trackingAnchor.targetLine ?? annotation.line));
+    if (renderLine < 0 || renderLine >= doc.lineCount) {
+        return null;
+    }
+    return { renderLine, targetLine: foundTargetLine };
 }
 
 /**
@@ -2232,7 +2309,7 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
     if (state.recentDeletions.size > 0) {
         const recovered: string[] = [];
         for (const [id, def] of state.recentDeletions) {
-            let found: number | null = null;
+            let found: { renderLine: number; trackingLine: number } | null = null;
             let sawMatchingPaste = false;
             for (const change of ev.contentChanges) {
                 if (!deferredPasteMatchesChange(def, change.text, clipboardText)) {
@@ -2242,10 +2319,18 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 const insertedLines = change.text.split('\n');
                 const startLine = change.range.start.line;
                 if (change.text.length === 0) { continue; }
-                if (def.offsetInBlock >= insertedLines.length) { continue; }
-                const expected = hashLine(insertedLines[def.offsetInBlock]);
-                if (expected === def.annotation.lineHash) {
-                    found = startLine + def.offsetInBlock;
+                const trackingOffset = def.trackingOffsetInBlock ?? def.offsetInBlock;
+                if (trackingOffset < 0 || trackingOffset >= insertedLines.length) { continue; }
+                const expected = hashLine(insertedLines[trackingOffset]);
+                if (expected === (def.trackingLineHash ?? def.annotation.lineHash)) {
+                    const trackingLine = startLine + trackingOffset;
+                    found = {
+                        renderLine: clampDocLine(
+                            trackingLine + (def.renderOffsetFromTracking ?? 0),
+                            ev.doc
+                        ),
+                        trackingLine: clampDocLine(trackingLine, ev.doc),
+                    };
                     break;
                 }
             }
@@ -2255,11 +2340,18 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                     contextBefore: def.annotation.contextBefore ?? [],
                     contextAfter: def.annotation.contextAfter ?? [],
                 };
-                found = findAnchor(ev.doc, anchor, -1);
+                const foundRenderLine = findAnchor(ev.doc, anchor, -1);
+                if (foundRenderLine !== null) {
+                    const renderOffsetFromTracking = def.renderOffsetFromTracking ?? 0;
+                    found = {
+                        renderLine: foundRenderLine,
+                        trackingLine: clampDocLine(foundRenderLine - renderOffsetFromTracking, ev.doc),
+                    };
+                }
             }
             if (found !== null) {
                 const a = { ...def.annotation, file: ev.file };
-                applySetLine(a, found, ev.doc);
+                applySetLineWithTrackingLine(a, found.renderLine, found.trackingLine, ev.doc);
                 state.annotations.set(id, a);
                 recovered.push(id);
                 restoredThisEvent.add(id);
@@ -2283,14 +2375,18 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         if (restoredThisEvent.has(id)) { continue; }
 
         const oldLine = annotation.line;
-        const erasureTouchesOldLine = contentChangesEraseLine(ev.contentChanges, oldLine);
+        const trackingLine = getAnnotationTrackingLine(annotation);
+        const renderOffsetFromTracking = oldLine - trackingLine;
+        const erasureTouchesAnnotation = contentChangesEraseAnnotation(ev.contentChanges, annotation);
         const undoRemovesCopiedAnnotation =
             ev.isUndoRedo &&
             annotation.origin?.kind === 'copy-paste' &&
             ev.contentChanges.some(ch =>
                 ch.text === '' &&
-                oldLine >= ch.range.start.line &&
-                oldLine <= ch.range.end.line
+                (
+                    contentChangeTouchesLine(ch, oldLine) ||
+                    contentChangeTouchesLine(ch, trackingLine)
+                )
             );
         if (undoRemovesCopiedAnnotation) {
             state.annotations.delete(id);
@@ -2298,10 +2394,15 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
             continue;
         }
 
-        if (!erasureTouchesOldLine && annotation.trackingAnchor) {
-            const trackingLine = findAnchor(ev.doc, annotation.trackingAnchor, -1);
-            if (trackingLine !== null && trackingLine !== oldLine) {
-                applySetLine(annotation, trackingLine, ev.doc);
+        if (!erasureTouchesAnnotation && annotation.trackingAnchor) {
+            const resolvedTracking = resolveTrackingAnchor(annotation, ev.doc);
+            if (resolvedTracking !== null && resolvedTracking.renderLine !== oldLine) {
+                applySetLineWithTrackingLine(
+                    annotation,
+                    resolvedTracking.renderLine,
+                    resolvedTracking.targetLine,
+                    ev.doc
+                );
                 continue;
             }
         }
@@ -2319,10 +2420,15 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         for (const change of ev.contentChanges) {
             const startLine = change.range.start.line;
             const endLine = change.range.end.line;
+            const touchedEndLine = getTouchedEndLine(change);
             const lineDelta = change.text.split('\n').length - (endLine - startLine + 1);
             if (currentLine > endLine) {
                 currentLine += lineDelta;
-            } else if (currentLine >= startLine && currentLine <= endLine && lineDelta < 0) {
+            } else if (currentLine >= startLine && currentLine <= touchedEndLine && lineDelta < 0) {
+                markedDeleted = true;
+                if (change.text === '') { pureCutTouchedLine = true; }
+            }
+            if (trackingLine !== oldLine && trackingLine >= startLine && trackingLine <= touchedEndLine && lineDelta < 0) {
                 markedDeleted = true;
                 if (change.text === '') { pureCutTouchedLine = true; }
             }
@@ -2338,7 +2444,10 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         if (!markedDeleted && annotation.lineHash !== undefined && !predictedHashMatches) {
             for (const ch of ev.contentChanges) {
                 const erased = ch.text.replace(/\r\n/g, '').length === 0;
-                if (erased && oldLine >= ch.range.start.line && oldLine <= ch.range.end.line) {
+                if (
+                    erased &&
+                    (contentChangeTouchesLine(ch, oldLine) || contentChangeTouchesLine(ch, trackingLine))
+                ) {
                     lineDisplaced = true;
                     break;
                 }
@@ -2352,10 +2461,15 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         if (arithmeticOutOfRange) { markedDeleted = true; }
 
         if (markedDeleted || lineDisplaced) {
-            if (!erasureTouchesOldLine && annotation.trackingAnchor) {
-                const trackingLine = findAnchor(ev.doc, annotation.trackingAnchor, -1);
-                if (trackingLine !== null) {
-                    applySetLine(annotation, trackingLine, ev.doc);
+            if (!erasureTouchesAnnotation && annotation.trackingAnchor) {
+                const resolvedTracking = resolveTrackingAnchor(annotation, ev.doc);
+                if (resolvedTracking !== null) {
+                    applySetLineWithTrackingLine(
+                        annotation,
+                        resolvedTracking.renderLine,
+                        resolvedTracking.targetLine,
+                        ev.doc
+                    );
                     continue;
                 }
             }
@@ -2374,11 +2488,19 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 }
             }
             let offsetInBlock = 0;
+            let trackingOffsetInBlock = 0;
             let cutLinesForAnnotation: string[] | undefined;
             for (const ch of ev.contentChanges) {
-                if (annotation.line >= ch.range.start.line && annotation.line <= ch.range.end.line) {
+                if (contentChangeTouchesLine(ch, trackingLine)) {
+                    trackingOffsetInBlock = Math.max(0, trackingLine - ch.range.start.line);
+                    offsetInBlock = Math.max(0, trackingOffsetInBlock + renderOffsetFromTracking);
+                    cutLinesForAnnotation = getCutLinesForChange(oldLines, ch, trackingOffsetInBlock);
+                    break;
+                }
+                if (contentChangeTouchesLine(ch, annotation.line)) {
                     offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
-                    cutLinesForAnnotation = getCutLinesForChange(oldLines, ch, offsetInBlock);
+                    trackingOffsetInBlock = offsetInBlock;
+                    cutLinesForAnnotation = getCutLinesForChange(oldLines, ch, trackingOffsetInBlock);
                     break;
                 }
             }
@@ -2387,6 +2509,9 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 annotation: { ...annotation },
                 deletedAt: Date.now(),
                 offsetInBlock,
+                trackingOffsetInBlock,
+                renderOffsetFromTracking,
+                trackingLineHash: getAnnotationTrackingHash(annotation),
                 cutText: cutLinesForAnnotation?.join('\n'),
                 cutLineHashes: cutLinesForAnnotation?.map(line => hashLine(line)),
             });
@@ -2413,17 +2538,19 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 if (lineDelta <= 0) { continue; }
                 const normalizedInserted = change.text.replace(/\r\n/g, '\n').trim();
                 if (normalizedInserted !== normalizedClipboard) { continue; }
-                const nonEmpty = insertedLines.filter(l => l.trim() !== '').length;
-                if (nonEmpty < 2) { continue; }
                 for (let k = 0; k < insertedLines.length; k++) {
                     const insertedHash = hashLine(insertedLines[k]);
                     const newLine = startLine + k;
                     if (seenTargets.has(newLine)) { continue; }
                     for (const annotation of state.annotations.values()) {
-                        if (!annotation.lineHash || annotation.lineHash !== insertedHash) { continue; }
+                        const sourceLine = getAnnotationTrackingLine(annotation);
+                        const renderOffsetFromSource = annotation.line - sourceLine;
+                        const sourceHash = getAnnotationTrackingHash(annotation);
+                        if (!sourceHash || sourceHash !== insertedHash) { continue; }
                         if (state.recentDeletions.has(annotation.id)) { continue; }
                         if (restoredThisEvent.has(annotation.id)) { continue; }
-                        if (annotation.file === ev.file && Math.abs(newLine - annotation.line) < 2) { continue; }
+                        const renderLine = clampDocLine(newLine + renderOffsetFromSource, ev.doc);
+                        if (annotation.file === ev.file && Math.abs(renderLine - annotation.line) < 2) { continue; }
                         seenTargets.add(newLine);
                         // shadow guard: cut buffer holding same message
                         let shadowed = false;
@@ -2437,17 +2564,17 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                         const dup: MockAnnotation & { message?: string } = {
                             id: `${annotation.id}-dup-${newLine}`,
                             file: ev.file,
-                            line: newLine,
+                            line: renderLine,
                             message: annotation.message,
                             origin: {
                                 kind: 'copy-paste',
                                 sourceId: annotation.id,
                                 sourceFile: annotation.file,
-                                sourceLine: annotation.line,
-                                pastedAtLine: newLine,
+                                sourceLine,
+                                pastedAtLine: renderLine,
                             },
                         };
-                        applySetLine(dup, newLine, ev.doc);
+                        applySetLineWithTrackingLine(dup, renderLine, newLine, ev.doc);
                         state.annotations.set(dup.id, dup);
                         duplicatesCreated++;
                         break;
@@ -2898,6 +3025,88 @@ suite('F5 regression: copy + paste -- count goes 1 -> 2 with original untouched'
         const dup = Array.from(state.annotations.values()).find(a => a.id !== 'orig');
         assert.ok(dup, 'duplicate annotation should exist');
         assert.strictEqual(dup.line, 6);
+    });
+});
+
+suite('F5 regression: blank-line annotation follows copy/cut of tracked code only', () => {
+    const file = 'blankTracked.ts';
+    const fileKey = 'file://blankTracked.ts';
+    const baseLines = [
+        'header();',       // 0
+        '',                // 1 <-- annotation render line
+        'tracked();',      // 2 <-- tracked code line
+        'after();',        // 3
+        'tail();',         // 4
+    ];
+    const baseDoc = makeDoc(baseLines);
+    const exact = captureAnchor(baseDoc, 1, { walkForward: 0, walkBackward: 0 });
+    const tracking = captureAnchor(baseDoc, 1);
+
+    const copiedText = 'tracked();\n';
+    const afterCopyPasteLines = [...baseLines.slice(0, 4), 'tracked();', ...baseLines.slice(4)];
+    const afterCopyPasteDoc = makeDoc(afterCopyPasteLines);
+    const afterCutLines = [...baseLines.slice(0, 2), ...baseLines.slice(3)];
+    const afterCutDoc = makeDoc(afterCutLines);
+    const afterPasteLines = [...afterCutLines.slice(0, 4), 'tracked();', ...afterCutLines.slice(4)];
+    const afterPasteDoc = makeDoc(afterPasteLines);
+
+    function addBlankAnnotation(state: PipelineState, id: string): void {
+        snapshotDoc(state, fileKey, baseDoc);
+        state.annotations.set(id, {
+            id, file, line: 1,
+            lineHash: exact.lineHash,
+            contextBefore: exact.contextBefore,
+            contextAfter: exact.contextAfter,
+            trackingAnchor: tracking,
+            message: 'blank follows code',
+        } as MockAnnotation & { message?: string });
+    }
+
+    function cutTrackedLine(state: PipelineState): FullPipelineOutcome {
+        return runFullPipeline(state, {
+            fileKey, file, doc: afterCutDoc,
+            contentChanges: [{ range: { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } }, text: '' }],
+            clipboardText: copiedText,
+        });
+    }
+
+    test('copying only the tracked code line duplicates the blank-line annotation above the pasted code', () => {
+        const copyState = makeState();
+        addBlankAnnotation(copyState, 'blank-copy');
+        const copyOut = runFullPipeline(copyState, {
+            fileKey, file, doc: afterCopyPasteDoc,
+            contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: copiedText }],
+            clipboardText: copiedText,
+        });
+        const copiedAnnotation = Array.from(copyState.annotations.values()).find(a => a.id !== 'blank-copy');
+        assert.strictEqual(copyOut.duplicatesCreated, 1);
+        assert.ok(copiedAnnotation, 'copy should create annotation');
+        assert.strictEqual(copiedAnnotation?.line, 3);
+        assert.strictEqual(copiedAnnotation?.trackingAnchor?.targetLine, 4);
+    });
+
+    test('cutting only the tracked code line defers the blank-line annotation', () => {
+        const cutState = makeState();
+        addBlankAnnotation(cutState, 'blank-cut');
+        const cutOut = cutTrackedLine(cutState);
+        assert.deepStrictEqual(cutOut.deferred, ['blank-cut']);
+        assert.strictEqual(cutState.recentDeletions.size, 1);
+    });
+
+    test('pasting the tracked code restores the blank-line annotation above the pasted code', () => {
+        const cutState = makeState();
+        addBlankAnnotation(cutState, 'blank-cut');
+        cutTrackedLine(cutState);
+        const pasteOut = runFullPipeline(cutState, {
+            fileKey, file, doc: afterPasteDoc,
+            contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: copiedText }],
+            clipboardText: copiedText,
+        });
+        assert.deepStrictEqual(pasteOut.restored, ['blank-cut']);
+        const moved = cutState.annotations.get('blank-cut');
+        assert.ok(moved, 'cut annotation should restore');
+        assert.strictEqual(moved.line, 3);
+        assert.strictEqual(moved.trackingAnchor?.targetLine, 4);
     });
 });
 

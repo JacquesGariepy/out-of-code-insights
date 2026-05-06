@@ -39,6 +39,7 @@ interface CopySourceCandidate {
     sourceUri: string;
     sourceLine: number;
     offset: number;
+    renderOffsetFromSource: number;
 }
 
 export class AnnotationManager extends EventEmitter {
@@ -82,6 +83,12 @@ export class AnnotationManager extends EventEmitter {
         deletedAt: number;
         /** Offset of annotation.line within the deleted block (for block-relative paste recovery). */
         offsetInBlock: number;
+        /** Offset of the tracked code line within the deleted block. */
+        trackingOffsetInBlock?: number;
+        /** Render-line delta relative to the tracked code line. */
+        renderOffsetFromTracking?: number;
+        /** Hash of the tracked code line; differs from annotation.lineHash for blank-line annotations. */
+        trackingLineHash?: string;
         /** Exact text removed by the cut/delete event, when known from the previous document snapshot. */
         cutText?: string;
         /** Hashes for each removed line; used to verify that a later edit is the matching paste. */
@@ -1697,24 +1704,62 @@ export class AnnotationManager extends EventEmitter {
             // arithmetic shift); do not walk to a different line.
             const exactAnchor = captureAnchor(doc, newLine, { walkForward: 0, walkBackward: 0 });
             const trackingAnchor = captureAnchor(doc, newLine);
-            annotation.lineHash = exactAnchor.lineHash;
-            annotation.contextBefore = exactAnchor.contextBefore;
-            annotation.contextAfter = exactAnchor.contextAfter;
-
-            annotation.anchor = {
-                ...(annotation.anchor ?? {
-                    kind: 'line' as const,
-                    originalLine: newLine,
-                    symbolName: null,
-                    symbolKind: null,
-                    symbolSignature: null,
-                }),
-                targetLine: trackingAnchor.targetLine ?? newLine,
-                anchorTextHash: trackingAnchor.lineHash,
-                contextBefore: trackingAnchor.contextBefore,
-                contextAfter: trackingAnchor.contextAfter,
-            };
+            this.applyAnnotationLineAnchors(annotation, newLine, exactAnchor, trackingAnchor);
         }
+    }
+
+    private setAnnotationLineWithTrackingLine(
+        annotation: Annotation,
+        renderLine: number,
+        trackingLine: number,
+        doc: vscode.TextDocument
+    ): void {
+        const clampedRenderLine = this.clampDocumentLine(renderLine, doc);
+        const clampedTrackingLine = this.clampDocumentLine(trackingLine, doc);
+        const exactAnchor = captureAnchor(doc, clampedRenderLine, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        const trackingAnchor = captureAnchor(doc, clampedTrackingLine, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        this.applyAnnotationLineAnchors(
+            annotation,
+            clampedRenderLine,
+            exactAnchor,
+            trackingAnchor
+        );
+    }
+
+    private applyAnnotationLineAnchors(
+        annotation: Annotation,
+        renderLine: number,
+        exactAnchor: AnchorData,
+        trackingAnchor: AnchorData
+    ): void {
+        annotation.line = renderLine;
+        annotation.lineHash = exactAnchor.lineHash;
+        annotation.contextBefore = exactAnchor.contextBefore;
+        annotation.contextAfter = exactAnchor.contextAfter;
+
+        annotation.anchor = {
+            ...(annotation.anchor ?? {
+                kind: 'line' as const,
+                originalLine: renderLine,
+                symbolName: null,
+                symbolKind: null,
+                symbolSignature: null,
+            }),
+            targetLine: trackingAnchor.targetLine ?? renderLine,
+            anchorTextHash: trackingAnchor.lineHash,
+            contextBefore: trackingAnchor.contextBefore,
+            contextAfter: trackingAnchor.contextAfter,
+        };
+    }
+
+    private clampDocumentLine(line: number, doc: vscode.TextDocument): number {
+        return Math.max(0, Math.min(line, doc.lineCount - 1));
     }
 
     /** Store a line-by-line snapshot of doc for move detection. */
@@ -3351,10 +3396,10 @@ export class AnnotationManager extends EventEmitter {
         };
     }
 
-    private resolveTrackingAnchorLine(
+    private resolveTrackingAnchor(
         annotation: Annotation,
         doc: vscode.TextDocument
-    ): number | null {
+    ): { renderLine: number; targetLine: number } | null {
         const structuredAnchor = annotation.anchor;
         if (
             !structuredAnchor?.anchorTextHash ||
@@ -3378,7 +3423,20 @@ export class AnnotationManager extends EventEmitter {
         }
 
         const renderLine = foundTargetLine + (annotation.line - structuredAnchor.targetLine);
-        return renderLine >= 0 && renderLine < doc.lineCount ? renderLine : null;
+        if (renderLine < 0 || renderLine >= doc.lineCount) {
+            return null;
+        }
+        return {
+            renderLine,
+            targetLine: foundTargetLine,
+        };
+    }
+
+    private resolveTrackingAnchorLine(
+        annotation: Annotation,
+        doc: vscode.TextDocument
+    ): number | null {
+        return this.resolveTrackingAnchor(annotation, doc)?.renderLine ?? null;
     }
 
     /**
@@ -3636,9 +3694,14 @@ export class AnnotationManager extends EventEmitter {
         const relativeFilePath = this.getRelativePath(document.fileName);
         const now = Date.now();
         const preChangeLinesByAnnotationId = new Map<string, number>();
+        const preChangeTrackingLinesByAnnotationId = new Map<string, number>();
         this.annotations.forEach(annotation => {
             if (this.annotationMatchesDocument(annotation, document)) {
                 preChangeLinesByAnnotationId.set(annotation.id, annotation.line);
+                preChangeTrackingLinesByAnnotationId.set(
+                    annotation.id,
+                    this.getAnnotationTrackingLine(annotation)
+                );
             }
         });
         const clipboardTextForCutRecovery =
@@ -3671,7 +3734,7 @@ export class AnnotationManager extends EventEmitter {
         if (this.recentDeletions.size > 0) {
             const recovered: string[] = [];
             for (const [id, deferred] of this.recentDeletions) {
-                let found: number | null = null;
+                let found: { renderLine: number; trackingLine: number } | null = null;
                 let sawMatchingPaste = false;
 
                 // Primary: block-relative position from a paste contentChange.
@@ -3684,10 +3747,18 @@ export class AnnotationManager extends EventEmitter {
                     const insertedLines = change.text.split('\n');
                     const startLine = change.range.start.line;
                     if (change.text.length === 0) { continue; }
-                    if (deferred.offsetInBlock >= insertedLines.length) { continue; }
-                    const expectedHash = hashLine(insertedLines[deferred.offsetInBlock]);
-                    if (expectedHash === deferred.annotation.lineHash) {
-                        found = startLine + deferred.offsetInBlock;
+                    const trackingOffset = deferred.trackingOffsetInBlock ?? deferred.offsetInBlock;
+                    if (trackingOffset < 0 || trackingOffset >= insertedLines.length) { continue; }
+                    const expectedHash = hashLine(insertedLines[trackingOffset]);
+                    if (expectedHash === (deferred.trackingLineHash ?? deferred.annotation.lineHash)) {
+                        const trackingLine = startLine + trackingOffset;
+                        found = {
+                            renderLine: this.clampDocumentLine(
+                                trackingLine + (deferred.renderOffsetFromTracking ?? 0),
+                                document
+                            ),
+                            trackingLine: this.clampDocumentLine(trackingLine, document),
+                        };
                         break;
                     }
                 }
@@ -3700,7 +3771,17 @@ export class AnnotationManager extends EventEmitter {
                         contextBefore: deferred.annotation.contextBefore ?? [],
                         contextAfter: deferred.annotation.contextAfter ?? [],
                     };
-                    found = findAnchor(document, anchor, -1);
+                    const foundRenderLine = findAnchor(document, anchor, -1);
+                    if (foundRenderLine !== null) {
+                        const renderOffsetFromTracking = deferred.renderOffsetFromTracking ?? 0;
+                        found = {
+                            renderLine: foundRenderLine,
+                            trackingLine: this.clampDocumentLine(
+                                foundRenderLine - renderOffsetFromTracking,
+                                document
+                            ),
+                        };
+                    }
                 }
 
                 if (found !== null) {
@@ -3725,11 +3806,19 @@ export class AnnotationManager extends EventEmitter {
                             symbolSignature: null,
                         };
                     }
-                    this.setAnnotationLine(deferred.annotation, found, document);
+                    this.setAnnotationLineWithTrackingLine(
+                        deferred.annotation,
+                        found.renderLine,
+                        found.trackingLine,
+                        document
+                    );
                     this.annotations.set(id, deferred.annotation);
                     recovered.push(id);
                     restoredThisEvent.add(id);
-                    this.log(`recentDeletions: restored ${id} to ${relativeFilePath}:${found} (offsetInBlock=${deferred.offsetInBlock})`);
+                    this.log(
+                        `recentDeletions: restored ${id} to ${relativeFilePath}:${found.renderLine} ` +
+                        `(trackingLine=${found.trackingLine}, offsetInBlock=${deferred.offsetInBlock})`
+                    );
                 }
             }
             recovered.forEach(id => this.recentDeletions.delete(id));
@@ -3787,14 +3876,21 @@ export class AnnotationManager extends EventEmitter {
                 return;
             }
 
-            const erasureTouchesOldLine = this.contentChangesEraseLine(event.contentChanges, oldLine);
-            if (!erasureTouchesOldLine) {
-                const lineFromTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
+            const trackingLine = this.getAnnotationTrackingLine(annotation);
+            const renderOffsetFromTracking = oldLine - trackingLine;
+            const erasureTouchesAnnotation = this.contentChangesEraseAnnotation(event.contentChanges, annotation);
+            if (!erasureTouchesAnnotation) {
+                const resolvedTrackingAnchor = this.resolveTrackingAnchor(annotation, document);
                 if (
-                    lineFromTrackingAnchor !== null &&
-                    lineFromTrackingAnchor !== oldLine
+                    resolvedTrackingAnchor !== null &&
+                    resolvedTrackingAnchor.renderLine !== oldLine
                 ) {
-                    this.setAnnotationLine(annotation, lineFromTrackingAnchor, document);
+                    this.setAnnotationLineWithTrackingLine(
+                        annotation,
+                        resolvedTrackingAnchor.renderLine,
+                        resolvedTrackingAnchor.targetLine,
+                        document
+                    );
                     return;
                 }
             }
@@ -3808,9 +3904,12 @@ export class AnnotationManager extends EventEmitter {
                     const newTrackingTarget =
                         trackingMove.newStart + (trackingTargetLine - trackingMove.oldStart);
                     const newRenderLine = newTrackingTarget + (oldLine - trackingTargetLine);
-                    if (newRenderLine >= 0 && newRenderLine < document.lineCount) {
-                        this.setAnnotationLine(annotation, newRenderLine, document);
-                    }
+                    this.setAnnotationLineWithTrackingLine(
+                        annotation,
+                        newRenderLine,
+                        newTrackingTarget,
+                        document
+                    );
                     return;
                 }
             }
@@ -3828,11 +3927,18 @@ export class AnnotationManager extends EventEmitter {
             for (const change of event.contentChanges) {
                 const startLine = change.range.start.line;
                 const endLine = change.range.end.line;
+                const touchedEndLine = this.getTouchedEndLine(change);
                 const lineDelta = change.text.split('\n').length - (endLine - startLine + 1);
 
                 if (currentLine > endLine) {
                     currentLine += lineDelta;
-                } else if (currentLine >= startLine && currentLine <= endLine && lineDelta < 0) {
+                } else if (currentLine >= startLine && currentLine <= touchedEndLine && lineDelta < 0) {
+                    markedDeleted = true;
+                    if (change.text === '') {
+                        pureCutTouchedLine = true;
+                    }
+                }
+                if (trackingLine !== oldLine && trackingLine >= startLine && trackingLine <= touchedEndLine && lineDelta < 0) {
                     markedDeleted = true;
                     if (change.text === '') {
                         pureCutTouchedLine = true;
@@ -3857,8 +3963,10 @@ export class AnnotationManager extends EventEmitter {
                     const erased = ch.text.replace(/\r\n/g, '').length === 0;
                     if (
                         erased &&
-                        oldLine >= ch.range.start.line &&
-                        oldLine <= ch.range.end.line
+                        (
+                            this.contentChangeTouchesLine(ch, oldLine) ||
+                            this.contentChangeTouchesLine(ch, trackingLine)
+                        )
                     ) {
                         lineDisplaced = true;
                         break;
@@ -3879,10 +3987,15 @@ export class AnnotationManager extends EventEmitter {
             }
 
             if (markedDeleted || lineDisplaced) {
-                if (!erasureTouchesOldLine) {
-                    const lineFromDisplacedTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
-                    if (lineFromDisplacedTrackingAnchor !== null) {
-                        this.setAnnotationLine(annotation, lineFromDisplacedTrackingAnchor, document);
+                if (!erasureTouchesAnnotation) {
+                    const displacedTrackingAnchor = this.resolveTrackingAnchor(annotation, document);
+                    if (displacedTrackingAnchor !== null) {
+                        this.setAnnotationLineWithTrackingLine(
+                            annotation,
+                            displacedTrackingAnchor.renderLine,
+                            displacedTrackingAnchor.targetLine,
+                            document
+                        );
                         return;
                     }
                 }
@@ -3913,13 +4026,22 @@ export class AnnotationManager extends EventEmitter {
                 // Defer: remove from live map, hold in clipboard buffer.
                 // A paste event within clipboardWindowMs will restore it silently.
                 let offsetInBlock = 0;
+                let trackingOffsetInBlock = 0;
                 let cutLinesForAnnotation: string[] | undefined;
                 for (const ch of event.contentChanges) {
-                    if (annotation.line >= ch.range.start.line &&
-                        annotation.line <= ch.range.end.line) {
-                        offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
+                    if (this.contentChangeTouchesLine(ch, trackingLine)) {
+                        trackingOffsetInBlock = Math.max(0, trackingLine - ch.range.start.line);
+                        offsetInBlock = Math.max(0, trackingOffsetInBlock + renderOffsetFromTracking);
                         cutLinesForAnnotation = oldLines
-                            ? this.getCutLinesForChange(oldLines, ch, offsetInBlock)
+                            ? this.getCutLinesForChange(oldLines, ch, trackingOffsetInBlock)
+                            : undefined;
+                        break;
+                    }
+                    if (this.contentChangeTouchesLine(ch, annotation.line)) {
+                        offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
+                        trackingOffsetInBlock = offsetInBlock;
+                        cutLinesForAnnotation = oldLines
+                            ? this.getCutLinesForChange(oldLines, ch, trackingOffsetInBlock)
                             : undefined;
                         break;
                     }
@@ -3930,6 +4052,9 @@ export class AnnotationManager extends EventEmitter {
                     annotation: { ...annotation },
                     deletedAt: Date.now(),
                     offsetInBlock,
+                    trackingOffsetInBlock,
+                    renderOffsetFromTracking,
+                    trackingLineHash: this.getAnnotationTrackingHash(annotation),
                     cutText: cutLinesForAnnotation?.join('\n'),
                     cutLineHashes: cutLinesForAnnotation?.map(line => hashLine(line)),
                 });
@@ -3965,7 +4090,8 @@ export class AnnotationManager extends EventEmitter {
                 relativeFilePath,
                 restoredThisEvent,
                 oldLines,
-                preChangeLinesByAnnotationId
+                preChangeLinesByAnnotationId,
+                preChangeTrackingLinesByAnnotationId
             );
         } else {
             this.log(`undo/redo: skipped detectAndDuplicateOnCopyPaste (reason=${event.reason})`);
@@ -3996,7 +4122,8 @@ export class AnnotationManager extends EventEmitter {
         relativeFilePath: string,
         restoredThisEvent: ReadonlySet<string> = new Set<string>(),
         previousTargetLines?: string[],
-        preChangeLinesByAnnotationId: ReadonlyMap<string, number> = new Map<string, number>()
+        preChangeLinesByAnnotationId: ReadonlyMap<string, number> = new Map<string, number>(),
+        preChangeTrackingLinesByAnnotationId: ReadonlyMap<string, number> = new Map<string, number>()
     ): Promise<void> {
         // Primary guard: clipboard must be non-empty and match the inserted text.
         // Keystrokes, Enter, and autocomplete do NOT change the OS clipboard.
@@ -4011,6 +4138,7 @@ export class AnnotationManager extends EventEmitter {
             document,
             previousTargetLines,
             preChangeLinesByAnnotationId,
+            preChangeTrackingLinesByAnnotationId,
             restoredThisEvent
         );
         if (sourceCandidatesByOffset.size === 0) { return; }
@@ -4030,15 +4158,19 @@ export class AnnotationManager extends EventEmitter {
 
                 for (const source of sourceCandidates) {
                     const annotation = source.annotation;
-                    const copyKey = `${annotation.id}:${newLine}`;
+                    const renderLine = this.clampDocumentLine(
+                        newLine + source.renderOffsetFromSource,
+                        document
+                    );
+                    const copyKey = `${annotation.id}:${renderLine}`;
                     if (createdCopies.has(copyKey)) { continue; }
 
                     // Anti-duplicate guard: never create a second annotation at the same
                     // (file, line) carrying the same message.  Belt-and-suspenders against
                     // edge cases where undo/redo, multi-cursor, or rapid events would
                     // otherwise re-fire duplication on top of an existing annotation.
-                    if (this.sameLocationSameMessage(document, newLine, annotation.message)) {
-                        this.log(`anti-duplicate: skipped creating duplicate at ${relativeFilePath}:${newLine}`);
+                    if (this.sameLocationSameMessage(document, renderLine, annotation.message)) {
+                        this.log(`anti-duplicate: skipped creating duplicate at ${relativeFilePath}:${renderLine}`);
                         continue;
                     }
 
@@ -4063,7 +4195,7 @@ export class AnnotationManager extends EventEmitter {
                         file: relativeFilePath, // always the paste-destination file
                         fileUri: document.uri.toString(),
                         languageId: document.languageId,
-                        line: newLine,
+                        line: renderLine,
                         timestamp: new Date().toISOString(),
                         origin: {
                             kind: 'copy-paste',
@@ -4071,17 +4203,22 @@ export class AnnotationManager extends EventEmitter {
                             sourceFile: annotation.file,
                             sourceFileUri: annotation.fileUri,
                             sourceLine: source.sourceLine,
-                            pastedAtLine: newLine,
+                            pastedAtLine: renderLine,
                         },
                         anchor: undefined, // re-anchored against the destination below
                         resolvedAnchor: undefined,
                     };
-                    this.setAnnotationLine(newAnnotation, newLine, document);
+                    this.setAnnotationLineWithTrackingLine(
+                        newAnnotation,
+                        renderLine,
+                        newLine,
+                        document
+                    );
                     this.annotations.set(newAnnotation.id, newAnnotation);
                     createdCopies.add(copyKey);
                     this.log(
                         `copy-paste: duplicated annotation ${annotation.id} ` +
-                        `from ${source.sourceUri}:${source.sourceLine} to ${relativeFilePath}:${newLine}`
+                        `from ${source.sourceUri}:${source.sourceLine} to ${relativeFilePath}:${renderLine}`
                     );
                 }
             }
@@ -4208,9 +4345,42 @@ export class AnnotationManager extends EventEmitter {
     ): boolean {
         return contentChanges.some(change =>
             change.text.replace(/\r\n/g, '').length === 0 &&
-            line >= change.range.start.line &&
-            line <= change.range.end.line
+            this.contentChangeTouchesLine(change, line)
         );
+    }
+
+    private contentChangeTouchesLine(
+        change: vscode.TextDocumentContentChangeEvent,
+        line: number
+    ): boolean {
+        return line >= change.range.start.line && line <= this.getTouchedEndLine(change);
+    }
+
+    private getTouchedEndLine(change: vscode.TextDocumentContentChangeEvent): number {
+        if (
+            change.text === '' &&
+            change.range.end.character === 0 &&
+            change.range.end.line > change.range.start.line
+        ) {
+            return change.range.end.line - 1;
+        }
+        return change.range.end.line;
+    }
+
+    private contentChangesEraseAnnotation(
+        contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+        annotation: Annotation
+    ): boolean {
+        return this.contentChangesEraseLine(contentChanges, annotation.line) ||
+            this.contentChangesEraseLine(contentChanges, this.getAnnotationTrackingLine(annotation));
+    }
+
+    private getAnnotationTrackingLine(annotation: Annotation): number {
+        return annotation.anchor?.targetLine ?? annotation.line;
+    }
+
+    private getAnnotationTrackingHash(annotation: Annotation): string | undefined {
+        return annotation.anchor?.anchorTextHash ?? annotation.lineHash;
     }
 
     private shouldRemoveCopiedAnnotationOnUndo(
@@ -4220,8 +4390,10 @@ export class AnnotationManager extends EventEmitter {
     ): boolean {
         const removedByUndo = contentChanges.some(change =>
             change.text === '' &&
-            annotation.line >= change.range.start.line &&
-            annotation.line <= change.range.end.line
+            (
+                this.contentChangeTouchesLine(change, annotation.line) ||
+                this.contentChangeTouchesLine(change, this.getAnnotationTrackingLine(annotation))
+            )
         );
         if (!removedByUndo) {
             return false;
@@ -4245,8 +4417,7 @@ export class AnnotationManager extends EventEmitter {
         const lineInsideRemovedRanges = (line: number): boolean =>
             contentChanges.some(change =>
                 change.text === '' &&
-                line >= change.range.start.line &&
-                line <= change.range.end.line
+                this.contentChangeTouchesLine(change, line)
             );
 
         for (const other of this.annotations.values()) {
@@ -4275,6 +4446,7 @@ export class AnnotationManager extends EventEmitter {
         targetDocument: vscode.TextDocument,
         previousTargetLines: string[] | undefined,
         preChangeLinesByAnnotationId: ReadonlyMap<string, number>,
+        preChangeTrackingLinesByAnnotationId: ReadonlyMap<string, number>,
         restoredThisEvent: ReadonlySet<string>
     ): Map<number, CopySourceCandidate[]> {
         const clipboardHashes = clipboardLines.map(line => hashLine(line));
@@ -4299,25 +4471,27 @@ export class AnnotationManager extends EventEmitter {
                     continue;
                 }
 
-                const sourceLine = snapshot.usePreChangeLines
+                const renderSourceLine = snapshot.usePreChangeLines
                     ? preChangeLinesByAnnotationId.get(annotation.id) ?? annotation.line
                     : annotation.line;
-                if (sourceLine < 0 || sourceLine >= snapshot.lines.length) {
-                    continue;
-                }
+                const trackingSourceLine = snapshot.usePreChangeLines
+                    ? preChangeTrackingLinesByAnnotationId.get(annotation.id) ?? this.getAnnotationTrackingLine(annotation)
+                    : this.getAnnotationTrackingLine(annotation);
 
                 for (const start of starts) {
-                    if (sourceLine < start || sourceLine >= start + clipboardHashes.length) {
-                        continue;
-                    }
+                    const operation = this.selectCopyOperationLine(
+                        annotation,
+                        snapshot.lines,
+                        start,
+                        clipboardHashes,
+                        renderSourceLine,
+                        trackingSourceLine
+                    );
+                    if (!operation) { continue; }
 
-                    const offset = sourceLine - start;
-                    const sourceHash = annotation.lineHash ?? hashLine(snapshot.lines[sourceLine]);
-                    if (sourceHash !== clipboardHashes[offset]) {
-                        continue;
-                    }
+                    const { sourceLine, offset, renderOffsetFromSource } = operation;
 
-                    const candidateKey = `${annotation.id}:${snapshot.uri}:${sourceLine}:${offset}`;
+                    const candidateKey = `${annotation.id}:${snapshot.uri}:${sourceLine}:${offset}:${renderOffsetFromSource}`;
                     if (seenCandidateKeys.has(candidateKey)) {
                         continue;
                     }
@@ -4333,6 +4507,7 @@ export class AnnotationManager extends EventEmitter {
                         sourceUri: snapshot.uri,
                         sourceLine,
                         offset,
+                        renderOffsetFromSource,
                     });
                     byOffset.set(offset, candidates);
                 }
@@ -4351,6 +4526,50 @@ export class AnnotationManager extends EventEmitter {
         }
 
         return byOffset;
+    }
+
+    private selectCopyOperationLine(
+        annotation: Annotation,
+        snapshotLines: readonly string[],
+        blockStart: number,
+        clipboardHashes: readonly string[],
+        renderSourceLine: number,
+        trackingSourceLine: number
+    ): { sourceLine: number; offset: number; renderOffsetFromSource: number } | null {
+        const blockEndExclusive = blockStart + clipboardHashes.length;
+        const candidates = [
+            {
+                line: trackingSourceLine,
+                hash: this.getAnnotationTrackingHash(annotation),
+                renderOffsetFromSource: renderSourceLine - trackingSourceLine,
+            },
+            {
+                line: renderSourceLine,
+                hash: annotation.lineHash,
+                renderOffsetFromSource: 0,
+            },
+        ];
+
+        for (const candidate of candidates) {
+            if (candidate.line < blockStart || candidate.line >= blockEndExclusive) {
+                continue;
+            }
+            if (candidate.line < 0 || candidate.line >= snapshotLines.length) {
+                continue;
+            }
+            const offset = candidate.line - blockStart;
+            const sourceHash = candidate.hash ?? hashLine(snapshotLines[candidate.line]);
+            if (sourceHash !== clipboardHashes[offset]) {
+                continue;
+            }
+            return {
+                sourceLine: candidate.line,
+                offset,
+                renderOffsetFromSource: candidate.renderOffsetFromSource,
+            };
+        }
+
+        return null;
     }
 
     private getCopySourceSnapshots(
