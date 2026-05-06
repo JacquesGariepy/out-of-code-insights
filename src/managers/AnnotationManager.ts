@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { EventEmitter } from "events";
 import { igniteEngine, loadModels, Message } from "multi-llm-ts";
-import { Annotation, Comment, ExtensionConfig } from "../common/types";
+import { Annotation, AnnotationAnchor, Comment, ExtensionConfig, ResolvedAnnotationAnchor } from "../common/types";
 import { localize } from "../common/localize";
 import { loc } from "./LocalizationManager";
 import { ConfigurationManager } from "./ConfigurationManager";
@@ -17,6 +17,29 @@ import { SnippetManager, SnippetHistoryEntry } from "./SnippetManager";
 import { KanbanView } from "../views/KanbanView";
 import { AnnotationManagerErrorHandling } from './AnnotationManagerErrorHandling';
 import { escapeHtml, generateNonce } from '../common/utils';
+import {
+    captureAnchor,
+    findAnchor,
+    detectMoves,
+    hashLine,
+    EMPTY_LINE_HASH,
+    AnchorData,
+    MovedBlock,
+} from '../anchoring/anchor';
+
+interface CopySourceSnapshot {
+    uri: string;
+    relativeFilePath: string;
+    lines: string[];
+    usePreChangeLines: boolean;
+}
+
+interface CopySourceCandidate {
+    annotation: Annotation;
+    sourceUri: string;
+    sourceLine: number;
+    offset: number;
+}
 
 export class AnnotationManager extends EventEmitter {
     public annotationsTreeView?: vscode.TreeView<vscode.TreeItem>;
@@ -51,6 +74,19 @@ export class AnnotationManager extends EventEmitter {
         backgroundColor: 'rgba(255, 255, 0, 0.3)'
     });
     private initializationPromise: Promise<void>;
+    private documentSnapshots: Map<string, string[]> = new Map();
+    /** Milliseconds to hold a deferred (cut) annotation before showing the expiry dialog. */
+    public clipboardWindowMs = 5000;
+    private recentDeletions: Map<string, {
+        annotation: Annotation;
+        deletedAt: number;
+        /** Offset of annotation.line within the deleted block (for block-relative paste recovery). */
+        offsetInBlock: number;
+    }> = new Map();
+    /** Annotations silently removed via cut-expiry, kept briefly for Undo toast. */
+    private deletedRecently: Map<string, { annotation: Annotation; removedAt: number }> = new Map();
+    /** TTL (ms) to keep a silently-deleted annotation available for Undo. Default: 30 s. */
+    public deletedRecentlyTtlMs = 30000;
 
     private refreshTimeout: NodeJS.Timeout | undefined;
     private isRefreshing = false;
@@ -127,6 +163,8 @@ export class AnnotationManager extends EventEmitter {
             if (this.annotationsEnabled) {
                 await this.loadKanbanColumns(); // Load kanban columns first
                 await this.loadAnnotations();
+                // Snapshot documents that are already open before the extension activated
+                vscode.workspace.textDocuments.forEach(doc => this.snapshotDocument(doc));
                 this.log('Registering additional commands...');
                 this.registerAdditionalCommands(); // Register only non-core commands
                 this.log('Registering CodeLens provider...');
@@ -386,6 +424,7 @@ export class AnnotationManager extends EventEmitter {
                 severity: 'info',
                 resolved: false
             };
+            await this.populateAnchor(annotation, editor.document, line);
             this.annotations.set(annotation.id, annotation);
             await this.saveAnnotations();
             await this.refreshAnnotations();
@@ -772,18 +811,26 @@ export class AnnotationManager extends EventEmitter {
                         placeHolder: 'Related implementation...'
                     });
                     if (!message) return;
+                    const targetLineIndex = parseInt(targetLine, 10) - 1;
                     
                     // Create the new annotation FIRST
                     const newAnnotation: Annotation = {
                         id: this.generateId(),
                         file: this.getRelativePath(targetFile),
-                        line: parseInt(targetLine),
+                        line: targetLineIndex,
                         message: message,
                         author: this.currentUser,
                         timestamp: new Date().toISOString(),
                         severity: this.config.defaultSeverity
                     };
-                    
+                    // Capture anchor if the target document is currently open
+                    const linkedDoc = vscode.workspace.textDocuments.find(
+                        d => this.normalizePath(this.getRelativePath(d.fileName)) ===
+                             this.normalizePath(this.getRelativePath(targetFile))
+                    );
+                    if (linkedDoc) {
+                        await this.populateAnchor(newAnnotation, linkedDoc, newAnnotation.line);
+                    }
                     this.annotations.set(newAnnotation.id, newAnnotation);
                     await this.saveAnnotations();
                     await this.refreshAnnotations();
@@ -792,7 +839,7 @@ export class AnnotationManager extends EventEmitter {
                     await this.linkedAnnotationManager.createLink(
                         sourceAnnotation.id,
                         this.getRelativePath(targetFile),
-                        parseInt(targetLine),
+                        targetLineIndex,
                         'related'
                     );
                     
@@ -1170,7 +1217,7 @@ export class AnnotationManager extends EventEmitter {
                         id: this.generateId(),
                         message: content,
                         file: this.getRelativePath(editor.document.fileName),
-                        line: editor.selection.active.line + 1,
+                        line: editor.selection.active.line,
                         author: this.currentUser || 'Unknown',
                         timestamp: new Date().toISOString(),
                         severity: selectedTemplate.severity || this.config.defaultSeverity,
@@ -1178,7 +1225,7 @@ export class AnnotationManager extends EventEmitter {
                         thread: [],
                         resolved: false
                     };
-                    
+                    await this.populateAnchor(annotation, editor.document, annotation.line);
                     // Add the annotation
                     this.annotations.set(annotation.id, annotation);
                     await this.saveAnnotations();
@@ -1311,34 +1358,34 @@ export class AnnotationManager extends EventEmitter {
     public async moveAnnotationUp(annotationId: string): Promise<void> {
         const annotation = this.annotations.get(annotationId);
         if (!annotation) return;
-    
-        // Guard: annotation must not already be on the first line
+
         if (annotation.line === 0) {
             vscode.window.showWarningMessage(localize('cannotMoveAboveFirstLine', 'Cannot move annotation above the first line.'));
             return;
         }
-    
-        annotation.line -= 1; // Move annotation up by one line
+
+        const absoluteFilePath = this.getAbsolutePath(annotation.file);
+        const document = await vscode.workspace.openTextDocument(absoluteFilePath);
+        this.setAnnotationLine(annotation, annotation.line - 1, document);
         await this.saveAnnotations();
         await this.refreshAnnotations();
         this.updateAnnotationsPanel();
         vscode.window.showInformationMessage(localize('annotationMovedUp', 'Annotation moved up successfully!'));
     }
-    
+
     public async moveAnnotationDown(annotationId: string): Promise<void> {
         const annotation = this.annotations.get(annotationId);
         if (!annotation) return;
-    
+
         const absoluteFilePath = this.getAbsolutePath(annotation.file);
         const document = await vscode.workspace.openTextDocument(absoluteFilePath);
-    
-        // Guard: annotation must not be below the last line
+
         if (annotation.line >= document.lineCount - 1) {
             vscode.window.showWarningMessage(localize('cannotMoveBelowLastLine', 'Cannot move annotation below the last line.'));
             return;
         }
-    
-        annotation.line += 1; // Move annotation down by one line
+
+        this.setAnnotationLine(annotation, annotation.line + 1, document);
         await this.saveAnnotations();
         await this.refreshAnnotations();
         this.updateAnnotationsPanel();
@@ -1580,12 +1627,6 @@ export class AnnotationManager extends EventEmitter {
                 return;
             }
 
-            const existingAnnotation = this.findAnnotation(editor.document.fileName, line);
-            if (existingAnnotation) {
-                vscode.window.showWarningMessage(localize('annotationExists', 'An annotation already exists on this line.'));
-                return;
-            }
-
             const message = await this.promptAnnotationMessage();
             if (!message) return;
 
@@ -1605,6 +1646,14 @@ export class AnnotationManager extends EventEmitter {
                 severity: this.config.defaultSeverity,
                 resolved: false
             };
+            await this.populateAnchor(annotation, editor.document, line);
+
+            // Note: a previous version re-checked findAnnotation against the
+            // RESOLVED line and rejected duplicates. That blocked legitimate
+            // multi-annotation use cases (two notes both anchored to the same
+            // function header from different blank-line clicks above it).
+            // Stacking multiple annotations on a single line is supported -- the
+            // panel groups them and the gutter shows a single icon per line.
 
             this.annotations.set(annotation.id, annotation);
             await this.applyAnnotation(editor, annotation);
@@ -1618,6 +1667,47 @@ export class AnnotationManager extends EventEmitter {
         } catch (error) {
             this.handleError(localize('addAnnotationError', 'Failed to add annotation'), error);
         }
+    }
+
+    /**
+     * Update annotation.line and recapture its anchor snapshot.
+     * Pass doc to refresh lineHash/contextBefore/contextAfter; omit doc
+     * when the document is not available (e.g. TreeView ordering).
+     */
+    public setAnnotationLine(
+        annotation: Annotation,
+        newLine: number,
+        doc?: vscode.TextDocument
+    ): void {
+        annotation.line = newLine;
+        if (doc && newLine >= 0 && newLine < doc.lineCount) {
+            // Caller has chosen newLine deliberately (e.g. after a paste-recover or
+            // arithmetic shift); do not walk to a different line.
+            const anchor = captureAnchor(doc, newLine, { walkForward: 0, walkBackward: 0 });
+            annotation.lineHash = anchor.lineHash;
+            annotation.contextBefore = anchor.contextBefore;
+            annotation.contextAfter = anchor.contextAfter;
+            // Keep structured anchor in sync (preserve symbol metadata if present).
+            if (annotation.anchor) {
+                annotation.anchor = {
+                    ...annotation.anchor,
+                    targetLine: newLine,
+                    anchorTextHash: anchor.lineHash,
+                    contextBefore: anchor.contextBefore,
+                    contextAfter: anchor.contextAfter,
+                };
+            }
+        }
+    }
+
+    /** Store a line-by-line snapshot of doc for move detection. */
+    private snapshotDocument(doc: vscode.TextDocument): void {
+        const lines: string[] = [];
+        for (let i = 0; i < doc.lineCount; i++) {
+            lines.push(doc.lineAt(i).text);
+        }
+        this.documentSnapshots.set(doc.uri.toString(), lines);
+        this.log(`snapshot: ${doc.uri.toString()} (${lines.length} lines)`);
     }
 
     public async importAnnotationsJSON(): Promise<void> {
@@ -1714,16 +1804,30 @@ export class AnnotationManager extends EventEmitter {
         try {
             const fileData = await vscode.workspace.fs.readFile(fileUri);
             const content = Buffer.from(fileData).toString('utf8');
-            const annotationsArray = JSON.parse(content) as Annotation[];
+            const rawArray = JSON.parse(content) as Annotation[];
+            // Defensive sanity: drop entries with no id/message (data corruption).
+            const valid = rawArray.filter(a => a && typeof a.id === 'string' && typeof a.message === 'string');
+            // Migrate legacy schema (assigns fileUri, marks suspicious entries as stale)
+            // then collapse exact (file, timestamp, message) triplets.
+            const migrated = valid.map(a => this.migrateLegacyAnnotation(a));
+            const deduped = this.deduplicateLegacyAnnotations(migrated);
             this.annotations.clear();
-            for (const annotation of annotationsArray) {
+            let staleCount = 0;
+            for (const annotation of deduped) {
                 // Ensure kanbanColumn has a default value
                 if (!annotation.kanbanColumn) {
                     annotation.kanbanColumn = 'todo';
                 }
+                if (annotation.resolvedAnchor?.status === 'stale') {
+                    staleCount++;
+                }
                 this.annotations.set(annotation.id, annotation);
             }
-            this.log(`Loaded ${this.annotations.size} annotations`);
+            this.log(
+                `Loaded ${this.annotations.size} annotations` +
+                (rawArray.length !== this.annotations.size ? ` (${rawArray.length - this.annotations.size} dropped/deduped)` : '') +
+                (staleCount > 0 ? ` -- ${staleCount} marked stale by migration` : '')
+            );
         } catch (error) {
             vscode.window.showErrorMessage(
                 `Failed to load annotations: ${error instanceof Error ? error.message : String(error)}`
@@ -3024,9 +3128,24 @@ export class AnnotationManager extends EventEmitter {
         for (const file of event.files) {
             const oldRelativePath = this.getRelativePath(file.oldUri.fsPath);
             const newRelativePath = this.getRelativePath(file.newUri.fsPath);
+            const oldUriString = file.oldUri.toString();
+            const newUriString = file.newUri.toString();
+
+            // Migrate the snapshot to the new URI key
+            const oldSnapshot = this.documentSnapshots.get(oldUriString);
+            if (oldSnapshot) {
+                this.documentSnapshots.delete(oldUriString);
+                this.documentSnapshots.set(newUriString, oldSnapshot);
+            }
+
             this.annotations.forEach(annotation => {
-                if (this.normalizePath(annotation.file) === this.normalizePath(oldRelativePath)) {
+                // URI-strict match preferred; fall back to relative path for legacy entries.
+                const matches = annotation.fileUri
+                    ? annotation.fileUri === oldUriString
+                    : this.normalizePath(annotation.file) === this.normalizePath(oldRelativePath);
+                if (matches) {
                     annotation.file = newRelativePath;
+                    annotation.fileUri = newUriString;
                 }
             });
         }
@@ -3037,10 +3156,9 @@ export class AnnotationManager extends EventEmitter {
 
     private async handleFileDelete(event: vscode.FileDeleteEvent): Promise<void> {
         for (const file of event.files) {
-            const deletedRelativePath = this.getRelativePath(file.fsPath);
             const annotationsToDelete: string[] = [];
             this.annotations.forEach((annotation, id) => {
-                if (this.normalizePath(annotation.file) === this.normalizePath(deletedRelativePath)) {
+                if (this.annotationMatchesFsPath(annotation, file.fsPath)) {
                     annotationsToDelete.push(id);
                 }
             });
@@ -3069,6 +3187,364 @@ export class AnnotationManager extends EventEmitter {
         return normalizedFilePath;
     }
 
+    /**
+     * URI-strict membership test. When annotation.fileUri is set, ONLY the
+     * exact URI string matches -- this prevents the legacy "sample.ts in
+     * folder A leaks into sample.ts in folder B" failure mode.
+     * Falls back to relative-path matching for legacy annotations created
+     * before fileUri existed.
+     */
+    private annotationMatchesDocument(annotation: Annotation, document: vscode.TextDocument): boolean {
+        if (annotation.fileUri) {
+            return annotation.fileUri === document.uri.toString();
+        }
+        const relativeFilePath = this.getRelativePath(document.fileName);
+        return this.normalizePath(annotation.file) === this.normalizePath(relativeFilePath);
+    }
+
+    /** Same as annotationMatchesDocument but accepts a raw fs path. */
+    private annotationMatchesFsPath(annotation: Annotation, fsPath: string): boolean {
+        if (annotation.fileUri) {
+            try {
+                return annotation.fileUri === vscode.Uri.file(fsPath).toString();
+            } catch {
+                /* fall through to legacy match */
+            }
+        }
+        const relativeFilePath = this.getRelativePath(fsPath);
+        return this.normalizePath(annotation.file) === this.normalizePath(relativeFilePath);
+    }
+
+    /**
+     * Preserve the exact cursor line as the anchor target. Symbol metadata is
+     * recorded only when the cursor is already on a symbol's start line; it is
+     * enrichment, not permission to snap the user's annotation elsewhere.
+     */
+    private async resolveSymbolForLine(
+        doc: vscode.TextDocument,
+        cursorLine: number
+    ): Promise<{ targetLine: number; symbolName: string | null; symbolKind: string | null }> {
+        let symbols: vscode.DocumentSymbol[] = [];
+        try {
+            const result = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
+                'vscode.executeDocumentSymbolProvider',
+                doc.uri
+            );
+            symbols = Array.isArray(result) ? result : [];
+        } catch {
+            symbols = [];
+        }
+        const flat = this.flattenSymbols(symbols);
+
+        // STAY AT THE CLICK LINE. Always. No walking, no symbol-header snapping.
+        // The annotation lands exactly where the user clicked. The only enrichment
+        // is recording symbol metadata when the cursor is *already* on a symbol's
+        // start line (e.g. clicking directly on `function foo()`), so the
+        // annotation tracks `foo` when it moves later.
+        let symbolAtCursor: vscode.DocumentSymbol | null = null;
+        for (const sym of flat) {
+            if (sym.range.start.line === cursorLine) {
+                symbolAtCursor = sym;
+                break;
+            }
+        }
+
+        return {
+            targetLine: cursorLine,
+            symbolName: symbolAtCursor?.name ?? null,
+            symbolKind: symbolAtCursor ? vscode.SymbolKind[symbolAtCursor.kind] : null,
+        };
+    }
+
+    private flattenSymbols(symbols: vscode.DocumentSymbol[]): vscode.DocumentSymbol[] {
+        const flat: vscode.DocumentSymbol[] = [];
+        const visit = (list: vscode.DocumentSymbol[]): void => {
+            for (const s of list) {
+                flat.push(s);
+                if (s.children?.length) { visit(s.children); }
+            }
+        };
+        visit(symbols);
+        return flat;
+    }
+
+    /**
+     * Single source of truth for setting anchor fields on a freshly-created
+     * annotation. Callers MUST go through this helper at every creation path
+     * so fileUri, languageId, structured anchor, and the legacy lineHash/
+     * contextBefore/contextAfter triple stay in sync.
+     *
+     * Resolution order:
+     *   - Symbol via DocumentSymbolProvider (kind: 'symbol').
+     *   - Otherwise the captured target line (kind: 'line').
+     */
+    public async populateAnchor(
+        annotation: Annotation,
+        doc: vscode.TextDocument,
+        cursorLine: number
+    ): Promise<void> {
+        const sym = await this.resolveSymbolForLine(doc, cursorLine);
+        // Capture exactly at the resolver's chosen line. NO further walking:
+        // a previous defensive fallback re-walked from the cursor whenever
+        // captured.lineHash === EMPTY_LINE_HASH, which moved annotations
+        // 1-2 lines below the user's click on blank lines. We accept an
+        // empty hash here -- contextBefore/contextAfter still pin the
+        // annotation, findAnchor can re-locate via context, and the legacy
+        // migration only marks stale when context is ALSO empty.
+        const captured = captureAnchor(doc, sym.targetLine, { walkForward: 0, walkBackward: 0 });
+        const targetLine = sym.targetLine;
+
+        annotation.fileUri = doc.uri.toString();
+        annotation.languageId = doc.languageId;
+        annotation.line = targetLine;
+        annotation.lineHash = captured.lineHash;
+        annotation.contextBefore = captured.contextBefore;
+        annotation.contextAfter = captured.contextAfter;
+
+        const isMeaningfulHash = captured.lineHash !== EMPTY_LINE_HASH;
+        const symbolName = isMeaningfulHash ? sym.symbolName : null;
+        const symbolKind = isMeaningfulHash ? sym.symbolKind : null;
+        const anchor: AnnotationAnchor = {
+            kind: symbolName ? 'symbol' : 'line',
+            originalLine: cursorLine,
+            targetLine,
+            symbolName: symbolName ?? null,
+            symbolKind: symbolKind ?? null,
+            symbolSignature: null,
+            anchorTextHash: captured.lineHash,
+            contextBefore: captured.contextBefore,
+            contextAfter: captured.contextAfter,
+        };
+        annotation.anchor = anchor;
+
+        // Provisional resolved state -- the regular refresh path will recompute.
+        annotation.resolvedAnchor = {
+            status: 'attached',
+            line: targetLine,
+            confidence: 1,
+            reason: anchor.kind === 'symbol' ? `Symbol ${symbolName}` : 'Line anchor',
+        };
+    }
+
+    /**
+     * Re-resolve an annotation against a document. Pure: never mutates the
+     * stored annotation. Returns the runtime status to attach via
+     * annotation.resolvedAnchor at refresh time.
+     */
+    public computeResolvedAnchor(
+        doc: vscode.TextDocument,
+        annotation: Annotation
+    ): ResolvedAnnotationAnchor {
+        // Cross-document call -- do not even try.
+        if (!this.annotationMatchesDocument(annotation, doc)) {
+            return {
+                status: 'orphaned',
+                line: null,
+                confidence: 0,
+                reason: 'Annotation does not belong to this document',
+            };
+        }
+
+        const lineCount = doc.lineCount;
+        const storedLine = annotation.line;
+        const storedHash = annotation.lineHash;
+
+        // New-schema annotations may intentionally target blank lines. Keep
+        // those attached at the stored line when the line still matches; only
+        // legacy empty-line anchors are treated as stale data.
+        const hasStructuredAnchor = annotation.anchor !== undefined;
+        if (
+            hasStructuredAnchor &&
+            storedHash &&
+            storedLine >= 0 &&
+            storedLine < lineCount &&
+            hashLine(doc.lineAt(storedLine).text) === storedHash
+        ) {
+            return {
+                status: 'attached',
+                line: storedLine,
+                confidence: storedHash === EMPTY_LINE_HASH ? 0.5 : 1,
+                reason: storedHash === EMPTY_LINE_HASH
+                    ? 'Intentional blank-line anchor at stored line'
+                    : 'Hash match at stored line',
+            };
+        }
+
+        // Degenerate anchor -- legacy/corrupted entries.
+        if (!storedHash || storedHash === EMPTY_LINE_HASH) {
+            const meaningful =
+                (annotation.contextBefore ?? []).filter(l => l !== '').length +
+                (annotation.contextAfter ?? []).filter(l => l !== '').length;
+            if (meaningful < 2) {
+                return {
+                    status: 'stale',
+                    line: storedLine,
+                    confidence: 0,
+                    reason: 'Empty-line hash with insufficient context',
+                };
+            }
+        }
+
+        // 1. Symbol-aware: if anchor recorded a symbol, prefer it.
+        const sym = annotation.anchor;
+        if (sym?.kind === 'symbol' && sym.symbolName) {
+            // Symbol probe is async via executeDocumentSymbolProvider; that lives
+            // in resolveSymbolForLine. To stay synchronous here we rely on the
+            // hash+context resolver, which already finds the symbol's body line
+            // when the symbol is still present.
+        }
+
+        // 2. Hash + context resolver. Enable the unique-hash fallback so that
+        //    line swaps (Alt+Up/Down) where the diff misses one half and the
+        //    annotation's contextBefore no longer aligns can still be
+        //    re-located when the line content itself is unique in the file.
+        if (storedHash) {
+            const found = findAnchor(
+                doc,
+                {
+                    lineHash: storedHash,
+                    contextBefore: annotation.contextBefore ?? [],
+                    contextAfter: annotation.contextAfter ?? [],
+                },
+                storedLine,
+                { allowUniqueHashFallback: true }
+            );
+            if (found !== null) {
+                if (found === storedLine) {
+                    return { status: 'attached', line: found, confidence: 1, reason: 'Hash match at stored line' };
+                }
+                return { status: 'moved', line: found, confidence: 0.8, reason: `Relocated from line ${storedLine + 1}` };
+            }
+        }
+
+        // 3. Stored line still in range but anchor cannot be confirmed.
+        if (storedLine >= 0 && storedLine < lineCount) {
+            return {
+                status: 'orphaned',
+                line: null,
+                confidence: 0,
+                reason: 'Anchor target removed',
+            };
+        }
+
+        return {
+            status: 'orphaned',
+            line: null,
+            confidence: 0,
+            reason: 'Stored line out of document range',
+        };
+    }
+
+    /**
+     * On-load migration. Pure (returns a possibly-mutated copy reference) and
+     * NEVER deletes user data. Marks suspicious annotations as 'stale' so
+     * they remain in the panel/tree but are filtered from gutter rendering.
+     *
+     * Suspicions:
+     *   - lineHash === EMPTY_LINE_HASH AND no meaningful context.
+     *   - .py file with TypeScript syntax in context (cross-file leak).
+     *   - Missing fileUri (best-effort assignment from workspace folder).
+     */
+    private migrateLegacyAnnotation(a: Annotation): Annotation {
+        // Best-effort fileUri assignment for legacy entries.
+        if (!a.fileUri && a.file) {
+            const wsFolders = vscode.workspace.workspaceFolders ?? [];
+            if (wsFolders.length >= 1) {
+                try {
+                    const fsPath = path.join(wsFolders[0].uri.fsPath, a.file);
+                    a.fileUri = vscode.Uri.file(fsPath).toString();
+                } catch {
+                    /* leave undefined */
+                }
+            }
+        }
+
+        const meaningful =
+            (a.contextBefore ?? []).filter(l => l !== '').length +
+            (a.contextAfter ?? []).filter(l => l !== '').length;
+
+        // Empty-hash + no context -> cannot be re-resolved.
+        if ((!a.lineHash || a.lineHash === EMPTY_LINE_HASH) && meaningful < 2) {
+            a.resolvedAnchor = {
+                status: 'stale',
+                line: a.line,
+                confidence: 0,
+                reason: 'Legacy anchor on empty line; cannot re-resolve',
+            };
+            return a;
+        }
+
+        // Cross-language: TypeScript/JavaScript syntax recorded under a Python file
+        // (the symptom from the bug report -- TS context inside test.py).
+        const filePath = (a.fileUri || a.file || '').toLowerCase();
+        const ctx = [...(a.contextBefore ?? []), ...(a.contextAfter ?? [])].join('\n');
+        const looksLikeTs = /\b(function|interface |const |let |=>|: Promise<|async function|export \{)\b/.test(ctx);
+        if ((filePath.endsWith('.py') || filePath.endsWith('.rb')) && looksLikeTs) {
+            a.resolvedAnchor = {
+                status: 'stale',
+                line: a.line,
+                confidence: 0,
+                reason: 'Cross-language context (TS/JS syntax in non-JS file)',
+            };
+        }
+
+        return a;
+    }
+
+    /**
+     * Drop exact-duplicate legacy entries.
+     *
+     *   Pass 1 -- same (fileKey, timestamp, message): catches same-event
+     *             duplicates from the original duplication bug.
+     *   Pass 2 -- same (fileKey, line, lineHash, contextBefore, contextAfter,
+     *             message): catches true content-equal duplicates created
+     *             across separate events (different timestamps), the symptom
+     *             of the cut+paste-after-expiry bug. Conservative: every
+     *             content field must match.
+     */
+    private deduplicateLegacyAnnotations(list: Annotation[]): Annotation[] {
+        const tsKeyed = new Map<string, Annotation>();
+        const afterPass1: Annotation[] = [];
+        for (const a of list) {
+            const fileKey = a.fileUri || a.file || '';
+            const key = `${fileKey}|${a.timestamp}|${a.message}`;
+            const existing = tsKeyed.get(key);
+            if (existing) {
+                this.log(`migration: dedupe(ts) ${a.id} (collides with ${existing.id})`);
+                continue;
+            }
+            tsKeyed.set(key, a);
+            afterPass1.push(a);
+        }
+
+        const contentKeyed = new Map<string, Annotation>();
+        const afterPass2: Annotation[] = [];
+        for (const a of afterPass1) {
+            const fileKey = a.fileUri || a.file || '';
+            const ctxBefore = JSON.stringify(a.contextBefore ?? []);
+            const ctxAfter = JSON.stringify(a.contextAfter ?? []);
+            const key = `${fileKey}|${a.line}|${a.lineHash ?? ''}|${ctxBefore}|${ctxAfter}|${a.message}`;
+            const existing = contentKeyed.get(key);
+            if (existing) {
+                // Keep the earlier entry; the later one is the spurious duplicate.
+                const keep = existing.timestamp <= a.timestamp ? existing : a;
+                const drop = keep === existing ? a : existing;
+                this.log(`migration: dedupe(content) drop ${drop.id} (kept ${keep.id})`);
+                if (keep !== existing) {
+                    contentKeyed.set(key, keep);
+                    // Replace in result.
+                    const idx = afterPass2.findIndex(x => x.id === existing.id);
+                    if (idx >= 0) { afterPass2[idx] = keep; }
+                }
+                continue;
+            }
+            contentKeyed.set(key, a);
+            afterPass2.push(a);
+        }
+
+        return afterPass2;
+    }
+
     private getAbsolutePath(relativePath: string): string {
         const workspaceFolders = vscode.workspace.workspaceFolders;
         if (workspaceFolders && workspaceFolders.length > 0) {
@@ -3078,60 +3554,739 @@ export class AnnotationManager extends EventEmitter {
     }
 
     public getAnnotationsForFile(fileName: string): Annotation[] {
-        const relativeFilePath = this.getRelativePath(fileName);
         return Array.from(this.annotations.values())
-            .filter(a => this.normalizePath(a.file) === this.normalizePath(relativeFilePath));
+            .filter(a => this.annotationMatchesFsPath(a, fileName));
     }
 
     private async handleDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
+        if (event.contentChanges.length === 0) { return; }
+
         const document = event.document;
+        const fileKey = document.uri.toString();
         const relativeFilePath = this.getRelativePath(document.fileName);
-        const changes = event.contentChanges;
-        const annotationsToDelete: string[] = [];
+        const now = Date.now();
+        const preChangeLinesByAnnotationId = new Map<string, number>();
+        this.annotations.forEach(annotation => {
+            if (this.annotationMatchesDocument(annotation, document)) {
+                preChangeLinesByAnnotationId.set(annotation.id, annotation.line);
+            }
+        });
 
-        for (const change of changes) {
-            const startLine = change.range.start.line;
-            const endLine = change.range.end.line;
-            const lineDelta = change.text.split('\n').length - (endLine - startLine + 1);
+        // IDs handled by the cut/paste recovery phase below. Mutual exclusion: any
+        // annotation restored from recentDeletions in this event MUST be skipped by
+        // both the per-annotation arithmetic loop (otherwise the same paste range
+        // shifts the just-restored annotation past the inserted block) and the
+        // copy-paste duplication step (otherwise a ghost duplicate is created).
+        const restoredThisEvent = new Set<string>();
 
-            this.annotations.forEach((annotation) => {
-                if (this.normalizePath(annotation.file) === this.normalizePath(relativeFilePath)) {
-                    if (annotation.line > endLine) {
-                        annotation.line += lineDelta;
-                    } else if (annotation.line >= startLine && annotation.line <= endLine) {
-                        if (lineDelta < 0) {
-                            annotationsToDelete.push(annotation.id);
-                        }
-                    }
-                }
-            });
-        }
-
-        if (annotationsToDelete.length > 0) {
-            const answer = await vscode.window.showWarningMessage(
-                localize('annotationsDeleted', '{0} annotation(s) were deleted due to line removal. Do you want to remove them?', annotationsToDelete.length),
-                localize('yes', 'Yes'), localize('no', 'No')
-            );
-
-            if (answer === localize('yes', 'Yes')) {
-                annotationsToDelete.forEach(id => {
-                    this.annotations.delete(id);
-                    this.disposeDecoration(id);
-                });
-                await this.saveAnnotations();
-                vscode.window.showInformationMessage(localize('selectedAnnotationsDeleted', 'Selected annotations deleted.'));
+        // Expire deferred cut-paste entries whose clipboard window has elapsed.
+        // Move them to the silent-delete undo buffer (no modal, toast only).
+        const expiredAnnotations: Annotation[] = [];
+        for (const [id, deferred] of this.recentDeletions) {
+            if (now - deferred.deletedAt > this.clipboardWindowMs) {
+                expiredAnnotations.push(deferred.annotation);
+                this.recentDeletions.delete(id);
+                this.deletedRecently.set(id, { annotation: deferred.annotation, removedAt: now });
             }
         }
 
+        // Attempt to recover deferred (cut) annotations: check if the current document
+        // state now contains the previously-deleted content (paste event in any file).
+        if (this.recentDeletions.size > 0) {
+            const recovered: string[] = [];
+            for (const [id, deferred] of this.recentDeletions) {
+                let found: number | null = null;
+
+                // Primary: block-relative position from a paste contentChange.
+                // Avoids false negatives caused by sparse context (e.g. leading empty lines).
+                for (const change of event.contentChanges) {
+                    const insertedLines = change.text.split('\n');
+                    const startLine = change.range.start.line;
+                    if (change.text.length === 0) { continue; }
+                    if (deferred.offsetInBlock >= insertedLines.length) { continue; }
+                    const expectedHash = hashLine(insertedLines[deferred.offsetInBlock]);
+                    if (expectedHash === deferred.annotation.lineHash) {
+                        found = startLine + deferred.offsetInBlock;
+                        break;
+                    }
+                }
+
+                // Fallback: full-document findAnchor (covers same-file atomic paste
+                // and clipboard recovery triggered by non-paste events).
+                if (found === null && deferred.annotation.lineHash) {
+                    const anchor: AnchorData = {
+                        lineHash: deferred.annotation.lineHash,
+                        contextBefore: deferred.annotation.contextBefore ?? [],
+                        contextAfter: deferred.annotation.contextAfter ?? [],
+                    };
+                    found = findAnchor(document, anchor, -1);
+                }
+
+                if (found !== null) {
+                    // Re-scope to the destination document. Updating `file` alone
+                    // leaves a stale fileUri that makes the annotation render in
+                    // the SOURCE file at the destination's line number -- the
+                    // "annotation reappears at another location" bug after cross-
+                    // file cut+paste.
+                    deferred.annotation.file = relativeFilePath;
+                    deferred.annotation.fileUri = document.uri.toString();
+                    deferred.annotation.languageId = document.languageId;
+                    deferred.annotation.resolvedAnchor = undefined;
+                    if (deferred.annotation.anchor) {
+                        // Symbol metadata referred to the source file's symbol --
+                        // it may not exist (or may be a different symbol) in the
+                        // destination. Demote to a line anchor.
+                        deferred.annotation.anchor = {
+                            ...deferred.annotation.anchor,
+                            kind: 'line',
+                            symbolName: null,
+                            symbolKind: null,
+                            symbolSignature: null,
+                        };
+                    }
+                    this.setAnnotationLine(deferred.annotation, found, document);
+                    this.annotations.set(id, deferred.annotation);
+                    recovered.push(id);
+                    restoredThisEvent.add(id);
+                    this.log(`recentDeletions: restored ${id} to ${relativeFilePath}:${found} (offsetInBlock=${deferred.offsetInBlock})`);
+                }
+            }
+            recovered.forEach(id => this.recentDeletions.delete(id));
+        }
+
+        // Main pipeline: snapshot diff, move detection, arithmetic shift.
+        const oldLines = this.documentSnapshots.get(fileKey);
+        const newLines: string[] = [];
+        for (let i = 0; i < document.lineCount; i++) {
+            newLines.push(document.lineAt(i).text);
+        }
+
+        // Restore silently-deleted annotations whose content reappears (e.g. Ctrl+Z).
+        // Pass restoredThisEvent so the duplication step skips IDs we just put back --
+        // otherwise the same paste both restores the annotation AND creates a copy.
+        this.tryRestoreFromDeletedRecently(document, relativeFilePath, restoredThisEvent);
+
+        const moves: MovedBlock[] = oldLines ? detectMoves(oldLines, newLines) : [];
+
+        // Undo/Redo are handled by arithmetic + clipboard buffers; the copy-paste
+        // duplication step must NOT fire on these reasons, otherwise the cut text
+        // still in the OS clipboard re-matches the redone paste and creates ghosts.
+        const isUndoRedo =
+            event.reason === vscode.TextDocumentChangeReason.Undo ||
+            event.reason === vscode.TextDocumentChangeReason.Redo;
+
+        this.annotations.forEach((annotation) => {
+            // URI-strict filter: an annotation only mutates if it actually belongs
+            // to THIS document. Same-basename files across folders no longer mix.
+            if (!this.annotationMatchesDocument(annotation, document)) {
+                return;
+            }
+
+            // Stale/orphaned annotations are intentionally frozen: arithmetic
+            // shift and findAnchor would migrate them to unrelated symbols
+            // (the original Bug 4). They stay in the panel for manual triage.
+            const status = annotation.resolvedAnchor?.status;
+            if (status === 'stale' || status === 'orphaned') {
+                return;
+            }
+
+            // Mutual exclusion: an annotation just restored from recentDeletions
+            // by the cut+paste recovery phase has already been placed at its final
+            // line inside the freshly-inserted block. Running the arithmetic shift
+            // on the same paste change would push it past the inserted block.
+            if (restoredThisEvent.has(annotation.id)) {
+                return;
+            }
+
+            const oldLine = annotation.line;
+
+            const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
+            if (move) {
+                this.setAnnotationLine(annotation, move.newStart + (oldLine - move.oldStart), document);
+                return;
+            }
+
+            let currentLine = oldLine;
+            let markedDeleted = false;
+            let pureCutTouchedLine = false;
+
+            for (const change of event.contentChanges) {
+                const startLine = change.range.start.line;
+                const endLine = change.range.end.line;
+                const lineDelta = change.text.split('\n').length - (endLine - startLine + 1);
+
+                if (currentLine > endLine) {
+                    currentLine += lineDelta;
+                } else if (currentLine >= startLine && currentLine <= endLine && lineDelta < 0) {
+                    markedDeleted = true;
+                    if (change.text === '') {
+                        pureCutTouchedLine = true;
+                    }
+                }
+            }
+
+            // Detect content displacement: arithmetic alone misses selection-based
+            // cuts whose lineDelta is 0 (the line is emptied without being removed).
+            // To avoid pulling annotations into the buffer on routine edits we
+            // require BOTH a hash mismatch at the predicted line AND that the
+            // triggering change was an erasure (text === '') touching this line.
+            const newLineCount = document.lineCount;
+            const predictedInRange = currentLine >= 0 && currentLine < newLineCount;
+            const predictedHashMatches =
+                annotation.lineHash !== undefined &&
+                predictedInRange &&
+                hashLine(document.lineAt(currentLine).text) === annotation.lineHash;
+            let lineDisplaced = false;
+            if (!markedDeleted && annotation.lineHash !== undefined && !predictedHashMatches) {
+                for (const ch of event.contentChanges) {
+                    const erased = ch.text.replace(/\r\n/g, '').length === 0;
+                    if (
+                        erased &&
+                        oldLine >= ch.range.start.line &&
+                        oldLine <= ch.range.end.line
+                    ) {
+                        lineDisplaced = true;
+                        break;
+                    }
+                }
+            }
+
+            // Defensive guard: if pure-arithmetic shift would push the line out of
+            // the new document (negative or >= lineCount), the line was implicitly
+            // removed by an upstream cut. Treat it as markedDeleted so we defer
+            // instead of writing a stale negative/oversized line.
+            const arithmeticOutOfRange =
+                !markedDeleted &&
+                !lineDisplaced &&
+                (currentLine < 0 || currentLine >= newLineCount);
+            if (arithmeticOutOfRange) {
+                markedDeleted = true;
+            }
+
+            if (markedDeleted || lineDisplaced) {
+                // Pure deletion (Ctrl+X / Backspace on the annotated line, text='')
+                // means the cut content is gone from the document. findAnchor may
+                // still produce a low-context FALSE POSITIVE at line 0 or 1 when
+                // the cut text was a common idiom (closing brace, blank line) that
+                // happens to recur near the top of the document. Skip relocation
+                // for pure cuts and defer directly to the clipboard buffer; a
+                // paste event will restore via the offsetInBlock primary path.
+                const allowFindAnchor = !pureCutTouchedLine && !arithmeticOutOfRange;
+                if (allowFindAnchor && annotation.lineHash) {
+                    const anchor: AnchorData = {
+                        lineHash: annotation.lineHash,
+                        contextBefore: annotation.contextBefore ?? [],
+                        contextAfter: annotation.contextAfter ?? [],
+                    };
+                    const found = findAnchor(document, anchor, -1);
+                    if (found !== null) {
+                        this.setAnnotationLine(annotation, found, document);
+                        return;
+                    }
+                }
+                // Defer: remove from live map, hold in clipboard buffer.
+                // A paste event within clipboardWindowMs will restore it silently.
+                let offsetInBlock = 0;
+                for (const ch of event.contentChanges) {
+                    if (annotation.line >= ch.range.start.line &&
+                        annotation.line <= ch.range.end.line) {
+                        offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
+                        break;
+                    }
+                }
+                this.annotations.delete(annotation.id);
+                this.disposeDecoration(annotation.id);
+                this.recentDeletions.set(annotation.id, {
+                    annotation: { ...annotation },
+                    deletedAt: Date.now(),
+                    offsetInBlock,
+                });
+                this.log(
+                    `cut/displace: deferred annotation ${annotation.id} from ${relativeFilePath}:${oldLine} ` +
+                    `(markedDeleted=${markedDeleted}, displaced=${lineDisplaced}, ` +
+                    `pureCut=${pureCutTouchedLine}, offsetInBlock=${offsetInBlock})`
+                );
+            } else if (currentLine !== oldLine) {
+                // Defensive clamp: never write a negative or oversized line to the
+                // live map. The arithmeticOutOfRange branch above should already
+                // have caught this, but keep the guard so a future regression can
+                // not produce a phantom annotation at line 0/1.
+                if (currentLine < 0 || currentLine >= newLineCount) {
+                    return;
+                }
+                this.setAnnotationLine(annotation, currentLine, document);
+            }
+        });
+
+        // Update snapshot AFTER processing so the next event sees the correct state.
+        this.documentSnapshots.set(fileKey, newLines);
+
+        // Automatically duplicate annotations found in pasted blocks (no prompt).
+        // Skip on Undo/Redo: those events replay the user's existing edits and the
+        // arithmetic + clipboard-buffer paths already restore positions correctly;
+        // running detectAndDuplicateOnCopyPaste here would create ghost copies
+        // because the clipboard still holds the cut text from the original action.
+        if (!isUndoRedo) {
+            await this.detectAndDuplicateOnCopyPaste(
+                event.contentChanges,
+                document,
+                relativeFilePath,
+                restoredThisEvent,
+                oldLines,
+                preChangeLinesByAnnotationId
+            );
+        } else {
+            this.log(`undo/redo: skipped detectAndDuplicateOnCopyPaste (reason=${event.reason})`);
+        }
+
+        // Non-modal toast for annotations whose clipboard window expired silently.
+        if (expiredAnnotations.length > 0) {
+            this.showCutExpiredToast(expiredAnnotations, document, relativeFilePath);
+        }
+
         await this.saveAnnotations();
-        // Use longer debounce for document changes
-        setTimeout(() => {
-            this.refreshAnnotations();
-        }, 300);
+        setTimeout(() => { this.refreshAnnotations(); }, 300);
         this.updateAnnotationsPanel();
+        // Tree provider listens on annotationChanged. Without this emit the tree
+        // still shows the cut annotation at its old line until the next manual
+        // refresh, which the user perceives as a stale phantom entry.
+        this.emit('annotationChanged');
+    }
+
+    /**
+     * After a paste event, automatically duplicate annotations whose content appears
+     * in the pasted block.  Guards prevent false positives from keystrokes and autocomplete.
+     * No prompt is shown -- duplication is immediate, matching VS Code's "paste = duplicate".
+     */
+    private async detectAndDuplicateOnCopyPaste(
+        contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+        document: vscode.TextDocument,
+        relativeFilePath: string,
+        restoredThisEvent: ReadonlySet<string> = new Set<string>(),
+        previousTargetLines?: string[],
+        preChangeLinesByAnnotationId: ReadonlyMap<string, number> = new Map<string, number>()
+    ): Promise<void> {
+        // Primary guard: clipboard must be non-empty and match the inserted text.
+        // Keystrokes, Enter, and autocomplete do NOT change the OS clipboard.
+        const rawClipboard = await vscode.env.clipboard.readText();
+        if (this.normalizeClipboardText(rawClipboard).length === 0) { return; }
+
+        const clipboardLines = this.splitClipboardLines(rawClipboard);
+        if (clipboardLines.length === 0) { return; }
+
+        const sourceCandidatesByOffset = this.collectCopySourceCandidates(
+            clipboardLines,
+            document,
+            previousTargetLines,
+            preChangeLinesByAnnotationId,
+            restoredThisEvent
+        );
+        if (sourceCandidatesByOffset.size === 0) { return; }
+
+        const createdCopies = new Set<string>();
+
+        for (const change of contentChanges) {
+            if (change.text.length === 0) { continue; }
+            if (!this.clipboardTextMatches(change.text, rawClipboard)) { continue; }
+
+            const insertedLines = this.splitClipboardLines(change.text);
+            const startLine = change.range.start.line;
+
+            for (let k = 0; k < insertedLines.length; k++) {
+                const newLine = startLine + k;
+                const sourceCandidates = sourceCandidatesByOffset.get(k) ?? [];
+
+                for (const source of sourceCandidates) {
+                    const annotation = source.annotation;
+                    const copyKey = `${annotation.id}:${newLine}`;
+                    if (createdCopies.has(copyKey)) { continue; }
+
+                    // Anti-duplicate guard: never create a second annotation at the same
+                    // (file, line) carrying the same message.  Belt-and-suspenders against
+                    // edge cases where undo/redo, multi-cursor, or rapid events would
+                    // otherwise re-fire duplication on top of an existing annotation.
+                    if (this.sameLocationSameMessage(document, newLine, annotation.message)) {
+                        this.log(`anti-duplicate: skipped creating duplicate at ${relativeFilePath}:${newLine}`);
+                        continue;
+                    }
+
+                    // Belt-and-suspenders: an annotation in the cut buffer with the
+                    // same message at the target line means the paste is reviving a
+                    // cut. Recovery should have handled it; refuse to also duplicate.
+                    let cutBufferShadowsTarget = false;
+                    for (const deferred of this.recentDeletions.values()) {
+                        if (deferred.annotation.message === annotation.message) {
+                            cutBufferShadowsTarget = true;
+                            break;
+                        }
+                    }
+                    if (cutBufferShadowsTarget) {
+                        this.log(`anti-duplicate: cut buffer holds same message, skipped at ${relativeFilePath}:${newLine}`);
+                        continue;
+                    }
+
+                    const newAnnotation: Annotation = {
+                        ...annotation,
+                        id: this.generateId(),
+                        file: relativeFilePath, // always the paste-destination file
+                        fileUri: document.uri.toString(),
+                        languageId: document.languageId,
+                        line: newLine,
+                        timestamp: new Date().toISOString(),
+                        anchor: undefined, // re-anchored against the destination below
+                        resolvedAnchor: undefined,
+                    };
+                    this.setAnnotationLine(newAnnotation, newLine, document);
+                    this.annotations.set(newAnnotation.id, newAnnotation);
+                    createdCopies.add(copyKey);
+                    this.log(
+                        `copy-paste: duplicated annotation ${annotation.id} ` +
+                        `from ${source.sourceUri}:${source.sourceLine} to ${relativeFilePath}:${newLine}`
+                    );
+                }
+            }
+        }
+    }
+
+    private normalizeClipboardText(text: string): string {
+        return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    }
+
+    private stripSingleTrailingLineBreak(text: string): string {
+        return text.endsWith('\n') ? text.slice(0, -1) : text;
+    }
+
+    private splitClipboardLines(text: string): string[] {
+        return this.stripSingleTrailingLineBreak(this.normalizeClipboardText(text)).split('\n');
+    }
+
+    private clipboardTextMatches(changeText: string, clipboardText: string): boolean {
+        const normalizedChange = this.normalizeClipboardText(changeText);
+        const normalizedClipboard = this.normalizeClipboardText(clipboardText);
+        return normalizedChange === normalizedClipboard ||
+            this.stripSingleTrailingLineBreak(normalizedChange) ===
+            this.stripSingleTrailingLineBreak(normalizedClipboard);
+    }
+
+    private collectCopySourceCandidates(
+        clipboardLines: readonly string[],
+        targetDocument: vscode.TextDocument,
+        previousTargetLines: string[] | undefined,
+        preChangeLinesByAnnotationId: ReadonlyMap<string, number>,
+        restoredThisEvent: ReadonlySet<string>
+    ): Map<number, CopySourceCandidate[]> {
+        const clipboardHashes = clipboardLines.map(line => hashLine(line));
+        const snapshots = this.getCopySourceSnapshots(targetDocument, previousTargetLines);
+        const byOffset = new Map<number, CopySourceCandidate[]>();
+        const seenCandidateKeys = new Set<string>();
+        const singleLineSourceLocations = new Set<string>();
+
+        for (const snapshot of snapshots) {
+            const starts = this.findMatchingClipboardBlockStarts(snapshot.lines, clipboardHashes);
+            if (starts.length === 0) { continue; }
+
+            for (const annotation of this.annotations.values()) {
+                if (this.recentDeletions.has(annotation.id) || restoredThisEvent.has(annotation.id)) {
+                    continue;
+                }
+                const status = annotation.resolvedAnchor?.status;
+                if (status === 'stale' || status === 'orphaned') {
+                    continue;
+                }
+                if (!this.annotationMatchesSnapshot(annotation, snapshot)) {
+                    continue;
+                }
+
+                const sourceLine = snapshot.usePreChangeLines
+                    ? preChangeLinesByAnnotationId.get(annotation.id) ?? annotation.line
+                    : annotation.line;
+                if (sourceLine < 0 || sourceLine >= snapshot.lines.length) {
+                    continue;
+                }
+
+                for (const start of starts) {
+                    if (sourceLine < start || sourceLine >= start + clipboardHashes.length) {
+                        continue;
+                    }
+
+                    const offset = sourceLine - start;
+                    const sourceHash = annotation.lineHash ?? hashLine(snapshot.lines[sourceLine]);
+                    if (sourceHash !== clipboardHashes[offset]) {
+                        continue;
+                    }
+
+                    const candidateKey = `${annotation.id}:${snapshot.uri}:${sourceLine}:${offset}`;
+                    if (seenCandidateKeys.has(candidateKey)) {
+                        continue;
+                    }
+                    seenCandidateKeys.add(candidateKey);
+
+                    if (clipboardHashes.length === 1) {
+                        singleLineSourceLocations.add(`${snapshot.uri}:${sourceLine}`);
+                    }
+
+                    const candidates = byOffset.get(offset) ?? [];
+                    candidates.push({
+                        annotation,
+                        sourceUri: snapshot.uri,
+                        sourceLine,
+                        offset,
+                    });
+                    byOffset.set(offset, candidates);
+                }
+            }
+        }
+
+        // A single-line clipboard payload has no block context. If multiple
+        // annotated source locations have the same text, copying annotations
+        // would be guesswork, so skip instead of duplicating the wrong note.
+        if (clipboardHashes.length === 1 && singleLineSourceLocations.size > 1) {
+            this.log(
+                `copy-paste: skipped single-line annotation copy; ` +
+                `${singleLineSourceLocations.size} annotated source lines match the clipboard`
+            );
+            return new Map();
+        }
+
+        return byOffset;
+    }
+
+    private getCopySourceSnapshots(
+        targetDocument: vscode.TextDocument,
+        previousTargetLines?: string[]
+    ): CopySourceSnapshot[] {
+        const snapshots: CopySourceSnapshot[] = [];
+        const seenUris = new Set<string>();
+        const targetUri = targetDocument.uri.toString();
+
+        if (previousTargetLines) {
+            snapshots.push({
+                uri: targetUri,
+                relativeFilePath: this.getRelativePath(targetDocument.fileName),
+                lines: previousTargetLines,
+                usePreChangeLines: true,
+            });
+            seenUris.add(targetUri);
+        }
+
+        for (const [uri, lines] of this.documentSnapshots) {
+            if (seenUris.has(uri)) {
+                continue;
+            }
+            const relativeFilePath = this.getRelativePathFromUriString(uri);
+            if (!relativeFilePath) {
+                continue;
+            }
+            snapshots.push({
+                uri,
+                relativeFilePath,
+                lines,
+                usePreChangeLines: false,
+            });
+            seenUris.add(uri);
+        }
+
+        for (const doc of vscode.workspace.textDocuments) {
+            const uri = doc.uri.toString();
+            if (seenUris.has(uri)) {
+                continue;
+            }
+            const lines: string[] = [];
+            for (let i = 0; i < doc.lineCount; i++) {
+                lines.push(doc.lineAt(i).text);
+            }
+            snapshots.push({
+                uri,
+                relativeFilePath: this.getRelativePath(doc.fileName),
+                lines,
+                usePreChangeLines: uri === targetUri,
+            });
+            seenUris.add(uri);
+        }
+
+        return snapshots;
+    }
+
+    private getRelativePathFromUriString(uriString: string): string | null {
+        try {
+            const uri = vscode.Uri.parse(uriString);
+            return this.getRelativePath(uri.fsPath);
+        } catch {
+            return null;
+        }
+    }
+
+    private annotationMatchesSnapshot(annotation: Annotation, snapshot: CopySourceSnapshot): boolean {
+        if (annotation.fileUri) {
+            return annotation.fileUri === snapshot.uri;
+        }
+        return this.normalizePath(annotation.file) === this.normalizePath(snapshot.relativeFilePath);
+    }
+
+    private findMatchingClipboardBlockStarts(lines: readonly string[], clipboardHashes: readonly string[]): number[] {
+        if (clipboardHashes.length === 0 || clipboardHashes.length > lines.length) {
+            return [];
+        }
+
+        const starts: number[] = [];
+        for (let start = 0; start <= lines.length - clipboardHashes.length; start++) {
+            let matches = true;
+            for (let offset = 0; offset < clipboardHashes.length; offset++) {
+                if (hashLine(lines[start + offset]) !== clipboardHashes[offset]) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                starts.push(start);
+            }
+        }
+        return starts;
+    }
+
+    /**
+     * Show a non-modal informational toast when cut annotations expire silently.
+     * The Undo button restores them to the nearest valid line.  No modal blocking.
+     */
+    private showCutExpiredToast(
+        expiredAnnotations: Annotation[],
+        document: vscode.TextDocument,
+        relativeFilePath: string
+    ): void {
+        vscode.window.showInformationMessage(
+            localize(
+                'annotationsCutExpired',
+                '{0} annotation(s) removed (not pasted). Press Undo to restore.',
+                expiredAnnotations.length
+            ),
+            localize('undo', 'Undo')
+        ).then(answer => {
+            if (answer !== localize('undo', 'Undo')) { return; }
+            for (const annotation of expiredAnnotations) {
+                const clamped = Math.max(0, Math.min(annotation.line, document.lineCount - 1));
+                annotation.file = relativeFilePath;
+                annotation.fileUri = document.uri.toString();
+                annotation.languageId = document.languageId;
+                annotation.resolvedAnchor = undefined;
+                if (annotation.anchor) {
+                    annotation.anchor = {
+                        ...annotation.anchor,
+                        kind: 'line',
+                        symbolName: null,
+                        symbolKind: null,
+                        symbolSignature: null,
+                    };
+                }
+                this.setAnnotationLine(annotation, clamped, document);
+                this.annotations.set(annotation.id, annotation);
+                this.deletedRecently.delete(annotation.id);
+            }
+            this.saveAnnotations().then(() => this.refreshAnnotations());
+        });
+    }
+
+    /**
+     * Attempt to restore silently-deleted annotations whose content has reappeared
+     * in the document (e.g. after the user pressed Ctrl+Z to undo a text edit).
+     * Also cleans up entries older than deletedRecentlyTtlMs.
+     *
+     * `restoredThisEvent`, when provided, accumulates the ids of annotations
+     * that were just restored so the downstream `detectAndDuplicateOnCopyPaste`
+     * step skips them (otherwise the restored annotation gets duplicated AGAIN
+     * because the same paste insert that triggered the restore also matches
+     * the duplication clipboard guard).
+     */
+    private tryRestoreFromDeletedRecently(
+        doc: vscode.TextDocument,
+        relativeFilePath: string,
+        restoredThisEvent?: Set<string>
+    ): void {
+        const now = Date.now();
+        for (const [id, entry] of this.deletedRecently) {
+            if (now - entry.removedAt > this.deletedRecentlyTtlMs) {
+                this.deletedRecently.delete(id);
+                continue;
+            }
+            if (!entry.annotation.lineHash) { continue; }
+            const anchor: AnchorData = {
+                lineHash: entry.annotation.lineHash,
+                contextBefore: entry.annotation.contextBefore ?? [],
+                contextAfter: entry.annotation.contextAfter ?? [],
+            };
+            const found = findAnchor(doc, anchor, entry.annotation.line);
+            if (found !== null) {
+                entry.annotation.file = relativeFilePath;
+                entry.annotation.fileUri = doc.uri.toString();
+                entry.annotation.languageId = doc.languageId;
+                entry.annotation.resolvedAnchor = undefined;
+                if (entry.annotation.anchor) {
+                    entry.annotation.anchor = {
+                        ...entry.annotation.anchor,
+                        kind: 'line',
+                        symbolName: null,
+                        symbolKind: null,
+                        symbolSignature: null,
+                    };
+                }
+                this.setAnnotationLine(entry.annotation, found, doc);
+                this.annotations.set(id, entry.annotation);
+                this.deletedRecently.delete(id);
+                restoredThisEvent?.add(id);
+                this.log(`deletedRecently: restored ${id} at ${relativeFilePath}:${found} (undo-buffer)`);
+            }
+        }
     }
 
     private async handleDocumentOpen(document: vscode.TextDocument): Promise<void> {
+        this.snapshotDocument(document);
+
+        const relativeFilePath = this.getRelativePath(document.fileName);
+
+        // Restore silently-deleted annotations if their content reappears after reload.
+        this.tryRestoreFromDeletedRecently(document, relativeFilePath);
+
+        let changed = false;
+
+        for (const annotation of this.annotations.values()) {
+            if (!this.annotationMatchesDocument(annotation, document)) {
+                continue;
+            }
+
+            // Legacy annotation without anchor fields: migrate silently
+            if (!annotation.lineHash) {
+                if (annotation.line >= 0 && annotation.line < document.lineCount) {
+                    this.setAnnotationLine(annotation, annotation.line, document);
+                    changed = true;
+                }
+                continue;
+            }
+
+            // Fast path: stored line still holds the correct content
+            if (annotation.line >= 0 && annotation.line < document.lineCount) {
+                const currentHash = hashLine(document.lineAt(annotation.line).text);
+                if (currentHash === annotation.lineHash) {
+                    continue;
+                }
+            }
+
+            // Hash mismatch: external edit may have shifted the line -- try to relocate
+            const anchor: AnchorData = {
+                lineHash: annotation.lineHash,
+                contextBefore: annotation.contextBefore ?? [],
+                contextAfter: annotation.contextAfter ?? [],
+            };
+            const found = findAnchor(document, anchor, annotation.line);
+            if (found !== null) {
+                this.setAnnotationLine(annotation, found, document);
+                changed = true;
+            }
+            // Not found: annotation drifted; leave stored position, will re-try on next open
+        }
+
+        if (changed) {
+            await this.saveAnnotations();
+        }
+
         const editor = vscode.window.visibleTextEditors.find(e => e.document === document);
         if (editor) {
             await this.refreshAnnotations();
@@ -3147,9 +4302,15 @@ export class AnnotationManager extends EventEmitter {
 
         // First clear all decorations for this editor
         this.clearDecorations(editor);
-        
+
         // Then apply the new annotations
         for (const annotation of annotations) {
+            // Pure render: orphaned/stale entries are kept in the model and shown
+            // in the side panel/tree, but never decorated in the editor gutter.
+            const status = annotation.resolvedAnchor?.status;
+            if (status === 'orphaned' || status === 'stale') {
+                continue;
+            }
             if (this.shouldAnnotationBeVisible(annotation)) {
                 await this.applyAnnotation(editor, annotation);
             }
@@ -3214,9 +4375,25 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async applyAnnotation(editor: vscode.TextEditor, annotation: Annotation): Promise<void> {
-        if (annotation.line < 0 || annotation.line >= editor.document.lineCount) {
-            this.annotations.delete(annotation.id);
-            await this.saveAnnotations();
+        // Render at the resolved line when the resolver moved the anchor; otherwise
+        // fall back to the persisted line. Persisted line is left untouched so the
+        // resolution remains transient (refresh = projection, not mutation).
+        const resolvedLine =
+            annotation.resolvedAnchor?.status === 'attached' || annotation.resolvedAnchor?.status === 'moved'
+                ? annotation.resolvedAnchor.line
+                : null;
+        const renderLine = resolvedLine ?? annotation.line;
+
+        if (renderLine < 0 || renderLine >= editor.document.lineCount) {
+            // Out of range: mark orphaned and skip decoration. Silent deletion was
+            // a data-loss footgun -- the user's annotation must survive even when
+            // the document temporarily shrinks (Undo/Redo, branch switch, etc.).
+            annotation.resolvedAnchor = {
+                status: 'orphaned',
+                line: null,
+                confidence: 0,
+                reason: `Line ${renderLine + 1} out of document range (${editor.document.lineCount} lines)`,
+            };
             return;
         }
 
@@ -3227,7 +4404,8 @@ export class AnnotationManager extends EventEmitter {
 
         const decorationType = this.createDecorationForAnnotation(annotation);
         this.decorationTypes.set(annotation.id, decorationType);
-        const range = new vscode.Range(annotation.line, 0, annotation.line, 0);
+        // Single-line zero-width range: gutter icon only on the anchor line.
+        const range = new vscode.Range(renderLine, 0, renderLine, 0);
 
         const snippet = annotation.message.substring(0, 15);
         const viewInPanelLabel = localize('viewInPanelLabel', 'View in Panel →');
@@ -3256,15 +4434,20 @@ export class AnnotationManager extends EventEmitter {
             if (this.isRefreshing) {
                 return; // Avoid concurrent calls
             }
-            
+
             this.isRefreshing = true;
             try {
                 const editors = vscode.window.visibleTextEditors;
                 for (const editor of editors) {
-                    const relativeFilePath = this.getRelativePath(editor.document.fileName);
+                    // Strict URI filter (with legacy fallback). Cross-file rendering
+                    // is the data-corruption symptom -- block it at the boundary.
                     const fileAnnotations = Array.from(this.annotations.values()).filter(
-                        (a) => this.normalizePath(a.file) === this.normalizePath(relativeFilePath)
+                        a => this.annotationMatchesDocument(a, editor.document)
                     );
+                    // Recompute resolution status (pure -- attaches transient state only).
+                    for (const annotation of fileAnnotations) {
+                        annotation.resolvedAnchor = this.computeResolvedAnchor(editor.document, annotation);
+                    }
                     await this.applyAnnotations(editor, fileAnnotations);
                 }
                 this.updateAnnotationsPanel();
@@ -3285,12 +4468,44 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private findAnnotation(file: string, line: number): Annotation | undefined {
-        const relativeFilePath = this.getRelativePath(file);
         return Array.from(this.annotations.values()).find(
             (annotation) =>
-                this.normalizePath(annotation.file) === this.normalizePath(relativeFilePath) &&
-                annotation.line === line
+                this.annotationMatchesFsPath(annotation, file) &&
+                this.getEffectiveAnnotationLine(annotation) === line
         );
+    }
+
+    private getEffectiveAnnotationLine(annotation: Annotation): number {
+        const resolved = annotation.resolvedAnchor;
+        if (
+            (resolved?.status === 'attached' || resolved?.status === 'moved') &&
+            resolved.line !== null
+        ) {
+            return resolved.line;
+        }
+        return annotation.line;
+    }
+
+    /**
+     * True when the live map already contains an annotation at exactly
+     * (relativeFile, line) carrying the same message text.  Used as the
+     * final guard before creating a duplicate via copy-paste detection.
+     */
+    private sameLocationSameMessage(
+        document: vscode.TextDocument,
+        line: number,
+        message: string
+    ): boolean {
+        for (const a of this.annotations.values()) {
+            if (
+                this.annotationMatchesDocument(a, document) &&
+                this.getEffectiveAnnotationLine(a) === line &&
+                a.message === message
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private getProjectAnnotationsPath(): string | null {
@@ -3580,9 +4795,8 @@ export class AnnotationManager extends EventEmitter {
                 this.statusBarItem.hide();
                 return;
             }
-            const relativeFilePath = this.getRelativePath(editor.document.fileName);
             const fileAnnotations = Array.from(this.annotations.values())
-                .filter(a => this.normalizePath(a.file) === this.normalizePath(relativeFilePath))
+                .filter(a => this.annotationMatchesDocument(a, editor.document))
                 .filter(a => this.shouldAnnotationBeVisible(a));
             this.statusBarItem.text = localize('annotationsCount', '$(comment) {0} annotation{1}', fileAnnotations.length, fileAnnotations.length !== 1 ? 's' : '');
             this.statusBarItem.tooltip = localize('viewAnnotations', 'Click to view annotations');
@@ -3634,21 +4848,18 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private clearDecorations(editor: vscode.TextEditor): void {
-        // Get the relative path of the editor file
-        const relativeFilePath = this.getRelativePath(editor.document.fileName);
-        
-        // Remove decorations only for this specific file
+        // Remove decorations only for annotations that belong to this exact document.
         const decorationsToRemove: string[] = [];
-        
+
         for (const [annotationId, decorationType] of this.decorationTypes) {
             const annotation = this.annotations.get(annotationId);
-            if (annotation && this.normalizePath(annotation.file) === this.normalizePath(relativeFilePath)) {
+            if (annotation && this.annotationMatchesDocument(annotation, editor.document)) {
                 editor.setDecorations(decorationType, []); // Clear decorations for this editor
                 decorationType.dispose();
                 decorationsToRemove.push(annotationId);
             }
         }
-        
+
         // Remove decorations from the map
         decorationsToRemove.forEach(id => this.decorationTypes.delete(id));
     }

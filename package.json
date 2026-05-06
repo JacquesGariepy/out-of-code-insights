@@ -963,7 +963,7 @@
         "test": "node ./out/test/runTest.js",
         "coverage": "c8 --reporter=text --reporter=lcov npm test",
         "coverage:check": "c8 check-coverage --lines 15 --functions 15 --branches 10",
-        "test:unit": "mocha out/test/suite/unit/**/*.js --timeout 5000"
+        "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" --timeout 5000"
     },
     "devDependencies": {
         "@types/diff": "^6.0.0",

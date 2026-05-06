@@ -379,9 +379,9 @@ export class UnifiedAIAdapter {
                 );
 
                 if (action === localize('addAll', 'Add All')) {
-                    await this.addMultipleAnnotations(annotations);
+                    await this.addMultipleAnnotations(annotations, editor.document);
                 } else if (action === localize('review', 'Review')) {
-                    await this.reviewAnnotations(annotations);
+                    await this.reviewAnnotations(annotations, editor.document);
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(
@@ -449,9 +449,9 @@ export class UnifiedAIAdapter {
                 );
 
                 if (action === localize('addAll', 'Add All')) {
-                    await this.addMultipleAnnotations(annotations);
+                    await this.addMultipleAnnotations(annotations, editor.document);
                 } else if (action === localize('review', 'Review')) {
-                    await this.reviewAnnotations(annotations);
+                    await this.reviewAnnotations(annotations, editor.document);
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(
@@ -540,7 +540,7 @@ export class UnifiedAIAdapter {
                 );
 
                 if (annotations.length > 0) {
-                    await this.reviewAnnotations(annotations);
+                    await this.reviewAnnotations(annotations, editor.document);
                 } else {
                     vscode.window.showInformationMessage(
                         localize('noIssuesFound', 'No issues found in the selected area')
@@ -735,7 +735,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                         const snippetAnnotations = this.parseSnippetsFromResponse(response);
 
                         if (snippetAnnotations.length > 0) {
-                            await this.reviewAnnotations(snippetAnnotations);
+                            await this.reviewAnnotations(snippetAnnotations, editor.document);
                         } else {
                             vscode.window.showWarningMessage(loc('noSnippetsGenerated', 'No snippets generated'));
                         }
@@ -834,8 +834,8 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             id: this.generateId(),
             message: suggestion.message || 'Generated annotation',
             file: this.getRelativePath(suggestion.file || document.fileName),
-            line: suggestion.line || lineNumber,
-            author: this.profileManager.getActiveProfile()?.name || 
+            line: suggestion.line ?? lineNumber,
+            author: this.profileManager.getActiveProfile()?.name ||
                     vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
             timestamp: new Date().toISOString(),
             severity: suggestion.severity || 'info',
@@ -845,6 +845,9 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             resolved: false,
             ...(suggestion.priority && { priority: suggestion.priority })
         };
+        // Set fileUri/anchor before persisting so the annotation is scoped strictly
+        // to this document (no basename collisions across folders).
+        await this.annotationManager.populateAnchor(annotation, document, annotation.line);
 
         await this.addAnnotationDirectly(annotation);
         
@@ -862,16 +865,24 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         manager.emit('annotationChanged');
     }
 
-    private async addMultipleAnnotations(annotations: Partial<Annotation>[]): Promise<void> {
+    private async addMultipleAnnotations(
+        annotations: Partial<Annotation>[],
+        document?: vscode.TextDocument
+    ): Promise<void> {
         let addedCount = 0;
         
         for (const suggestion of annotations) {
             try {
+                const targetDocument = document && (
+                    !suggestion.file ||
+                    this.getRelativePath(suggestion.file) === this.getRelativePath(document.fileName)
+                ) ? document : undefined;
+                const line = suggestion.line ?? 0;
                 const annotation: Annotation = {
                     id: this.generateId(),
                     message: suggestion.message || 'Generated annotation',
-                    file: this.getRelativePath(suggestion.file || ''),
-                    line: suggestion.line || 0,
+                    file: this.getRelativePath(suggestion.file || targetDocument?.fileName || ''),
+                    line,
                     author: this.profileManager.getActiveProfile()?.name || 
                            vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
                     timestamp: new Date().toISOString(),
@@ -883,6 +894,9 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                     ...(suggestion.priority && { priority: suggestion.priority })
                 };
 
+                if (targetDocument && line >= 0 && line < targetDocument.lineCount) {
+                    await this.annotationManager.populateAnchor(annotation, targetDocument, line);
+                }
                 await this.addAnnotationDirectly(annotation);
                 addedCount++;
             } catch (error) {
@@ -895,7 +909,10 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         );
     }
 
-    private async reviewAnnotations(annotations: Partial<Annotation>[]): Promise<void> {
+    private async reviewAnnotations(
+        annotations: Partial<Annotation>[],
+        document?: vscode.TextDocument
+    ): Promise<void> {
         const items = annotations.map((ann, _index) => ({
             label: `Line ${ann.line}: ${ann.severity || 'info'}`,
             description: ann.message?.substring(0, 80) + (ann.message && ann.message.length > 80 ? '...' : ''),
@@ -911,7 +928,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
 
         if (selected && selected.length > 0) {
             const toAdd = selected.map(s => s.annotation);
-            await this.addMultipleAnnotations(toAdd);
+            await this.addMultipleAnnotations(toAdd, document);
         }
     }
 

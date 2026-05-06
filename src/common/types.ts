@@ -29,6 +29,41 @@ export interface KanbanColumn {
     annotations: string[];
 }
 
+/**
+ * Structured anchor recorded at annotation creation. Mirrors the fields the
+ * resolver needs to re-locate the annotation after edits without relying on
+ * a fragile (file, line) pair. See src/anchoring/anchor.ts.
+ */
+export interface AnnotationAnchor {
+    /** What kind of target this anchor points to. */
+    kind: 'symbol' | 'line' | 'file';
+
+    /** Original line at creation (the cursor position). May be the blank line above a symbol. */
+    originalLine: number;
+
+    /** The line actually used to compute anchorTextHash (may differ when walked from a blank line). */
+    targetLine: number;
+
+    /** Symbol metadata when kind === 'symbol' (resolved via DocumentSymbolProvider). */
+    symbolName?: string | null;
+    symbolKind?: string | null;
+    symbolSignature?: string | null;
+
+    /** FNV-1a hash of the normalized target line text. Empty hash is treated as stale. */
+    anchorTextHash: string;
+
+    contextBefore: string[];
+    contextAfter: string[];
+}
+
+/** Runtime resolution state. NEVER persisted as ground truth -- always recomputed. */
+export interface ResolvedAnnotationAnchor {
+    status: 'attached' | 'moved' | 'orphaned' | 'ambiguous' | 'stale';
+    line: number | null;
+    confidence: number;
+    reason: string;
+}
+
 export interface Annotation {
     id: string;
     file: string;
@@ -50,6 +85,22 @@ export interface Annotation {
         code: string;
         language: string;
     };
+    lineHash?: string;
+    contextBefore?: string[];
+    contextAfter?: string[];
+    /**
+     * Full document URI string (document.uri.toString()). When set, this is
+     * the authoritative scope for the annotation. The legacy `file` field
+     * remains as display metadata. Annotations created before this field
+     * existed have `fileUri` undefined and fall back to `file` matching.
+     */
+    fileUri?: string;
+    /** Language id of the document at creation time, e.g. 'typescript', 'python'. */
+    languageId?: string;
+    /** Structured anchor (symbol-aware). When absent, lineHash/contextBefore/contextAfter is the legacy anchor. */
+    anchor?: AnnotationAnchor;
+    /** Runtime resolution state (transient, recomputed on every refresh). */
+    resolvedAnchor?: ResolvedAnnotationAnchor;
 }
 
 export interface Comment {

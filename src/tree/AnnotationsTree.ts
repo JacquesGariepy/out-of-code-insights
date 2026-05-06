@@ -232,7 +232,7 @@ export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropC
 
         fileAnnotations.splice(targetIndex + 1, 0, ...draggedAnnotations);
         fileAnnotations.forEach((a, i) => {
-            a.line = i;
+            this.annotationManager.setAnnotationLine(a, i);
         });
 
         await this.annotationManager.saveAnnotations();
