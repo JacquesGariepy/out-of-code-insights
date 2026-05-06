@@ -3752,9 +3752,9 @@ export class AnnotationManager extends EventEmitter {
         // Undo/Redo are handled by arithmetic + clipboard buffers; the copy-paste
         // duplication step must NOT fire on these reasons, otherwise the cut text
         // still in the OS clipboard re-matches the redone paste and creates ghosts.
-        const isUndoRedo =
-            event.reason === vscode.TextDocumentChangeReason.Undo ||
-            event.reason === vscode.TextDocumentChangeReason.Redo;
+        const isUndo = event.reason === vscode.TextDocumentChangeReason.Undo;
+        const isRedo = event.reason === vscode.TextDocumentChangeReason.Redo;
+        const isUndoRedo = isUndo || isRedo;
 
         this.annotations.forEach((annotation) => {
             // URI-strict filter: an annotation only mutates if it actually belongs
@@ -3780,6 +3780,13 @@ export class AnnotationManager extends EventEmitter {
             }
 
             const oldLine = annotation.line;
+            if (isUndo && this.shouldRemoveCopiedAnnotationOnUndo(annotation, event.contentChanges, document)) {
+                this.annotations.delete(annotation.id);
+                this.disposeDecoration(annotation.id);
+                this.log(`undo: removed copied annotation ${annotation.id} from ${relativeFilePath}:${oldLine}`);
+                return;
+            }
+
             const lineFromTrackingAnchor = this.resolveTrackingAnchorLine(annotation, document);
             if (
                 lineFromTrackingAnchor !== null &&
@@ -4053,6 +4060,14 @@ export class AnnotationManager extends EventEmitter {
                         languageId: document.languageId,
                         line: newLine,
                         timestamp: new Date().toISOString(),
+                        origin: {
+                            kind: 'copy-paste',
+                            sourceId: annotation.id,
+                            sourceFile: annotation.file,
+                            sourceFileUri: annotation.fileUri,
+                            sourceLine: source.sourceLine,
+                            pastedAtLine: newLine,
+                        },
                         anchor: undefined, // re-anchored against the destination below
                         resolvedAnchor: undefined,
                     };
@@ -4097,9 +4112,14 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private normalizedTextEquals(a: string | undefined, b: string | undefined): boolean {
-        if (!a || !b) { return false; }
+        if (a === undefined || b === undefined) { return false; }
         return this.stripSingleTrailingLineBreak(this.normalizeClipboardText(a)) ===
             this.stripSingleTrailingLineBreak(this.normalizeClipboardText(b));
+    }
+
+    private isLowSignalText(text: string | undefined): boolean {
+        if (text === undefined) { return true; }
+        return this.stripSingleTrailingLineBreak(this.normalizeClipboardText(text)).trim().length === 0;
     }
 
     private deferredClipboardStillMatches(
@@ -4109,6 +4129,9 @@ export class AnnotationManager extends EventEmitter {
         },
         clipboardText: string
     ): boolean {
+        if (this.isLowSignalText(deferred.cutText)) {
+            return false;
+        }
         if (this.normalizedTextEquals(deferred.cutText, clipboardText)) {
             return true;
         }
@@ -4132,10 +4155,17 @@ export class AnnotationManager extends EventEmitter {
         clipboardText: string
     ): boolean {
         if (changeText.length === 0) { return false; }
-        if (this.normalizedTextEquals(deferred.cutText, changeText)) {
-            return true;
+        if (deferred.cutText !== undefined) {
+            return this.normalizedTextEquals(deferred.cutText, clipboardText) &&
+                this.clipboardTextMatches(changeText, clipboardText) &&
+                this.clipboardTextMatches(changeText, deferred.cutText);
         }
-        if (deferred.cutLineHashes?.length) {
+
+        if (
+            !this.isLowSignalText(clipboardText) &&
+            this.clipboardTextMatches(changeText, clipboardText) &&
+            deferred.cutLineHashes?.length
+        ) {
             const insertedHashes = this.splitClipboardLines(changeText).map(line => hashLine(line));
             if (
                 insertedHashes.length === deferred.cutLineHashes.length &&
@@ -4144,8 +4174,7 @@ export class AnnotationManager extends EventEmitter {
                 return true;
             }
         }
-        return this.clipboardTextMatches(changeText, clipboardText) &&
-            this.normalizedTextEquals(deferred.cutText, clipboardText);
+        return false;
     }
 
     private getCutLinesForChange(
@@ -4166,6 +4195,63 @@ export class AnnotationManager extends EventEmitter {
         }
 
         return exclusive.length > 0 ? exclusive : inclusive;
+    }
+
+    private shouldRemoveCopiedAnnotationOnUndo(
+        annotation: Annotation,
+        contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+        document: vscode.TextDocument
+    ): boolean {
+        const removedByUndo = contentChanges.some(change =>
+            change.text === '' &&
+            annotation.line >= change.range.start.line &&
+            annotation.line <= change.range.end.line
+        );
+        if (!removedByUndo) {
+            return false;
+        }
+
+        if (annotation.origin?.kind === 'copy-paste') {
+            return true;
+        }
+
+        // Compatibility for annotations duplicated before origin metadata existed:
+        // if Undo removes one copy while an equivalent annotation still exists
+        // outside the removed range, the removed one is the paste-derived copy.
+        return this.hasEquivalentAnnotationOutsideChangeRanges(annotation, contentChanges, document);
+    }
+
+    private hasEquivalentAnnotationOutsideChangeRanges(
+        annotation: Annotation,
+        contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
+        document: vscode.TextDocument
+    ): boolean {
+        const lineInsideRemovedRanges = (line: number): boolean =>
+            contentChanges.some(change =>
+                change.text === '' &&
+                line >= change.range.start.line &&
+                line <= change.range.end.line
+            );
+
+        for (const other of this.annotations.values()) {
+            if (other.id === annotation.id) {
+                continue;
+            }
+            if (!this.annotationMatchesDocument(other, document)) {
+                continue;
+            }
+            if (lineInsideRemovedRanges(other.line)) {
+                continue;
+            }
+            if (other.message !== annotation.message) {
+                continue;
+            }
+            if (annotation.lineHash && other.lineHash === annotation.lineHash) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private collectCopySourceCandidates(

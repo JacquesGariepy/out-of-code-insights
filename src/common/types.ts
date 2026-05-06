@@ -99,6 +99,15 @@ export interface Annotation {
     languageId?: string;
     /** Structured anchor (symbol-aware). When absent, lineHash/contextBefore/contextAfter is the legacy anchor. */
     anchor?: AnnotationAnchor;
+    /** Metadata for annotations derived from editor text operations. */
+    origin?: {
+        kind: 'copy-paste';
+        sourceId: string;
+        sourceFile?: string;
+        sourceFileUri?: string;
+        sourceLine: number;
+        pastedAtLine: number;
+    };
     /** Runtime resolution state (transient, recomputed on every refresh). */
     resolvedAnchor?: ResolvedAnnotationAnchor;
 }
