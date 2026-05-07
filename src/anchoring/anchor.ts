@@ -90,7 +90,9 @@ export interface CaptureOptions {
 }
 
 function isBlankAt(doc: TextDocumentLike, i: number): boolean {
-    if (i < 0 || i >= doc.lineCount) { return true; }
+    if (i < 0 || i >= doc.lineCount) {
+        return true;
+    }
     return normalizeLine(doc.lineAt(i).text) === '';
 }
 
@@ -112,9 +114,7 @@ export function captureAnchor(
     optionsOrSize?: number | CaptureOptions
 ): AnchorData {
     const opts: CaptureOptions =
-        typeof optionsOrSize === 'number'
-            ? { contextSize: optionsOrSize }
-            : optionsOrSize ?? {};
+        typeof optionsOrSize === 'number' ? { contextSize: optionsOrSize } : (optionsOrSize ?? {});
     const contextSize = opts.contextSize ?? 3;
     const walkForward = opts.walkForward ?? 5;
     const walkBackward = opts.walkBackward ?? 3;
@@ -148,8 +148,7 @@ export function captureAnchor(
         }
     }
 
-    const lineText =
-        targetLine >= 0 && targetLine < lineCount ? doc.lineAt(targetLine).text : '';
+    const lineText = targetLine >= 0 && targetLine < lineCount ? doc.lineAt(targetLine).text : '';
 
     const contextBefore: string[] = [];
     const beforeStart = Math.max(0, targetLine - contextSize);
@@ -185,32 +184,26 @@ export interface FindAnchorOptions {
     allowUniqueHashFallback?: boolean;
 }
 
-function scoreAnchorContextAtLine(
-    doc: TextDocumentLike,
-    anchor: AnchorData,
-    line: number
-): number {
+function scoreAnchorContextAtLine(doc: TextDocumentLike, anchor: AnchorData, line: number): number {
     let score = 0;
 
     const beforeStart = line - anchor.contextBefore.length;
     for (let j = 0; j < anchor.contextBefore.length; j++) {
-        if (anchor.contextBefore[j] === '') { continue; }
+        if (anchor.contextBefore[j] === '') {
+            continue;
+        }
         const docIdx = beforeStart + j;
-        if (
-            docIdx >= 0 &&
-            normalizeLine(doc.lineAt(docIdx).text) === anchor.contextBefore[j]
-        ) {
+        if (docIdx >= 0 && normalizeLine(doc.lineAt(docIdx).text) === anchor.contextBefore[j]) {
             score += 2;
         }
     }
 
     for (let j = 0; j < anchor.contextAfter.length; j++) {
-        if (anchor.contextAfter[j] === '') { continue; }
+        if (anchor.contextAfter[j] === '') {
+            continue;
+        }
         const docIdx = line + 1 + j;
-        if (
-            docIdx < doc.lineCount &&
-            normalizeLine(doc.lineAt(docIdx).text) === anchor.contextAfter[j]
-        ) {
+        if (docIdx < doc.lineCount && normalizeLine(doc.lineAt(docIdx).text) === anchor.contextAfter[j]) {
             score += 2;
         }
     }
@@ -246,12 +239,9 @@ export function findAnchor(
     // Reject empty-hash anchors with no meaningful context. They match every
     // blank line and produce arbitrary results -- the symptom that caused
     // annotations to migrate to unrelated symbols after edits.
-    const meaningfulBefore = anchor.contextBefore.filter(l => l !== '').length;
-    const meaningfulAfter = anchor.contextAfter.filter(l => l !== '').length;
-    if (
-        anchor.lineHash === EMPTY_LINE_HASH &&
-        meaningfulBefore + meaningfulAfter === 0
-    ) {
+    const meaningfulBefore = anchor.contextBefore.filter((l) => l !== '').length;
+    const meaningfulAfter = anchor.contextAfter.filter((l) => l !== '').length;
+    if (anchor.lineHash === EMPTY_LINE_HASH && meaningfulBefore + meaningfulAfter === 0) {
         return null;
     }
 
@@ -259,10 +249,7 @@ export function findAnchor(
     // threshold=4 needs 2+ meaningful lines; relax to 2 when context is sparse.
     // For empty-hash anchors we already required >=1 meaningful context above,
     // so demand the strict threshold to avoid false positives at every blank line.
-    const scoreThreshold =
-        anchor.lineHash === EMPTY_LINE_HASH
-            ? 4
-            : meaningfulCtx >= 2 ? 4 : 2;
+    const scoreThreshold = anchor.lineHash === EMPTY_LINE_HASH ? 4 : meaningfulCtx >= 2 ? 4 : 2;
 
     // Fast path: stored position still valid
     if (storedLine >= 0 && storedLine < lineCount) {
@@ -308,11 +295,7 @@ export function findAnchor(
     // (where the diff treats one swapped line as "unchanged" and contextBefore
     // no longer aligns). Default-off so cut-relocate / paste-recovery paths
     // can still reject ambiguous matches.
-    if (
-        options.allowUniqueHashFallback &&
-        candidateCount === 1 &&
-        anchor.lineHash !== EMPTY_LINE_HASH
-    ) {
+    if (options.allowUniqueHashFallback && candidateCount === 1 && anchor.lineHash !== EMPTY_LINE_HASH) {
         return lastCandidate;
     }
 
@@ -393,4 +376,112 @@ export function detectMoves(oldLines: string[], newLines: string[]): MovedBlock[
     }
 
     return moves;
+}
+
+/** Outcome reported by `reanchor`. */
+export type ReanchorStatus = 'matched' | 'moved' | 'orphan';
+
+/**
+ * Result of a re-anchor attempt.
+ *
+ * - `matched`: the stored line still holds the original content; no relocation needed.
+ * - `moved`:   the original content was found at a different line; caller should adopt
+ *              `newLine` and persist the refreshed `newHash` / `newContextBefore` /
+ *              `newContextAfter`.
+ * - `orphan`:  neither the stored line nor any other line in the document carries the
+ *              expected hash with sufficient context confidence. Caller MUST NOT delete
+ *              the annotation -- mark it orphaned and let the user re-attach manually.
+ */
+export interface ReanchorResult {
+    status: ReanchorStatus;
+    newLine?: number;
+    newHash?: string;
+    newContextBefore?: string[];
+    newContextAfter?: string[];
+}
+
+/**
+ * Minimal subset of `Annotation` consumed by `reanchor`. Kept structural so this
+ * module stays free of cross-package imports (mirrors `TextDocumentLike`).
+ */
+export interface ReanchorInput {
+    line: number;
+    lineHash?: string;
+    contextBefore?: string[];
+    contextAfter?: string[];
+}
+
+/**
+ * Re-anchor an annotation against the current state of `document`.
+ *
+ * Pipeline:
+ *   1. Exact-hash fast path: if `document.lineAt(annotation.line)` still hashes
+ *      to `annotation.lineHash`, report `matched` and return a refreshed snapshot
+ *      so the caller can persist updated context.
+ *   2. Fallback: full-document `findAnchor` (hash + context vote, unique-hash
+ *      fallback enabled) covers code that was moved up or down -- including the
+ *      drag-and-drop downward case where `detectMoves` mis-orients the diff.
+ *      On success, report `moved` with a refreshed snapshot at the new line.
+ *   3. Orphan: when neither path resolves, return `orphan`. The annotation is
+ *      NOT mutated and MUST NOT be deleted by the caller -- it should be marked
+ *      orphaned in the UI so the user can drag it back onto the right line.
+ *
+ * Pure: never mutates `annotation` or `document`.
+ */
+export function reanchor(annotation: ReanchorInput, document: TextDocumentLike): ReanchorResult {
+    const storedLine = annotation.line;
+    const storedHash = annotation.lineHash;
+
+    // Degenerate input: no hash, or the universal blank-line hash. Nothing to
+    // anchor against -- relocation would amount to picking a random blank line.
+    if (!storedHash || storedHash === EMPTY_LINE_HASH) {
+        return { status: 'orphan' };
+    }
+
+    const lineCount = document.lineCount;
+
+    // Phase 1 -- exact match at the stored line.
+    if (storedLine >= 0 && storedLine < lineCount && hashLine(document.lineAt(storedLine).text) === storedHash) {
+        const refreshed = captureAnchor(document, storedLine, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        return {
+            status: 'matched',
+            newLine: storedLine,
+            newHash: refreshed.lineHash,
+            newContextBefore: refreshed.contextBefore,
+            newContextAfter: refreshed.contextAfter,
+        };
+    }
+
+    // Phase 2 -- scan the document for the same hash, vote by context, accept
+    // a unique-hash candidate even with a low context score (covers cut+paste
+    // and drag-and-drop where neighbours no longer line up around the new
+    // position).
+    const anchor: AnchorData = {
+        lineHash: storedHash,
+        contextBefore: annotation.contextBefore ?? [],
+        contextAfter: annotation.contextAfter ?? [],
+    };
+    const found = findAnchor(document, anchor, storedLine, {
+        allowUniqueHashFallback: true,
+    });
+    if (found !== null && found >= 0 && found < lineCount) {
+        const refreshed = captureAnchor(document, found, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        return {
+            status: 'moved',
+            newLine: found,
+            newHash: refreshed.lineHash,
+            newContextBefore: refreshed.contextBefore,
+            newContextAfter: refreshed.contextAfter,
+        };
+    }
+
+    // Phase 3 -- orphan: caller keeps the annotation in the model and renders
+    // it with an orphaned badge; no deletion.
+    return { status: 'orphan' };
 }

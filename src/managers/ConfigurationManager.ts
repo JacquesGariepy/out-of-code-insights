@@ -14,22 +14,46 @@ export class ConfigurationManager {
         this._config = {
             colors: {
                 light: {
-                    annotation: workspaceConfig.get<string>('colors.light.annotation', DEFAULT_CONFIG.colors.light.annotation),
-                    highlightBackground: workspaceConfig.get<string>('colors.light.highlightBackground', DEFAULT_CONFIG.colors.light.highlightBackground),
-                    commentBorder: workspaceConfig.get<string>('colors.light.commentBorder', DEFAULT_CONFIG.colors.light.commentBorder)
+                    annotation: workspaceConfig.get<string>(
+                        'colors.light.annotation',
+                        DEFAULT_CONFIG.colors.light.annotation
+                    ),
+                    highlightBackground: workspaceConfig.get<string>(
+                        'colors.light.highlightBackground',
+                        DEFAULT_CONFIG.colors.light.highlightBackground
+                    ),
+                    commentBorder: workspaceConfig.get<string>(
+                        'colors.light.commentBorder',
+                        DEFAULT_CONFIG.colors.light.commentBorder
+                    ),
                 },
                 dark: {
-                    annotation: workspaceConfig.get<string>('colors.dark.annotation', DEFAULT_CONFIG.colors.dark.annotation),
-                    highlightBackground: workspaceConfig.get<string>('colors.dark.highlightBackground', DEFAULT_CONFIG.colors.dark.highlightBackground),
-                    commentBorder: workspaceConfig.get<string>('colors.dark.commentBorder', DEFAULT_CONFIG.colors.dark.commentBorder),
-                }
+                    annotation: workspaceConfig.get<string>(
+                        'colors.dark.annotation',
+                        DEFAULT_CONFIG.colors.dark.annotation
+                    ),
+                    highlightBackground: workspaceConfig.get<string>(
+                        'colors.dark.highlightBackground',
+                        DEFAULT_CONFIG.colors.dark.highlightBackground
+                    ),
+                    commentBorder: workspaceConfig.get<string>(
+                        'colors.dark.commentBorder',
+                        DEFAULT_CONFIG.colors.dark.commentBorder
+                    ),
+                },
             },
             debounceDelay: workspaceConfig.get<number>('debounceDelay', DEFAULT_CONFIG.debounceDelay),
-            maxAnnotationsPerFile: workspaceConfig.get<number>('maxAnnotationsPerFile', DEFAULT_CONFIG.maxAnnotationsPerFile),
+            maxAnnotationsPerFile: workspaceConfig.get<number>(
+                'maxAnnotationsPerFile',
+                DEFAULT_CONFIG.maxAnnotationsPerFile
+            ),
             username: workspaceConfig.get<string>('username', '') || DEFAULT_CONFIG.username,
             codelens: {
                 enable: workspaceConfig.get<boolean>('codelens.enable', DEFAULT_CONFIG.codelens.enable),
-                showCommands: workspaceConfig.get<boolean>('codelens.showCommands', DEFAULT_CONFIG.codelens.showCommands)
+                showCommands: workspaceConfig.get<boolean>(
+                    'codelens.showCommands',
+                    DEFAULT_CONFIG.codelens.showCommands
+                ),
             },
             enableAnnotations: workspaceConfig.get<boolean>('enableAnnotations') ?? DEFAULT_CONFIG.enableAnnotations,
             disabledTags: workspaceConfig.get<string[]>('disabledTags') ?? DEFAULT_CONFIG.disabledTags,

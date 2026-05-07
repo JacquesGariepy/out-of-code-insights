@@ -81,16 +81,16 @@ export class ClaudeSDKWrapper {
     }
 
     async query(options: ClaudeCodeQueryOptions): Promise<SDKMessage[]> {
-        if (!await this.initialize()) {
+        if (!(await this.initialize())) {
             throw new Error(`Claude Code SDK initialization failed: ${this.initError?.message}`);
         }
 
         const messages: SDKMessage[] = [];
-        
+
         try {
             // Use the query function from the SDK
             const queryFn = this.sdkModule.query || this.sdkModule.default?.query;
-            
+
             if (!queryFn) {
                 throw new Error('Query function not found in Claude Code SDK');
             }
@@ -101,8 +101,8 @@ export class ClaudeSDKWrapper {
                 options: {
                     maxTurns: options.options?.maxTurns || 1,
                     cwd: options.options?.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-                    ...options.options
-                }
+                    ...options.options,
+                },
             };
 
             // Execute query
@@ -122,9 +122,9 @@ export class ClaudeSDKWrapper {
      */
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     extractJSON(messages: SDKMessage[]): any {
-        const responseText = messages.map(m => 
-            typeof m === 'string' ? m : (m.content || JSON.stringify(m))
-        ).join('\n');
+        const responseText = messages
+            .map((m) => (typeof m === 'string' ? m : m.content || JSON.stringify(m)))
+            .join('\n');
 
         // Try to extract JSON from the response
         const jsonMatch = responseText.match(/\[\s*\{[\s\S]*\}\s*\]/g);

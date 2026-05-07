@@ -1,12 +1,12 @@
 {
-  "entryPoints": ["src/extension.ts"],
-  "out": "docs/api",
-  "excludePrivate": true,
-  "excludeProtected": false,
-  "excludeInternal": true,
-  "categorizeByGroup": true,
-  "includeVersion": true,
-  "readme": "none",
-  "skipErrorChecking": false,
-  "tsconfig": "tsconfig.json"
+    "entryPoints": ["src/extension.ts"],
+    "out": "docs/api",
+    "excludePrivate": true,
+    "excludeProtected": false,
+    "excludeInternal": true,
+    "categorizeByGroup": true,
+    "includeVersion": true,
+    "readme": "none",
+    "skipErrorChecking": false,
+    "tsconfig": "tsconfig.json"
 }

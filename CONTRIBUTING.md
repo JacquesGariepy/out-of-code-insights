@@ -7,31 +7,35 @@ process.
 ## Getting Started
 
 1. **Fork** the repository on GitHub and clone your fork:
-   ```bash
-   git clone https://github.com/<your-username>/out-of-code-insights.git
-   cd out-of-code-insights
-   ```
+
+    ```bash
+    git clone https://github.com/<your-username>/out-of-code-insights.git
+    cd out-of-code-insights
+    ```
 
 2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
+
+    ```bash
+    npm install
+    ```
 
 3. **Launch the extension in development mode:**
    Open the project folder in VS Code, then press **F5**. This opens a new
    VS Code window (the Extension Development Host) with the extension loaded
    from source. Breakpoints set in `src/` will be hit in the host window.
 
-   For a step-by-step walkthrough, see [docs/onboarding.md](./docs/onboarding.md).
+    For a step-by-step walkthrough, see [docs/onboarding.md](./docs/onboarding.md).
 
 ## Building
 
 Compile TypeScript sources to `out/`:
+
 ```bash
 npm run compile
 ```
 
 Watch mode during development:
+
 ```bash
 npm run watch:tsc      # TypeScript type-check pass
 npm run watch:webpack  # Webpack bundle
@@ -39,11 +43,13 @@ npm run dev            # Both in parallel
 ```
 
 Full production build:
+
 ```bash
 npm run package
 ```
 
 Package as a `.vsix` file:
+
 ```bash
 npm run package:vsix
 ```
@@ -62,11 +68,13 @@ npm test
 ## Code Style
 
 Run all checks before submitting a PR:
+
 ```bash
 npm run check    # typecheck + lint + format:check
 ```
 
 Individual commands:
+
 ```bash
 npm run lint         # ESLint
 npm run lint:fix     # Auto-fix
@@ -75,6 +83,7 @@ npm run typecheck    # tsc --noEmit
 ```
 
 Rules of thumb:
+
 - ESLint must pass with zero errors before a PR can be merged.
 - No `console.log` in production code; use the VS Code output channel.
 - Prefer `const` over `let`; avoid `var`.
@@ -95,6 +104,7 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 **Types:** `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `ci`
 
 **Examples:**
+
 ```
 feat(kanban): add CSV export for filtered board view
 fix(annotation): prevent empty-message save on inline edit
@@ -103,6 +113,7 @@ chore(deps): upgrade @anthropic-ai/claude-code to 2.1.126
 ```
 
 Rules:
+
 - Summary line: imperative mood, no period at the end, max 72 characters.
 - Reference issues with `Refs #NNN` or `Closes #NNN` in the footer.
 - One logical change per commit; squash noise commits before opening a PR.

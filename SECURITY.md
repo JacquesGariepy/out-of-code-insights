@@ -14,6 +14,7 @@ Do not open a public GitHub issue for security vulnerabilities. Public
 disclosure before a fix is available puts all users at risk.
 
 Include in your report:
+
 - A description of the vulnerability and its potential impact
 - Steps to reproduce the issue
 - VS Code version, extension version, and operating system
@@ -33,10 +34,10 @@ published as source code changes under MPL-2.0.
 
 ## Supported Versions
 
-| Version | Supported |
-|---|---|
-| Latest minor version (currently 1.0.x) | Yes |
-| Older versions | No -- upgrade to the latest Marketplace release |
+| Version                                | Supported                                       |
+| -------------------------------------- | ----------------------------------------------- |
+| Latest minor version (currently 1.0.x) | Yes                                             |
+| Older versions                         | No -- upgrade to the latest Marketplace release |
 
 ## Disclosure Process
 

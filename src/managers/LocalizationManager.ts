@@ -15,7 +15,7 @@ export class LocalizationManager {
 
         // Watch for configuration changes
         context.subscriptions.push(
-            vscode.workspace.onDidChangeConfiguration(e => {
+            vscode.workspace.onDidChangeConfiguration((e) => {
                 if (e.affectsConfiguration('annotation.language')) {
                     this.handleLanguageChange();
                 }
@@ -37,10 +37,8 @@ export class LocalizationManager {
 
     private async loadMessages(): Promise<void> {
         try {
-            const nlsFile = this.currentLanguage === 'fr' 
-                ? 'package.nls.fr.json' 
-                : 'package.nls.json';
-            
+            const nlsFile = this.currentLanguage === 'fr' ? 'package.nls.fr.json' : 'package.nls.json';
+
             const nlsPath = path.join(this.extensionPath, nlsFile);
             const content = await fs.readFile(nlsPath, 'utf8');
             this.messages = JSON.parse(content);
@@ -65,15 +63,14 @@ export class LocalizationManager {
             await this.loadMessages();
 
             // Notify user about restart requirement
-            const message = this.localize('languageChangedRestart', 'Language changed. Please restart VS Code for the change to take effect.');
+            const message = this.localize(
+                'languageChangedRestart',
+                'Language changed. Please restart VS Code for the change to take effect.'
+            );
             const restartNow = this.localize('restartNow', 'Restart Now');
             const restartLater = this.localize('restartLater', 'Restart Later');
 
-            const choice = await vscode.window.showInformationMessage(
-                message,
-                restartNow,
-                restartLater
-            );
+            const choice = await vscode.window.showInformationMessage(message, restartNow, restartLater);
 
             if (choice === restartNow) {
                 await vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -90,14 +87,14 @@ export class LocalizationManager {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public localize(key: string, defaultValue?: string, ...args: any[]): string {
         let message = this.messages[key] || defaultValue || key;
-        
+
         // Replace placeholders {0}, {1}, etc. with provided arguments
         if (args.length > 0) {
             args.forEach((arg, index) => {
                 message = message.replace(new RegExp(`\\{${index}\\}`, 'g'), String(arg));
             });
         }
-        
+
         return message;
     }
 
@@ -114,7 +111,7 @@ export class LocalizationManager {
     public getAvailableLanguages(): Array<{ code: string; name: string }> {
         return [
             { code: 'en', name: 'English' },
-            { code: 'fr', name: 'Français' }
+            { code: 'fr', name: 'Français' },
         ];
     }
 }

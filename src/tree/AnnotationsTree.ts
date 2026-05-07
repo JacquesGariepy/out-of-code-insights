@@ -1,19 +1,56 @@
+// SPDX-License-Identifier: MPL-2.0
+//
+// Tree provider for the Annotations side panel. Lot 5 R2 worktree A:
+// migrated from AnnotationManager to AnnotationStore + VisibilityFilter
+// (+ AnnotationPersistence for the drag-and-drop reorder save path).
+//
+// Display-line resolution for AnnotationV2 (which stores offsets, not
+// lines) goes through `store.getLineForAnnotation(id, openDocs)` against
+// `vscode.workspace.textDocuments`. Closed-file annotations fall back to
+// `null`, which the UI renders as `?`.
+
 import * as vscode from 'vscode';
-import { AnnotationManager } from '../managers/AnnotationManager';
-import { Annotation } from '../common/types';
 import { localize } from '../common/localize';
 import { loc } from '../managers/LocalizationManager';
+import type { AnnotationV2 } from '../transactional/types';
+import type { AnnotationStore } from '../transactional/AnnotationStore';
+import type { VisibilityFilter } from '../transactional/VisibilityFilter';
+import type { AnnotationPersistence } from '../transactional/AnnotationPersistence';
+
+/** Line+annotation pair used by the tree to render with already-resolved lines. */
+interface ResolvedAnnotation {
+    annotation: AnnotationV2;
+    /** 0-based; `null` when no open document carries the file. */
+    line: number | null;
+}
 
 export class AnnotationsTreeDataProvider implements vscode.TreeDataProvider<vscode.TreeItem> {
-    private _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | undefined | void> = new vscode.EventEmitter();
-    readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | undefined | void> = this._onDidChangeTreeData.event;
+    private readonly _onDidChangeTreeData = new vscode.EventEmitter<vscode.TreeItem | undefined | void>();
+    readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
-    constructor(private annotationManager: AnnotationManager) {
-        this.annotationManager.on('annotationChanged', this.refresh.bind(this));
+    private readonly subscriptions: vscode.Disposable[] = [];
+
+    constructor(
+        private readonly store: AnnotationStore,
+        private readonly visibilityFilter: VisibilityFilter
+    ) {
+        this.subscriptions.push(this.store.onDidChange(() => this.refresh()));
+        this.subscriptions.push(this.store.onDidSuspend(() => this.refresh()));
+        this.subscriptions.push(this.store.onDidResume(() => this.refresh()));
+        this.subscriptions.push(this.store.onDidDispose(() => this.refresh()));
+        this.subscriptions.push(this.visibilityFilter.onDidChange(() => this.refresh()));
     }
 
     refresh(): void {
         this._onDidChangeTreeData.fire();
+    }
+
+    dispose(): void {
+        for (const sub of this.subscriptions) {
+            sub.dispose();
+        }
+        this.subscriptions.length = 0;
+        this._onDidChangeTreeData.dispose();
     }
 
     getTreeItem(element: vscode.TreeItem): vscode.TreeItem {
@@ -21,131 +58,171 @@ export class AnnotationsTreeDataProvider implements vscode.TreeDataProvider<vsco
     }
 
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
-        await this.annotationManager.waitUntilInitialized();
-        const annotations = Array.from(this.annotationManager.annotations.values())
-            .filter(a => this.annotationManager.shouldAnnotationBeVisible(a));
+        await this.store.waitUntilInitialized();
 
-        const grouped = new Map<string, Annotation[]>();
-        annotations.forEach(a => {
-            if (!grouped.has(a.file)) grouped.set(a.file, []);
-            grouped.get(a.file)?.push(a);
-        });
+        const openDocs = vscode.workspace.textDocuments;
+        const resolved: ResolvedAnnotation[] = this.store
+            .list()
+            .filter((a) => this.visibilityFilter.isVisible(a))
+            .map((annotation) => ({
+                annotation,
+                line: this.store.getLineForAnnotation(annotation.id, openDocs),
+            }));
 
-        for (const [_file, arr] of grouped) {
-            arr.sort((a, b) => a.line - b.line);
+        const grouped = new Map<string, ResolvedAnnotation[]>();
+        for (const r of resolved) {
+            const bucket = grouped.get(r.annotation.file);
+            if (bucket) {
+                bucket.push(r);
+            } else {
+                grouped.set(r.annotation.file, [r]);
+            }
+        }
+
+        for (const [, arr] of grouped) {
+            arr.sort((a, b) => a.annotation.startOffset - b.annotation.startOffset);
         }
 
         if (!element) {
-            const navigateToPanelItem = new vscode.TreeItem(localize('openPanel', 'Show Annotations Panel'), vscode.TreeItemCollapsibleState.None);
-            navigateToPanelItem.command = { command: 'annotations.show', title: localize('openPanel', 'Show Annotations Panel') };
+            const navigateToPanelItem = new vscode.TreeItem(
+                localize('openPanel', 'Show Annotations Panel'),
+                vscode.TreeItemCollapsibleState.None
+            );
+            navigateToPanelItem.command = {
+                command: 'annotations.show',
+                title: localize('openPanel', 'Show Annotations Panel'),
+            };
             navigateToPanelItem.iconPath = new vscode.ThemeIcon('notebook-render-output');
 
             const groupedEntries = Array.from(grouped.entries()).map(([file, arr]) => new FileTreeItem(file, arr));
             return [navigateToPanelItem, ...groupedEntries];
-        } else if (element instanceof FileTreeItem) {
-            return element.annotations.map(a => new AnnotationTreeItem(a, this.annotationManager));
         }
-
+        if (element instanceof FileTreeItem) {
+            return element.entries.map((e) => new AnnotationTreeItem(e.annotation, e.line, resolved));
+        }
         return [];
     }
 }
 
 export class FileTreeItem extends vscode.TreeItem {
-    constructor(public readonly file: string, public readonly annotations: Annotation[]) {
+    constructor(
+        public readonly file: string,
+        public readonly entries: ResolvedAnnotation[]
+    ) {
         super(file, vscode.TreeItemCollapsibleState.Expanded);
-        this.tooltip = loc('fileTooltip', `{0} ({1} annotations)`, file, annotations.length);
-        this.description = loc('annotationCount', `{0} annotations`, annotations.length);
+        this.tooltip = loc('fileTooltip', `{0} ({1} annotations)`, file, entries.length);
+        this.description = loc('annotationCount', `{0} annotations`, entries.length);
         this.iconPath = new vscode.ThemeIcon('file-code');
         this.contextValue = 'file';
     }
 }
 
 export class AnnotationTreeItem extends vscode.TreeItem {
-    constructor(public readonly annotation: Annotation, private annotationManager?: AnnotationManager) {
+    constructor(
+        public readonly annotation: AnnotationV2,
+        public readonly resolvedLine: number | null,
+        siblings: readonly ResolvedAnnotation[] = []
+    ) {
         super(annotation.message, vscode.TreeItemCollapsibleState.None);
 
         const date = new Date(annotation.timestamp);
         const formattedDate = date.toLocaleDateString(undefined, {
             year: 'numeric',
             month: 'short',
-            day: 'numeric'
+            day: 'numeric',
         });
         const formattedTime = date.toLocaleTimeString(undefined, {
             hour: '2-digit',
-            minute: '2-digit'
+            minute: '2-digit',
         });
 
-        // Add link indicator if annotation has links (outgoing or incoming)
-        const hasOutgoingLinks = annotation.linkedAnnotations && annotation.linkedAnnotations.length > 0;
-        
-        // Check for incoming links by finding annotations that link to this one
+        const hasOutgoingLinks = !!annotation.linkedAnnotations && annotation.linkedAnnotations.length > 0;
+
+        // Incoming links: any sibling annotation linking to *this* file/line.
+        // We compute against resolved lines so closed-file annotations stop
+        // matching once their line drops out of the open-document set.
         let hasIncomingLinks = false;
-        if (this.annotationManager) {
-            const incomingLinks = Array.from(this.annotationManager.annotations.values()).filter(a => 
-                a.linkedAnnotations && a.linkedAnnotations.some(link => 
-                    link.targetFile === annotation.file && link.targetLine === annotation.line
-                )
-            );
-            hasIncomingLinks = incomingLinks.length > 0;
-        }
-        
-        const hasLinks = hasOutgoingLinks || hasIncomingLinks;
-        const linkIndicator = hasLinks ? '🔗 ' : '';
-        
-        this.description = loc('annotationDescription', `{0}Line {1} • {2} • {3} • {4} {5}`, linkIndicator, annotation.line + 1, annotation.author || loc('anonymous', 'Anonymous'), annotation.severity || 'info', formattedDate, formattedTime);
-        
-        // Create enhanced tooltip with link information
-        let tooltipContent = 
-            loc('tooltipAuthor', `**Author:** {0}\n`, annotation.author || loc('anonymous', 'Anonymous')) +
-            loc('tooltipDate', `**Date:** {0} {1}\n`, formattedDate, formattedTime) +
-            loc('tooltipLine', `**Line:** {0}\n`, annotation.line + 1) +
-            loc('tooltipSeverity', `**Severity:** {0}\n`, annotation.severity || 'info') +
-            loc('tooltipComments', `**Comments:** {0}\n`, annotation.thread?.length || 0);
-        
-        if (hasOutgoingLinks || hasIncomingLinks) {
-            if (hasOutgoingLinks) {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                tooltipContent += loc('tooltipOutgoingLinks', `**Outgoing Links:** {0}\n`, annotation.linkedAnnotations!.length);
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                annotation.linkedAnnotations!.forEach(link => {
-                    tooltipContent += loc('tooltipLinkItem', `  • {0} → {1}:{2}\n`, link.relationship || loc('related', 'related'), link.targetFile, link.targetLine);
-                });
-            }
-            
-            if (hasIncomingLinks && this.annotationManager) {
-                const incomingLinks = Array.from(this.annotationManager.annotations.values()).filter(a => 
-                    a.linkedAnnotations && a.linkedAnnotations.some(link => 
-                        link.targetFile === annotation.file && link.targetLine === annotation.line
-                    )
-                );
-                
-                if (incomingLinks.length > 0) {
-                    tooltipContent += loc('tooltipIncomingLinks', `**Incoming Links:** {0}\n`, incomingLinks.length);
-                    incomingLinks.forEach(source => {
-                        const link = source.linkedAnnotations?.find(l => 
-                            l.targetFile === annotation.file && l.targetLine === annotation.line
-                        );
-                        tooltipContent += loc('tooltipIncomingLinkItem', `  • {0} ← {1}:{2}\n`, link?.relationship || loc('related', 'related'), source.file, source.line);
-                    });
+        const incomingLinkers: ResolvedAnnotation[] = [];
+        if (resolvedLine !== null) {
+            for (const sib of siblings) {
+                const links = sib.annotation.linkedAnnotations ?? [];
+                if (links.some((link) => link.targetFile === annotation.file && link.targetLine === resolvedLine)) {
+                    incomingLinkers.push(sib);
                 }
             }
+            hasIncomingLinks = incomingLinkers.length > 0;
         }
-        
+
+        const hasLinks = hasOutgoingLinks || hasIncomingLinks;
+        const linkIndicator = hasLinks ? '🔗 ' : '';
+
+        const lineLabel = resolvedLine === null ? '?' : String(resolvedLine + 1);
+
+        this.description = loc(
+            'annotationDescription',
+            `{0}Line {1} • {2} • {3} • {4} {5}`,
+            linkIndicator,
+            lineLabel,
+            annotation.author || loc('anonymous', 'Anonymous'),
+            annotation.severity || 'info',
+            formattedDate,
+            formattedTime
+        );
+
+        let tooltipContent =
+            loc('tooltipAuthor', `**Author:** {0}\n`, annotation.author || loc('anonymous', 'Anonymous')) +
+            loc('tooltipDate', `**Date:** {0} {1}\n`, formattedDate, formattedTime) +
+            loc('tooltipLine', `**Line:** {0}\n`, lineLabel) +
+            loc('tooltipSeverity', `**Severity:** {0}\n`, annotation.severity || 'info') +
+            loc('tooltipComments', `**Comments:** {0}\n`, annotation.thread?.length || 0);
+
+        if (hasOutgoingLinks && annotation.linkedAnnotations) {
+            tooltipContent += loc(
+                'tooltipOutgoingLinks',
+                `**Outgoing Links:** {0}\n`,
+                annotation.linkedAnnotations.length
+            );
+            for (const link of annotation.linkedAnnotations) {
+                tooltipContent += loc(
+                    'tooltipLinkItem',
+                    `  • {0} → {1}:{2}\n`,
+                    link.relationship || loc('related', 'related'),
+                    link.targetFile,
+                    link.targetLine
+                );
+            }
+        }
+
+        if (hasIncomingLinks) {
+            tooltipContent += loc('tooltipIncomingLinks', `**Incoming Links:** {0}\n`, incomingLinkers.length);
+            for (const source of incomingLinkers) {
+                const link = source.annotation.linkedAnnotations?.find(
+                    (l) => l.targetFile === annotation.file && l.targetLine === resolvedLine
+                );
+                const sourceLineLabel = source.line === null ? '?' : String(source.line + 1);
+                tooltipContent += loc(
+                    'tooltipIncomingLinkItem',
+                    `  • {0} ← {1}:{2}\n`,
+                    link?.relationship || loc('related', 'related'),
+                    source.annotation.file,
+                    sourceLineLabel
+                );
+            }
+        }
+
         tooltipContent += `\n${annotation.message}`;
-        
         this.tooltip = new vscode.MarkdownString(tooltipContent);
 
         let iconName = 'comment';
         if (annotation.thread?.length) {
             iconName = 'comment-discussion';
         }
-
         switch (annotation.severity) {
             case 'error':
-                iconName = annotation.thread?.length ? 'error' : 'error';
+                iconName = 'error';
                 break;
             case 'warning':
-                iconName = annotation.thread?.length ? 'warning' : 'warning';
+                iconName = 'warning';
                 break;
             case 'info':
             default:
@@ -158,7 +235,7 @@ export class AnnotationTreeItem extends vscode.TreeItem {
         this.command = {
             command: 'annotations.navigate',
             title: loc('navigateToAnnotation', 'Navigate to Annotation'),
-            arguments: [this.annotation.id]
+            arguments: [this.annotation.id],
         };
     }
 }
@@ -167,28 +244,48 @@ export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropC
     public readonly dropMimeTypes = ['application/vnd.code.tree.annotation'];
     public readonly dragMimeTypes = ['application/vnd.code.tree.annotation'];
 
-    constructor(private annotationManager: AnnotationManager) {}
+    constructor(
+        private readonly store: AnnotationStore,
+        private readonly persistence: AnnotationPersistence
+    ) {}
 
-    async handleDrag(source: vscode.TreeItem[], dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
-        const items = source.filter(s => s instanceof AnnotationTreeItem) as AnnotationTreeItem[];
+    async handleDrag(
+        source: vscode.TreeItem[],
+        dataTransfer: vscode.DataTransfer,
+        _token: vscode.CancellationToken
+    ): Promise<void> {
+        const items = source.filter((s) => s instanceof AnnotationTreeItem) as AnnotationTreeItem[];
         if (items.length > 0) {
-            dataTransfer.set('application/vnd.code.tree.annotation', new vscode.DataTransferItem(items.map(i => i.annotation.id).join(',')));
+            dataTransfer.set(
+                'application/vnd.code.tree.annotation',
+                new vscode.DataTransferItem(items.map((i) => i.annotation.id).join(','))
+            );
         }
     }
 
-    async handleDrop(target: vscode.TreeItem | undefined, dataTransfer: vscode.DataTransfer, _token: vscode.CancellationToken): Promise<void> {
+    async handleDrop(
+        target: vscode.TreeItem | undefined,
+        dataTransfer: vscode.DataTransfer,
+        _token: vscode.CancellationToken
+    ): Promise<void> {
         const transferItem = dataTransfer.get('application/vnd.code.tree.annotation');
-        if (!transferItem) return;
+        if (!transferItem) {
+            return;
+        }
 
-        const draggedAnnotationIds = transferItem.value.split(',').filter((id: string) => id.trim().length > 0);
-        if (draggedAnnotationIds.length === 0) return;
+        const draggedAnnotationIds = (transferItem.value as string).split(',').filter((id) => id.trim().length > 0);
+        if (draggedAnnotationIds.length === 0) {
+            return;
+        }
 
         const draggedAnnotations = draggedAnnotationIds
-        .map((id: string) => this.annotationManager.annotations.get(id))
-        .filter(Boolean) as Annotation[];
-        if (draggedAnnotations.length === 0) return;
+            .map((id) => this.store.get(id))
+            .filter((a): a is Readonly<AnnotationV2> => a !== undefined);
+        if (draggedAnnotations.length === 0) {
+            return;
+        }
 
-        let targetAnnotation: Annotation | undefined;
+        let targetAnnotation: AnnotationV2 | undefined;
         let targetFile: string | undefined;
 
         if (target instanceof AnnotationTreeItem) {
@@ -200,44 +297,70 @@ export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropC
             return;
         }
 
-        const allSameFile = draggedAnnotations.every(a => a.file === draggedAnnotations[0].file);
+        const allSameFile = draggedAnnotations.every((a) => a.file === draggedAnnotations[0].file);
         if (!allSameFile) {
-            vscode.window.showErrorMessage(localize('cannotReorderDifferentFiles', 'Cannot reorder annotations from different files together.'));
+            vscode.window.showErrorMessage(
+                localize('cannotReorderDifferentFiles', 'Cannot reorder annotations from different files together.')
+            );
             return;
         }
 
         const draggedFile = draggedAnnotations[0].file;
         if (targetFile && targetFile !== draggedFile) {
-            vscode.window.showErrorMessage(localize('cannotMoveToDifferentFile', 'Cannot move annotations to a different file via drag and drop.'));
+            vscode.window.showErrorMessage(
+                localize('cannotMoveToDifferentFile', 'Cannot move annotations to a different file via drag and drop.')
+            );
             return;
         }
 
-        const fileAnnotations = Array.from(this.annotationManager.annotations.values())
-            .filter(a => a.file === draggedFile)
-            .sort((a, b) => a.line - b.line);
+        const fileAnnotations = this.store
+            .list()
+            .filter((a) => a.file === draggedFile)
+            .slice()
+            .sort((a, b) => a.startOffset - b.startOffset);
 
-        draggedAnnotations.forEach(da => {
-            const index = fileAnnotations.findIndex(fa => fa.id === da.id);
-            if (index >= 0) fileAnnotations.splice(index, 1);
-        });
+        for (const da of draggedAnnotations) {
+            const idx = fileAnnotations.findIndex((fa) => fa.id === da.id);
+            if (idx >= 0) {
+                fileAnnotations.splice(idx, 1);
+            }
+        }
 
         let targetIndex: number;
         if (targetAnnotation) {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            const idx = fileAnnotations.findIndex(a => a.id === targetAnnotation!.id);
+            const idx = fileAnnotations.findIndex((a) => a.id === targetAnnotation?.id);
             targetIndex = idx >= 0 ? idx : fileAnnotations.length;
         } else {
             targetIndex = fileAnnotations.length;
         }
 
         fileAnnotations.splice(targetIndex + 1, 0, ...draggedAnnotations);
-        fileAnnotations.forEach((a, i) => {
-            this.annotationManager.setAnnotationLine(a, i);
-        });
 
-        await this.annotationManager.saveAnnotations();
-        await this.annotationManager.refreshAnnotations();
-        this.annotationManager.emit('annotationChanged');
+        // Resolve the source document once for the offset recalc. Drag-drop
+        // preserves the legacy "line as panel-rank" semantics: each entry is
+        // re-anchored to its post-reorder index. This is intentional — the
+        // semantic was already overloaded in v1 and a behaviour-preserving
+        // port is the safer choice here. A clean rank-vs-anchor split is
+        // tracked as Q2 in the worktree A handoff.
+        const fileUri = draggedAnnotations[0].fileUri;
+        let document: vscode.TextDocument | undefined;
+        try {
+            document = await vscode.workspace.openTextDocument(vscode.Uri.parse(fileUri));
+        } catch {
+            vscode.window.showErrorMessage(
+                localize('cannotOpenDocumentForReorder', 'Cannot open the source document to reorder annotations.')
+            );
+            return;
+        }
+
+        for (let i = 0; i < fileAnnotations.length; i++) {
+            const a = fileAnnotations[i];
+            const targetLine = Math.min(i, document.lineCount - 1);
+            this.store.setAnnotationLine(a.id, targetLine, document);
+        }
+
+        await this.persistence.save(this.store.serialize());
+        this.store.notifyChanged();
         vscode.window.showInformationMessage(localize('annotationsReordered', 'Annotations reordered successfully.'));
     }
 }

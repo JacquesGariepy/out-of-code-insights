@@ -7,11 +7,28 @@ import { Annotation } from '../common/types';
 import { localize } from '../common/localize';
 import { loc } from '../managers/LocalizationManager';
 import { AIProfileManager } from '../managers/AIProfileManager';
+import { AnnotationStore } from '../transactional/AnnotationStore';
+import { ANNOTATION_SCHEMA_VERSION, type AnnotationV2 } from '../transactional/types';
+import { captureAnchor, type TextDocumentLike } from '../anchoring/anchor';
 
 export class UnifiedAIAdapter {
     private aiProvider: UnifiedAIProvider | null = null;
     private profileManager: UserProfileManager;
     private annotationManager: AnnotationManager;
+    /**
+     * Lot 5 R2 — Worktree C migration bridge.
+     *
+     * Surgical injection of the new AnnotationStore. While extension.ts is
+     * still in flight (worker-1 has not yet swapped AnnotationManager for
+     * AnnotationStore in the activate() flow), this field stays optional so
+     * the constructor remains additive and does NOT break the call site in
+     * extension.ts. Once R2 wiring lands, every persistence-touching path
+     * inside this class can route through `this.store.*` instead of the
+     * deprecated `this.annotationManager.annotations.set/saveAnnotations`
+     * pair. The first such migration is the snippet-attach path at the
+     * legacy line 702 — see `attachSnippetToAnnotation()` below.
+     */
+    private store: AnnotationStore | undefined;
     private context: vscode.ExtensionContext;
     private aiProfileManager: AIProfileManager;
 
@@ -25,7 +42,7 @@ export class UnifiedAIAdapter {
             return filePath;
         }
         const normalizedFilePath = this.normalizePath(filePath);
-        const workspaceFolder = workspaceFolders.find(folder =>
+        const workspaceFolder = workspaceFolders.find((folder) =>
             normalizedFilePath.startsWith(this.normalizePath(folder.uri.fsPath))
         );
         if (workspaceFolder) {
@@ -45,13 +62,15 @@ export class UnifiedAIAdapter {
         context: vscode.ExtensionContext,
         annotationManager: AnnotationManager,
         profileManager: UserProfileManager,
-        aiProfileManager?: AIProfileManager
+        aiProfileManager?: AIProfileManager,
+        store?: AnnotationStore
     ) {
         this.context = context;
         this.annotationManager = annotationManager;
+        this.store = store;
         this.profileManager = profileManager;
         this.aiProfileManager = aiProfileManager || new AIProfileManager(context);
-        
+
         // Listen for profile changes
         this.aiProfileManager.on('profilesChanged', async () => {
             try {
@@ -60,14 +79,14 @@ export class UnifiedAIAdapter {
                 console.error('UnifiedAIAdapter: Error refreshing profiles:', error);
             }
         });
-        
+
         this.registerCommands();
     }
 
     private async initializeAIProvider(): Promise<void> {
         // Ensure profiles are loaded from disk first
         await this.aiProfileManager.ensureLoaded();
-        
+
         const config = vscode.workspace.getConfiguration('annotation');
         const provider = config.get<string>('provider', 'openai');
         const model = config.get<string>('model', 'gpt-4o-mini');
@@ -86,7 +105,7 @@ export class UnifiedAIAdapter {
             provider,
             model,
             apiKeys,
-            context: this.context
+            context: this.context,
         });
 
         const initialized = await this.aiProvider.initialize();
@@ -95,7 +114,10 @@ export class UnifiedAIAdapter {
             const missingKey = !apiKeys[provider];
             if (missingKey) {
                 const action = await vscode.window.showErrorMessage(
-                    loc('noApiKeyConfigured', `No API key configured for ${provider}. You need to add your API key to use AI features.`),
+                    loc(
+                        'noApiKeyConfigured',
+                        `No API key configured for ${provider}. You need to add your API key to use AI features.`
+                    ),
                     loc('updateApiKey', 'Update API Key'),
                     loc('openSettings', 'Open Settings')
                 );
@@ -125,27 +147,18 @@ export class UnifiedAIAdapter {
 
     private registerCommands(): void {
         // Update API key command
-        const updateApiKeyCmd = vscode.commands.registerCommand(
-            'annotations.updateApiKey',
-            async () => {
-                await this.updateApiKey();
-            }
-        );
+        const updateApiKeyCmd = vscode.commands.registerCommand('annotations.updateApiKey', async () => {
+            await this.updateApiKey();
+        });
         // Profile selection command
-        const selectProfileCmd = vscode.commands.registerCommand(
-            'annotations.selectProfile',
-            async () => {
-                await this.showEnhancedProfileSelector();
-            }
-        );
+        const selectProfileCmd = vscode.commands.registerCommand('annotations.selectProfile', async () => {
+            await this.showEnhancedProfileSelector();
+        });
 
         // Manage profiles command
-        const manageProfilesCmd = vscode.commands.registerCommand(
-            'annotations.manageProfiles',
-            async () => {
-                await this.profileManager.showProfileManager();
-            }
-        );
+        const manageProfilesCmd = vscode.commands.registerCommand('annotations.manageProfiles', async () => {
+            await this.profileManager.showProfileManager();
+        });
 
         // AI suggest with profile
         const aiSuggestWithProfileCmd = vscode.commands.registerCommand(
@@ -156,20 +169,14 @@ export class UnifiedAIAdapter {
         );
 
         // AI analyze file command
-        const aiAnalyzeFileCmd = vscode.commands.registerCommand(
-            'annotations.aiAnalyzeFile',
-            async () => {
-                await this.analyzeCurrentFile();
-            }
-        );
+        const aiAnalyzeFileCmd = vscode.commands.registerCommand('annotations.aiAnalyzeFile', async () => {
+            await this.analyzeCurrentFile();
+        });
 
         // AI batch annotate command
-        const aiBatchAnnotateCmd = vscode.commands.registerCommand(
-            'annotations.aiBatchAnnotate',
-            async () => {
-                await this.batchAnnotateFile();
-            }
-        );
+        const aiBatchAnnotateCmd = vscode.commands.registerCommand('annotations.aiBatchAnnotate', async () => {
+            await this.batchAnnotateFile();
+        });
 
         // AI analyze file with profile selection command
         const aiAnalyzeFileWithProfileCmd = vscode.commands.registerCommand(
@@ -180,17 +187,14 @@ export class UnifiedAIAdapter {
         );
 
         // Batch create mixed command
-        const batchCreateMixedCmd = vscode.commands.registerCommand(
-            'annotations.batchCreateMixed',
-            async () => {
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    const selection = editor.selection;
-                    const selectedText = editor.document.getText(selection.isEmpty ? undefined : selection);
-                    await this.batchCreateMixed(editor, selection, selectedText);
-                }
+        const batchCreateMixedCmd = vscode.commands.registerCommand('annotations.batchCreateMixed', async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor) {
+                const selection = editor.selection;
+                const selectedText = editor.document.getText(selection.isEmpty ? undefined : selection);
+                await this.batchCreateMixed(editor, selection, selectedText);
             }
-        );
+        });
 
         this.context.subscriptions.push(
             selectProfileCmd,
@@ -213,47 +217,45 @@ export class UnifiedAIAdapter {
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(
-                localize('aiInitError', 'Failed to initialize AI provider: ') + error
-            );
+            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
             return;
         }
 
         // Show profile selector with custom profiles included
         const profiles = this.aiProvider?.getProfiles() || [];
         const customProfiles = this.aiProfileManager.getCustomProfiles();
-        
+
         // Create items for both built-in and custom profiles
-        const builtInItems = profiles.map(p => ({
+        const builtInItems = profiles.map((p) => ({
             label: `$(account) ${p.name}`,
             description: p.description,
             detail: 'Built-in profile',
             profile: p,
-            type: 'builtin'
+            type: 'builtin',
         }));
-        
-        const customItems = customProfiles.map(p => ({
+
+        const customItems = customProfiles.map((p) => ({
             label: `$(star) ${p.name}`,
             description: p.description,
             detail: 'Custom profile',
             profile: p,
-            type: 'custom'
+            type: 'custom',
         }));
-        
+
         // Combine all items with separator
         const allItems = [...builtInItems];
         if (customItems.length > 0) {
             /* eslint-disable @typescript-eslint/no-explicit-any */
             allItems.push({
                 label: '',
-                kind: vscode.QuickPickItemKind.Separator
+                kind: vscode.QuickPickItemKind.Separator,
             } as any);
             /* eslint-enable @typescript-eslint/no-explicit-any */
             allItems.push(...customItems);
         }
 
         const selected = await vscode.window.showQuickPick(allItems, {
-            placeHolder: localize('selectProfilePrompt', 'Select a profile for AI suggestion')
+            placeHolder: localize('selectProfilePrompt', 'Select a profile for AI suggestion'),
         });
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -270,11 +272,15 @@ export class UnifiedAIAdapter {
 
         let additionalPrompt = '';
         if (useCustomPrompt === loc('addCustomPrompt', 'Add custom prompt')) {
-            additionalPrompt = await vscode.window.showInputBox({
-                prompt: loc('enterAdditionalContext', 'Enter additional context or instructions'),
-                placeHolder: loc('additionalContextPlaceholder', 'e.g., Focus on performance issues and memory leaks'),
-                ignoreFocusOut: true
-            }) || '';
+            additionalPrompt =
+                (await vscode.window.showInputBox({
+                    prompt: loc('enterAdditionalContext', 'Enter additional context or instructions'),
+                    placeHolder: loc(
+                        'additionalContextPlaceholder',
+                        'e.g., Focus on performance issues and memory leaks'
+                    ),
+                    ignoreFocusOut: true,
+                })) || '';
         }
 
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -297,9 +303,7 @@ export class UnifiedAIAdapter {
                 await this.createAnnotationFromSuggestion(suggestion, document, lineNumber);
             }
         } catch (error) {
-            vscode.window.showErrorMessage(
-                localize('suggestionError', 'Failed to generate suggestion: ') + error
-            );
+            vscode.window.showErrorMessage(localize('suggestionError', 'Failed to generate suggestion: ') + error);
         }
     }
 
@@ -312,24 +316,22 @@ export class UnifiedAIAdapter {
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(
-                localize('aiInitError', 'Failed to initialize AI provider: ') + error
-            );
+            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
             return;
         }
 
         // Show profile selector
         const profiles = this.aiProvider?.getProfiles() || [];
-        const items = profiles.map(p => ({
+        const items = profiles.map((p) => ({
             label: `$(account) ${p.name}`,
             description: p.description,
             detail: `Tags: ${p.annotationDefaults.tags.join(', ')} | Severity: ${p.annotationDefaults.severity}`,
-            profile: p
+            profile: p,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
             placeHolder: localize('selectProfileForAnalysis', 'Select a profile to analyze the entire file'),
-            title: localize('analyzeFileTitle', 'Analyze File with AI Profile')
+            title: localize('analyzeFileTitle', 'Analyze File with AI Profile'),
         });
 
         if (!selected) {
@@ -342,7 +344,10 @@ export class UnifiedAIAdapter {
         // Ask for user confirmation before sending to AI
         const fileInfo = `File: ${path.basename(editor.document.fileName)}\nLines: ${editor.document.lineCount}\nLanguage: ${editor.document.languageId}`;
         const confirmation = await vscode.window.showInformationMessage(
-            localize('confirmAIAnalysis', `Send this file to AI for analysis?\n\n${fileInfo}\n\nProfile: ${selected.profile.name}`),
+            localize(
+                'confirmAIAnalysis',
+                `Send this file to AI for analysis?\n\n${fileInfo}\n\nProfile: ${selected.profile.name}`
+            ),
             { modal: true },
             localize('yes', 'Yes, Analyze'),
             localize('no', 'Cancel')
@@ -352,43 +357,44 @@ export class UnifiedAIAdapter {
             return;
         }
 
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: localize('analyzingFileWithProfile', `Analyzing file with ${selected.profile.name} profile...`),
-            cancellable: false
-        }, async () => {
-            try {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                const annotations = await this.aiProvider!.analyzeFile(
-                    editor.document,
-                    selected.profile.id
-                );
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: localize('analyzingFileWithProfile', `Analyzing file with ${selected.profile.name} profile...`),
+                cancellable: false,
+            },
+            async () => {
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                    const annotations = await this.aiProvider!.analyzeFile(editor.document, selected.profile.id);
 
-                if (annotations.length === 0) {
-                    vscode.window.showInformationMessage(
-                        localize('noAnnotationsFound', 'No annotations suggested for this file')
+                    if (annotations.length === 0) {
+                        vscode.window.showInformationMessage(
+                            localize('noAnnotationsFound', 'No annotations suggested for this file')
+                        );
+                        return;
+                    }
+
+                    const action = await vscode.window.showInformationMessage(
+                        localize(
+                            'annotationsFoundWithProfile',
+                            `${selected.profile.name} found ${annotations.length} annotations`
+                        ),
+                        localize('addAll', 'Add All'),
+                        localize('review', 'Review'),
+                        localize('cancel', 'Cancel')
                     );
-                    return;
-                }
 
-                const action = await vscode.window.showInformationMessage(
-                    localize('annotationsFoundWithProfile', `${selected.profile.name} found ${annotations.length} annotations`),
-                    localize('addAll', 'Add All'),
-                    localize('review', 'Review'),
-                    localize('cancel', 'Cancel')
-                );
-
-                if (action === localize('addAll', 'Add All')) {
-                    await this.addMultipleAnnotations(annotations, editor.document);
-                } else if (action === localize('review', 'Review')) {
-                    await this.reviewAnnotations(annotations, editor.document);
+                    if (action === localize('addAll', 'Add All')) {
+                        await this.addMultipleAnnotations(annotations, editor.document);
+                    } else if (action === localize('review', 'Review')) {
+                        await this.reviewAnnotations(annotations, editor.document);
+                    }
+                } catch (error) {
+                    vscode.window.showErrorMessage(localize('analysisError', 'Failed to analyze file: ') + error);
                 }
-            } catch (error) {
-                vscode.window.showErrorMessage(
-                    localize('analysisError', 'Failed to analyze file: ') + error
-                );
             }
-        });
+        );
     }
 
     private async analyzeCurrentFile(): Promise<void> {
@@ -400,9 +406,7 @@ export class UnifiedAIAdapter {
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(
-                localize('aiInitError', 'Failed to initialize AI provider: ') + error
-            );
+            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
             return;
         }
 
@@ -422,43 +426,41 @@ export class UnifiedAIAdapter {
             return;
         }
 
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: localize('analyzingFile', 'Analyzing file with AI...'),
-            cancellable: false
-        }, async () => {
-            try {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                const annotations = await this.aiProvider!.analyzeFile(
-                    editor.document,
-                    profileId
-                );
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: localize('analyzingFile', 'Analyzing file with AI...'),
+                cancellable: false,
+            },
+            async () => {
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                    const annotations = await this.aiProvider!.analyzeFile(editor.document, profileId);
 
-                if (annotations.length === 0) {
-                    vscode.window.showInformationMessage(
-                        localize('noAnnotationsFound', 'No annotations suggested for this file')
+                    if (annotations.length === 0) {
+                        vscode.window.showInformationMessage(
+                            localize('noAnnotationsFound', 'No annotations suggested for this file')
+                        );
+                        return;
+                    }
+
+                    const action = await vscode.window.showInformationMessage(
+                        localize('annotationsFound', `Found ${annotations.length} potential annotations`),
+                        localize('addAll', 'Add All'),
+                        localize('review', 'Review'),
+                        localize('cancel', 'Cancel')
                     );
-                    return;
-                }
 
-                const action = await vscode.window.showInformationMessage(
-                    localize('annotationsFound', `Found ${annotations.length} potential annotations`),
-                    localize('addAll', 'Add All'),
-                    localize('review', 'Review'),
-                    localize('cancel', 'Cancel')
-                );
-
-                if (action === localize('addAll', 'Add All')) {
-                    await this.addMultipleAnnotations(annotations, editor.document);
-                } else if (action === localize('review', 'Review')) {
-                    await this.reviewAnnotations(annotations, editor.document);
+                    if (action === localize('addAll', 'Add All')) {
+                        await this.addMultipleAnnotations(annotations, editor.document);
+                    } else if (action === localize('review', 'Review')) {
+                        await this.reviewAnnotations(annotations, editor.document);
+                    }
+                } catch (error) {
+                    vscode.window.showErrorMessage(localize('analysisError', 'Failed to analyze file: ') + error);
                 }
-            } catch (error) {
-                vscode.window.showErrorMessage(
-                    localize('analysisError', 'Failed to analyze file: ') + error
-                );
             }
-        });
+        );
     }
 
     private async batchAnnotateFile(): Promise<void> {
@@ -470,47 +472,54 @@ export class UnifiedAIAdapter {
         // Get selection or entire file
         const selection = editor.selection;
         const selectedText = editor.document.getText(selection.isEmpty ? undefined : selection);
-        
+
         if (!selectedText && editor.document.getText().length === 0) {
-            vscode.window.showWarningMessage(
-                localize('emptyFile', 'The file is empty')
-            );
+            vscode.window.showWarningMessage(localize('emptyFile', 'The file is empty'));
             return;
         }
 
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(
-                localize('aiInitError', 'Failed to initialize AI provider: ') + error
-            );
+            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
             return;
         }
 
         // Ask for specific focus areas
-        const focusAreas = await vscode.window.showQuickPick([
-            { label: loc('allIssues', 'All Issues'), value: 'all' },
-            { label: loc('bugsOnly', 'Bugs Only'), value: 'bugs' },
-            { label: loc('performance', 'Performance'), value: 'performance' },
-            { label: loc('security', 'Security'), value: 'security' },
-            { label: loc('documentation', 'Documentation'), value: 'documentation' },
-            { label: loc('architecture', 'Architecture'), value: 'architecture' }
-        ], {
-            placeHolder: localize('selectFocus', 'Select focus area for annotations'),
-            canPickMany: true
-        });
+        const focusAreas = await vscode.window.showQuickPick(
+            [
+                { label: loc('allIssues', 'All Issues'), value: 'all' },
+                { label: loc('bugsOnly', 'Bugs Only'), value: 'bugs' },
+                { label: loc('performance', 'Performance'), value: 'performance' },
+                { label: loc('security', 'Security'), value: 'security' },
+                { label: loc('documentation', 'Documentation'), value: 'documentation' },
+                { label: loc('architecture', 'Architecture'), value: 'architecture' },
+            ],
+            {
+                placeHolder: localize('selectFocus', 'Select focus area for annotations'),
+                canPickMany: true,
+            }
+        );
 
         if (!focusAreas || focusAreas.length === 0) {
             return;
         }
 
-        const focusContext = focusAreas.map(f => f.value).join(', ');
+        const focusContext = focusAreas.map((f) => f.value).join(', ');
         const startLine = selection.isEmpty ? 0 : selection.start.line;
 
         // Show what will be analyzed
-        const scope = selection.isEmpty ? loc('entireFile', 'Entire file') : loc('selectedLines', `Selected lines {0}-{1}`, selection.start.line + 1, selection.end.line + 1);
-        const fileInfo = loc('batchAnalysisInfo', `File: {0}\nScope: {1}\nFocus: {2}`, path.basename(editor.document.fileName), scope, focusContext);
-        
+        const scope = selection.isEmpty
+            ? loc('entireFile', 'Entire file')
+            : loc('selectedLines', `Selected lines {0}-{1}`, selection.start.line + 1, selection.end.line + 1);
+        const fileInfo = loc(
+            'batchAnalysisInfo',
+            `File: {0}\nScope: {1}\nFocus: {2}`,
+            path.basename(editor.document.fileName),
+            scope,
+            focusContext
+        );
+
         const confirmation = await vscode.window.showInformationMessage(
             localize('confirmBatchAnalysis', `Send to AI for batch analysis?\n\n${fileInfo}`),
             { modal: true },
@@ -522,39 +531,46 @@ export class UnifiedAIAdapter {
             return;
         }
 
-        await vscode.window.withProgress({
-            location: vscode.ProgressLocation.Notification,
-            title: localize('batchAnnotating', 'Generating batch annotations...'),
-            cancellable: false
-        }, async () => {
-            try {
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                const annotations = await this.aiProvider!.generateAnnotations(
-                    selectedText || editor.document.getText(),
-                    this.getRelativePath(editor.document.fileName),
-                    startLine,
-                    {
-                        language: editor.document.languageId,
-                        additionalContext: `Focus on: ${focusContext}`
-                    }
-                );
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: localize('batchAnnotating', 'Generating batch annotations...'),
+                cancellable: false,
+            },
+            async () => {
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                    const annotations = await this.aiProvider!.generateAnnotations(
+                        selectedText || editor.document.getText(),
+                        this.getRelativePath(editor.document.fileName),
+                        startLine,
+                        {
+                            language: editor.document.languageId,
+                            additionalContext: `Focus on: ${focusContext}`,
+                        }
+                    );
 
-                if (annotations.length > 0) {
-                    await this.reviewAnnotations(annotations, editor.document);
-                } else {
-                    vscode.window.showInformationMessage(
-                        localize('noIssuesFound', 'No issues found in the selected area')
+                    if (annotations.length > 0) {
+                        await this.reviewAnnotations(annotations, editor.document);
+                    } else {
+                        vscode.window.showInformationMessage(
+                            localize('noIssuesFound', 'No issues found in the selected area')
+                        );
+                    }
+                } catch (error) {
+                    vscode.window.showErrorMessage(
+                        localize('batchError', 'Failed to generate batch annotations: ') + error
                     );
                 }
-            } catch (error) {
-                vscode.window.showErrorMessage(
-                    localize('batchError', 'Failed to generate batch annotations: ') + error
-                );
             }
-        });
+        );
     }
 
-    private async batchCreateTemplates(_editor: vscode.TextEditor, _selection: vscode.Selection, _selectedText: string | undefined): Promise<void> {
+    private async batchCreateTemplates(
+        _editor: vscode.TextEditor,
+        _selection: vscode.Selection,
+        _selectedText: string | undefined
+    ): Promise<void> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const templateManager = (this.annotationManager as any).templateManager;
         if (!templateManager) {
@@ -567,8 +583,10 @@ export class UnifiedAIAdapter {
             value: '3',
             validateInput: (value) => {
                 const num = parseInt(value);
-                return (isNaN(num) || num < 1 || num > 10) ? loc('enterNumberBetween', 'Enter a number between 1 and 10') : null;
-            }
+                return isNaN(num) || num < 1 || num > 10
+                    ? loc('enterNumberBetween', 'Enter a number between 1 and 10')
+                    : null;
+            },
         });
 
         if (!templateCount) return;
@@ -579,14 +597,14 @@ export class UnifiedAIAdapter {
         for (let i = 0; i < count; i++) {
             const name = await vscode.window.showInputBox({
                 prompt: loc('templateName', `Template {0} name`, i + 1),
-                placeHolder: loc('templateNamePlaceholder', 'e.g., Security Review')
+                placeHolder: loc('templateNamePlaceholder', 'e.g., Security Review'),
             });
 
             if (!name) continue;
 
             const message = await vscode.window.showInputBox({
                 prompt: loc('templateMessage', `Template {0} message template`, i + 1),
-                placeHolder: loc('templateMessagePlaceholder', 'e.g., [Security] Check {input} for vulnerabilities')
+                placeHolder: loc('templateMessagePlaceholder', 'e.g., [Security] Check {input} for vulnerabilities'),
             });
 
             if (!message) continue;
@@ -596,16 +614,22 @@ export class UnifiedAIAdapter {
                 message,
                 tags: ['template', 'batch-created'],
                 severity: 'info',
-                priority: 1
+                priority: 1,
             });
 
             templates.push(name);
         }
 
-        vscode.window.showInformationMessage(loc('createdTemplates', `Created {0} templates: {1}`, templates.length, templates.join(', ')));
+        vscode.window.showInformationMessage(
+            loc('createdTemplates', `Created {0} templates: {1}`, templates.length, templates.join(', '))
+        );
     }
 
-    private async batchCreateLinks(_editor: vscode.TextEditor, _selection: vscode.Selection, _selectedText: string | undefined): Promise<void> {
+    private async batchCreateLinks(
+        _editor: vscode.TextEditor,
+        _selection: vscode.Selection,
+        _selectedText: string | undefined
+    ): Promise<void> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const linkedManager = (this.annotationManager as any).linkedAnnotationManager;
         if (!linkedManager) {
@@ -620,15 +644,15 @@ export class UnifiedAIAdapter {
             return;
         }
 
-        const items = annotations.map(ann => ({
+        const items = annotations.map((ann) => ({
             label: ann.message,
             description: `${ann.file}:${ann.line}`,
-            annotation: ann
+            annotation: ann,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
             canPickMany: true,
-            placeHolder: loc('selectAnnotationsToLink', 'Select annotations to link together')
+            placeHolder: loc('selectAnnotationsToLink', 'Select annotations to link together'),
         });
 
         if (!selected || selected.length < 2) {
@@ -637,7 +661,7 @@ export class UnifiedAIAdapter {
 
         const linkName = await vscode.window.showInputBox({
             prompt: loc('linkGroupName', 'Name for this link group'),
-            placeHolder: loc('linkGroupNamePlaceholder', 'e.g., Authentication Flow')
+            placeHolder: loc('linkGroupNamePlaceholder', 'e.g., Authentication Flow'),
         });
 
         if (!linkName) return;
@@ -654,10 +678,16 @@ export class UnifiedAIAdapter {
             }
         }
 
-        vscode.window.showInformationMessage(loc('createdLinkGroup', `Created link group '{0}' with {1} annotations`, linkName, selected.length));
+        vscode.window.showInformationMessage(
+            loc('createdLinkGroup', `Created link group '{0}' with {1} annotations`, linkName, selected.length)
+        );
     }
 
-    private async batchCreateSnippets(editor: vscode.TextEditor, selection: vscode.Selection, selectedText: string | undefined): Promise<void> {
+    private async batchCreateSnippets(
+        editor: vscode.TextEditor,
+        selection: vscode.Selection,
+        selectedText: string | undefined
+    ): Promise<void> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const snippetManager = (this.annotationManager as any).snippetManager;
         if (!snippetManager) {
@@ -665,13 +695,16 @@ export class UnifiedAIAdapter {
             return;
         }
 
-        const snippetType = await vscode.window.showQuickPick([
-            { label: loc('fromCurrentSelection', 'From Current Selection'), value: 'selection' },
-            { label: loc('fromAISuggestions', 'From AI Suggestions'), value: 'ai' },
-            { label: loc('manualEntry', 'Manual Entry'), value: 'manual' }
-        ], {
-            placeHolder: loc('howToCreateSnippets', 'How would you like to create snippets?')
-        });
+        const snippetType = await vscode.window.showQuickPick(
+            [
+                { label: loc('fromCurrentSelection', 'From Current Selection'), value: 'selection' },
+                { label: loc('fromAISuggestions', 'From AI Suggestions'), value: 'ai' },
+                { label: loc('manualEntry', 'Manual Entry'), value: 'manual' },
+            ],
+            {
+                placeHolder: loc('howToCreateSnippets', 'How would you like to create snippets?'),
+            }
+        );
 
         if (!snippetType) return;
 
@@ -684,13 +717,14 @@ export class UnifiedAIAdapter {
 
                 const snippetName = await vscode.window.showInputBox({
                     prompt: loc('snippetName', 'Snippet name'),
-                    placeHolder: loc('snippetNamePlaceholder', 'e.g., Error Handler')
+                    placeHolder: loc('snippetNamePlaceholder', 'e.g., Error Handler'),
                 });
 
                 if (snippetName) {
                     const currentLine = selection.start.line;
-                    const annotation = Array.from(this.annotationManager.annotations.values())
-                        .find(ann => ann.file === this.getRelativePath(editor.document.fileName) && ann.line === currentLine);
+                    const annotation = Array.from(this.annotationManager.annotations.values()).find(
+                        (ann) => ann.file === this.getRelativePath(editor.document.fileName) && ann.line === currentLine
+                    );
 
                     if (annotation) {
                         const updatedAnnotation = await snippetManager.addSnippet(
@@ -699,15 +733,15 @@ export class UnifiedAIAdapter {
                             editor.document.languageId
                         );
 
-                        this.annotationManager.annotations.set(annotation.id, updatedAnnotation);
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        await (this.annotationManager as any).saveAnnotations();
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        await (this.annotationManager as any).refreshAnnotations();
+                        await this.persistAnnotationUpdate(annotation, updatedAnnotation, editor.document);
 
-                        vscode.window.showInformationMessage(loc('addedSnippet', `Added snippet '{0}' to annotation`, snippetName));
+                        vscode.window.showInformationMessage(
+                            loc('addedSnippet', `Added snippet '{0}' to annotation`, snippetName)
+                        );
                     } else {
-                        vscode.window.showWarningMessage(loc('noAnnotationAtLine', 'No annotation found at current line to attach snippet'));
+                        vscode.window.showWarningMessage(
+                            loc('noAnnotationAtLine', 'No annotation found at current line to attach snippet')
+                        );
                     }
                 }
                 break;
@@ -716,7 +750,7 @@ export class UnifiedAIAdapter {
             case 'ai': {
                 const context = await vscode.window.showInputBox({
                     prompt: loc('whatKindOfSnippets', 'What kind of snippets do you need?'),
-                    placeHolder: loc('snippetContextPlaceholder', 'e.g., Error handling patterns for async functions')
+                    placeHolder: loc('snippetContextPlaceholder', 'e.g., Error handling patterns for async functions'),
                 });
 
                 if (context) {
@@ -740,7 +774,9 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                             vscode.window.showWarningMessage(loc('noSnippetsGenerated', 'No snippets generated'));
                         }
                     } catch (error) {
-                        vscode.window.showErrorMessage(loc('aiSnippetGenerationFailed', `AI snippet generation failed: {0}`, error));
+                        vscode.window.showErrorMessage(
+                            loc('aiSnippetGenerationFailed', `AI snippet generation failed: {0}`, error)
+                        );
                     }
                 }
                 break;
@@ -750,7 +786,8 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                 const count = await vscode.window.showInputBox({
                     prompt: loc('howManySnippets', 'How many snippets?'),
                     value: '1',
-                    validateInput: (v) => (parseInt(v) > 0 && parseInt(v) <= 5) ? null : loc('enterOneToFive', 'Enter 1-5')
+                    validateInput: (v) =>
+                        parseInt(v) > 0 && parseInt(v) <= 5 ? null : loc('enterOneToFive', 'Enter 1-5'),
                 });
 
                 if (count) {
@@ -759,14 +796,14 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                         const snippetCode = await vscode.window.showInputBox({
                             prompt: loc('snippetCode', `Snippet {0} code`, i + 1),
                             placeHolder: loc('enterCodeForSnippet', 'Enter the code for this snippet'),
-                            ignoreFocusOut: true
+                            ignoreFocusOut: true,
                         });
 
                         if (!snippetCode) continue;
 
                         const snippetDesc = await vscode.window.showInputBox({
                             prompt: loc('snippetDescription', `Snippet {0} description`, i + 1),
-                            placeHolder: loc('whatDoesSnippetDo', 'What does this snippet do?')
+                            placeHolder: loc('whatDoesSnippetDo', 'What does this snippet do?'),
                         });
 
                         const annotation: Partial<Annotation> = {
@@ -777,15 +814,11 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                             tags: ['snippet', 'manual'],
                             snippet: {
                                 code: snippetCode,
-                                language: editor.document.languageId
-                            }
+                                language: editor.document.languageId,
+                            },
                         };
 
-                        await this.createAnnotationFromSuggestion(
-                            annotation,
-                            editor.document,
-                            selection.start.line
-                        );
+                        await this.createAnnotationFromSuggestion(annotation, editor.document, selection.start.line);
                     }
                 }
                 break;
@@ -793,16 +826,23 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         }
     }
 
-    private async batchCreateMixed(editor: vscode.TextEditor, selection: vscode.Selection, selectedText: string | undefined): Promise<void> {
-        const actions = await vscode.window.showQuickPick([
-            { label: loc('annotationsLabel', '$(comment) Annotations'), value: 'annotations', picked: true },
-            { label: loc('templatesLabel', '$(file-code) Templates'), value: 'templates' },
-            { label: loc('linksLabel', '$(link) Links'), value: 'links' },
-            { label: loc('snippetsLabel', '$(code) Snippets'), value: 'snippets' }
-        ], {
-            canPickMany: true,
-            placeHolder: loc('selectWhatToCreate', 'Select what to create (multiple allowed)')
-        });
+    private async batchCreateMixed(
+        editor: vscode.TextEditor,
+        selection: vscode.Selection,
+        selectedText: string | undefined
+    ): Promise<void> {
+        const actions = await vscode.window.showQuickPick(
+            [
+                { label: loc('annotationsLabel', '$(comment) Annotations'), value: 'annotations', picked: true },
+                { label: loc('templatesLabel', '$(file-code) Templates'), value: 'templates' },
+                { label: loc('linksLabel', '$(link) Links'), value: 'links' },
+                { label: loc('snippetsLabel', '$(code) Snippets'), value: 'snippets' },
+            ],
+            {
+                canPickMany: true,
+                placeHolder: loc('selectWhatToCreate', 'Select what to create (multiple allowed)'),
+            }
+        );
 
         if (!actions || actions.length === 0) return;
 
@@ -835,25 +875,24 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             message: suggestion.message || 'Generated annotation',
             file: this.getRelativePath(suggestion.file || document.fileName),
             line: suggestion.line ?? lineNumber,
-            author: this.profileManager.getActiveProfile()?.name ||
-                    vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
+            author:
+                this.profileManager.getActiveProfile()?.name ||
+                vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
             timestamp: new Date().toISOString(),
             severity: suggestion.severity || 'info',
             tags: suggestion.tags || [],
             thread: [],
             kanbanColumn: suggestion.kanbanColumn || 'todo',
             resolved: false,
-            ...(suggestion.priority && { priority: suggestion.priority })
+            ...(suggestion.priority && { priority: suggestion.priority }),
         };
         // Set fileUri/anchor before persisting so the annotation is scoped strictly
         // to this document (no basename collisions across folders).
         await this.annotationManager.populateAnchor(annotation, document, annotation.line);
 
         await this.addAnnotationDirectly(annotation);
-        
-        vscode.window.showInformationMessage(
-            localize('annotationAdded', 'Annotation added successfully')
-        );
+
+        vscode.window.showInformationMessage(localize('annotationAdded', 'Annotation added successfully'));
     }
 
     private async addAnnotationDirectly(annotation: Annotation): Promise<void> {
@@ -870,28 +909,31 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         document?: vscode.TextDocument
     ): Promise<void> {
         let addedCount = 0;
-        
+
         for (const suggestion of annotations) {
             try {
-                const targetDocument = document && (
-                    !suggestion.file ||
-                    this.getRelativePath(suggestion.file) === this.getRelativePath(document.fileName)
-                ) ? document : undefined;
+                const targetDocument =
+                    document &&
+                    (!suggestion.file ||
+                        this.getRelativePath(suggestion.file) === this.getRelativePath(document.fileName))
+                        ? document
+                        : undefined;
                 const line = suggestion.line ?? 0;
                 const annotation: Annotation = {
                     id: this.generateId(),
                     message: suggestion.message || 'Generated annotation',
                     file: this.getRelativePath(suggestion.file || targetDocument?.fileName || ''),
                     line,
-                    author: this.profileManager.getActiveProfile()?.name || 
-                           vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
+                    author:
+                        this.profileManager.getActiveProfile()?.name ||
+                        vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
                     timestamp: new Date().toISOString(),
                     severity: suggestion.severity || 'info',
                     tags: suggestion.tags || [],
                     thread: [],
                     kanbanColumn: suggestion.kanbanColumn || 'todo',
                     resolved: false,
-                    ...(suggestion.priority && { priority: suggestion.priority })
+                    ...(suggestion.priority && { priority: suggestion.priority }),
                 };
 
                 if (targetDocument && line >= 0 && line < targetDocument.lineCount) {
@@ -909,25 +951,22 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         );
     }
 
-    private async reviewAnnotations(
-        annotations: Partial<Annotation>[],
-        document?: vscode.TextDocument
-    ): Promise<void> {
+    private async reviewAnnotations(annotations: Partial<Annotation>[], document?: vscode.TextDocument): Promise<void> {
         const items = annotations.map((ann, _index) => ({
             label: `Line ${ann.line}: ${ann.severity || 'info'}`,
             description: ann.message?.substring(0, 80) + (ann.message && ann.message.length > 80 ? '...' : ''),
             detail: ann.tags?.join(', '),
             annotation: ann,
-            picked: true
+            picked: true,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
             placeHolder: localize('selectAnnotations', 'Select annotations to add'),
-            canPickMany: true
+            canPickMany: true,
         });
 
         if (selected && selected.length > 0) {
-            const toAdd = selected.map(s => s.annotation);
+            const toAdd = selected.map((s) => s.annotation);
             await this.addMultipleAnnotations(toAdd, document);
         }
     }
@@ -936,25 +975,27 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         // Get user profiles and custom AI profiles
         const userProfiles = this.profileManager.getAllProfiles();
         const customAIProfiles = this.aiProfileManager.getCustomProfiles();
-        
+
         // Create items for user profiles
-        const userProfileItems = userProfiles.map(profile => ({
+        const userProfileItems = userProfiles.map((profile) => ({
             label: `$(account) ${profile.name}`,
             description: loc('userProfileDesc', `User Profile - {0}`, profile.role),
-            detail: profile.preferences.claudeProfileId ? loc('linkedTo', `Linked to: {0}`, profile.preferences.claudeProfileId) : loc('noAIProfileLinked', 'No AI profile linked'),
+            detail: profile.preferences.claudeProfileId
+                ? loc('linkedTo', `Linked to: {0}`, profile.preferences.claudeProfileId)
+                : loc('noAIProfileLinked', 'No AI profile linked'),
             type: 'user',
-            profile
+            profile,
         }));
-        
-        // Create items for custom AI profiles  
-        const aiProfileItems = customAIProfiles.map(aiProfile => ({
+
+        // Create items for custom AI profiles
+        const aiProfileItems = customAIProfiles.map((aiProfile) => ({
             label: `$(star) ${aiProfile.name}`,
             description: loc('customAIProfile', 'Custom AI Profile'),
             detail: aiProfile.description,
             type: 'ai',
-            aiProfile
+            aiProfile,
         }));
-        
+
         // Combine all items
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const allItems: any[] = [
@@ -962,14 +1003,18 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             { label: '', kind: vscode.QuickPickItemKind.Separator },
             ...aiProfileItems,
             { label: '', kind: vscode.QuickPickItemKind.Separator },
-            { label: loc('createNewProfile', '$(add) Create New Profile'), description: loc('createNewProfileDesc', 'Create a new user or AI profile'), action: 'create' }
+            {
+                label: loc('createNewProfile', '$(add) Create New Profile'),
+                description: loc('createNewProfileDesc', 'Create a new user or AI profile'),
+                action: 'create',
+            },
         ];
-        
+
         const selected = await vscode.window.showQuickPick(allItems, {
             placeHolder: loc('selectUserOrAIProfile', 'Select a user profile or AI profile'),
-            title: loc('profileSelection', 'Profile Selection')
+            title: loc('profileSelection', 'Profile Selection'),
         });
-        
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if (!selected || (selected as any).kind === vscode.QuickPickItemKind.Separator) {
             return;
@@ -980,7 +1025,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                 [loc('userProfile', 'User Profile'), loc('aiProfile', 'AI Profile')],
                 { placeHolder: loc('whatTypeOfProfile', 'What type of profile would you like to create?') }
             );
-            
+
             if (profileType === loc('userProfile', 'User Profile')) {
                 await this.profileManager.showProfileManager();
             } else if (profileType === loc('aiProfile', 'AI Profile')) {
@@ -988,7 +1033,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             }
             return;
         }
-        
+
         if (selected.type === 'user') {
             // Set active user profile
             await this.profileManager.setActiveProfile(selected.profile.id);
@@ -1000,7 +1045,9 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             if (this.aiProvider) {
                 this.aiProvider.setActiveProfile(selected.aiProfile.id);
             }
-            vscode.window.showInformationMessage(loc('aiProfileActivated', `AI Profile '{0}' activated`, selected.aiProfile.name));
+            vscode.window.showInformationMessage(
+                loc('aiProfileActivated', `AI Profile '{0}' activated`, selected.aiProfile.name)
+            );
         }
     }
 
@@ -1010,17 +1057,19 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             const config = vscode.workspace.getConfiguration('annotation');
             const newProvider = config.get<string>('provider', 'openai');
             const oldProvider = this.aiProvider?.getCurrentProvider();
-            
+
             if (oldProvider !== newProvider) {
                 this.aiProvider = null;
             }
-            
+
             await this.initializeAIProvider();
-            
+
             vscode.window.showInformationMessage(loc('aiProviderUpdated', `AI Provider updated to: {0}`, newProvider));
         } catch (error) {
             console.error('Failed to refresh AI provider:', error);
-            vscode.window.showErrorMessage(loc('failedToUpdateAIProvider', 'Failed to update AI provider. Check your settings and API keys.'));
+            vscode.window.showErrorMessage(
+                loc('failedToUpdateAIProvider', 'Failed to update AI provider. Check your settings and API keys.')
+            );
         }
     }
 
@@ -1037,12 +1086,12 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             { label: loc('providerAzure', 'Azure OpenAI'), value: 'azure' },
             { label: loc('providerMistral', 'MistralAI'), value: 'mistralai' },
             { label: loc('providerGroq', 'Groq'), value: 'groq' },
-            { label: loc('providerOllama', 'Ollama'), value: 'ollama' }
+            { label: loc('providerOllama', 'Ollama'), value: 'ollama' },
         ];
 
         const selectedProvider = await vscode.window.showQuickPick(providers, {
             placeHolder: loc('selectProviderToUpdate', `Select provider to update API key (current: {0})`, provider),
-            title: loc('updateAIProviderAPIKey', 'Update AI Provider API Key')
+            title: loc('updateAIProviderAPIKey', 'Update AI Provider API Key'),
         });
 
         if (!selectedProvider) {
@@ -1050,12 +1099,15 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         }
 
         // Ask how to store the key
-        const storageMethod = await vscode.window.showQuickPick([
-            { label: loc('storeInSettings', 'Store in Settings (visible in settings.json)'), value: 'settings' },
-            { label: loc('storeSecurely', 'Store Securely (VS Code secret storage)'), value: 'secrets' }
-        ], {
-            placeHolder: loc('howToStoreApiKey', 'How would you like to store the API key?')
-        });
+        const storageMethod = await vscode.window.showQuickPick(
+            [
+                { label: loc('storeInSettings', 'Store in Settings (visible in settings.json)'), value: 'settings' },
+                { label: loc('storeSecurely', 'Store Securely (VS Code secret storage)'), value: 'secrets' },
+            ],
+            {
+                placeHolder: loc('howToStoreApiKey', 'How would you like to store the API key?'),
+            }
+        );
 
         if (!storageMethod) {
             return;
@@ -1065,10 +1117,13 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         const currentKey = apiKeys[selectedProvider.value] || '';
         const apiKey = await vscode.window.showInputBox({
             prompt: loc('enterApiKeyFor', `Enter API key for {0}`, selectedProvider.label),
-            placeHolder: selectedProvider.value === 'ollama' ? loc('leaveEmptyForOllama', 'Leave empty for local Ollama') : 'sk-...',
+            placeHolder:
+                selectedProvider.value === 'ollama'
+                    ? loc('leaveEmptyForOllama', 'Leave empty for local Ollama')
+                    : 'sk-...',
             password: true,
             value: currentKey,
-            ignoreFocusOut: true
+            ignoreFocusOut: true,
         });
 
         if (apiKey === undefined) {
@@ -1079,22 +1134,30 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             if (storageMethod.value === 'secrets') {
                 // Store in VS Code secrets
                 await this.context.secrets.store(`${selectedProvider.value}-api-key`, apiKey);
-                
+
                 // Remove from settings if it exists
                 const updatedKeys = { ...apiKeys };
                 delete updatedKeys[selectedProvider.value];
                 await llmConfig.update('apiKeys', updatedKeys, vscode.ConfigurationTarget.Global);
-                
+
                 vscode.window.showInformationMessage(
-                    loc('apiKeyStoredSecurely', `API key for {0} stored securely. Refreshing provider...`, selectedProvider.label)
+                    loc(
+                        'apiKeyStoredSecurely',
+                        `API key for {0} stored securely. Refreshing provider...`,
+                        selectedProvider.label
+                    )
                 );
             } else {
                 // Store in settings
                 const updatedKeys = { ...apiKeys, [selectedProvider.value]: apiKey };
                 await llmConfig.update('apiKeys', updatedKeys, vscode.ConfigurationTarget.Global);
-                
+
                 vscode.window.showInformationMessage(
-                    loc('apiKeyUpdatedInSettings', `API key for {0} updated in settings. Refreshing provider...`, selectedProvider.label)
+                    loc(
+                        'apiKeyUpdatedInSettings',
+                        `API key for {0} updated in settings. Refreshing provider...`,
+                        selectedProvider.label
+                    )
                 );
             }
 
@@ -1110,7 +1173,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
     private async refreshAIProfiles(): Promise<void> {
         // Reload profiles from disk first
         await this.aiProfileManager.reloadProfiles();
-        
+
         if (!this.aiProvider) {
             await this.initializeAIProvider();
             // Don't return - continue to add custom profiles to the newly initialized provider
@@ -1125,7 +1188,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         // Clear existing custom profiles
         const builtInProfiles = ['developer', 'analyst', 'architect'];
         const allProfiles = this.aiProvider.getProfiles();
-        
+
         // Remove all custom profiles (non-built-in)
         for (const profile of allProfiles) {
             if (!builtInProfiles.includes(profile.id)) {
@@ -1135,7 +1198,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
 
         // Re-add all custom profiles from AIProfileManager
         const customProfiles = this.aiProfileManager.getCustomProfiles();
-        
+
         for (const profile of customProfiles) {
             this.aiProvider.addCustomProfile(profile);
         }
@@ -1144,11 +1207,11 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
     private parseSnippetsFromResponse(response: string): Partial<Annotation>[] {
         // Parse AI response to extract code snippets
         const annotations: Partial<Annotation>[] = [];
-        
+
         // Simple pattern matching for code blocks
         const codeBlockRegex = /```(\w+)?\n([\s\S]*?)```/g;
         const titleRegex = /(?:^|\n)(?:#+\s*)?(\w[\w\s]+)(?:\n|:)/g;
-        
+
         let match;
         let lastTitle = 'Code Snippet';
 
@@ -1168,16 +1231,118 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                 tags: ['snippet', 'ai-generated'],
                 snippet: {
                     code,
-                    language
-                }
+                    language,
+                },
             });
         }
-        
+
         return annotations;
     }
 
     public dispose(): void {
         // Remove event listeners
         this.aiProfileManager.removeAllListeners('profilesChanged');
+    }
+
+    // ── Lot 5 R2 — Worktree C migration helpers ──────────────────────────
+    //
+    // The two helpers below replace the deprecated mutation pattern
+    //
+    //     this.annotationManager.annotations.set(id, updated);
+    //     await (manager as any).saveAnnotations();
+    //
+    // which bypassed the transactional journal AND undo/redo mirroring.
+    // The new path routes through `AnnotationStore.upsert(...)`, which
+    // appends an `OpEntry { kind: 'upsert' }` so undo/redo can roll the
+    // edit back. While extension.ts still wires the legacy manager, the
+    // bridge falls back to the old mutation so behaviour stays unchanged
+    // until R2 is fully landed.
+
+    /**
+     * Persist a snippet (or any field) update on an existing annotation.
+     * - When the new AnnotationStore is wired AND the annotation is tracked
+     *   there, route through `store.upsert` so the journal records the
+     *   change and undo/redo mirroring stays correct.
+     * - Otherwise fall back to the legacy direct-Map mutation that was at
+     *   the original :702 site.
+     *
+     * The bridge is the focal CRITICAL fix flagged by the migration spec —
+     * without it, the journal silently drifts whenever a user attaches a
+     * snippet, and a subsequent undo cannot reverse the snippet attachment.
+     */
+    private async persistAnnotationUpdate(
+        original: Annotation,
+        updated: Annotation,
+        document: vscode.TextDocument
+    ): Promise<void> {
+        if (this.store && this.store.get(original.id) !== undefined) {
+            const v2Patch = this.legacyToV2Snapshot(updated, document);
+            this.store.upsert(v2Patch);
+            return;
+        }
+        // Legacy fallback — preserved verbatim from the pre-migration site.
+        this.annotationManager.annotations.set(original.id, updated);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (this.annotationManager as any).saveAnnotations();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (this.annotationManager as any).refreshAnnotations();
+    }
+
+    /**
+     * Convert a legacy `Annotation` (from `src/common/types.ts`) into the
+     * shape `AnnotationStore.upsert` expects. Offsets are derived from the
+     * legacy `line` field via the document; lineHash and context are
+     * recaptured from the live document so the fallback resolver paths
+     * inside the store have a usable hint. `origin` defaults to `manual`
+     * when the legacy annotation does not declare one.
+     */
+    private legacyToV2Snapshot(
+        annotation: Annotation,
+        document: vscode.TextDocument
+    ): Omit<AnnotationV2, 'schemaVersion' | 'state'> & {
+        schemaVersion?: typeof ANNOTATION_SCHEMA_VERSION;
+        state?: AnnotationV2['state'];
+    } {
+        const safeLine = Math.max(0, Math.min(annotation.line, document.lineCount - 1));
+        const startOffset = document.offsetAt(new vscode.Position(safeLine, 0));
+        const lineLength = document.lineAt(safeLine).text.length;
+        const endOffset = startOffset + lineLength;
+        const captured = captureAnchor(document as unknown as TextDocumentLike, safeLine, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        const fileUri = annotation.fileUri ?? document.uri.toString();
+        const file = annotation.file ?? this.getRelativePath(document.fileName);
+        return {
+            id: annotation.id,
+            fileUri,
+            file,
+            startOffset,
+            endOffset,
+            lineHash: annotation.lineHash ?? captured.lineHash,
+            contextBefore: annotation.contextBefore ?? captured.contextBefore,
+            contextAfter: annotation.contextAfter ?? captured.contextAfter,
+            // Legacy `Annotation.origin.kind === 'copy-paste'` maps to V2
+            // `'paste'`. Anything else (or missing) defaults to manual.
+            origin:
+                annotation.origin?.kind === 'copy-paste'
+                    ? { kind: 'paste', sourceOpId: annotation.origin.sourceId }
+                    : { kind: 'manual' },
+            message: annotation.message,
+            author: annotation.author,
+            timestamp: annotation.timestamp,
+            thread: annotation.thread,
+            tags: annotation.tags,
+            pinned: annotation.pinned,
+            priority: annotation.priority,
+            severity: annotation.severity,
+            resolved: annotation.resolved,
+            linkedAnnotations: annotation.linkedAnnotations,
+            template: annotation.template,
+            reviewState: annotation.reviewState,
+            kanbanColumn: annotation.kanbanColumn,
+            snippet: annotation.snippet,
+            languageId: annotation.languageId ?? document.languageId,
+        };
     }
 }

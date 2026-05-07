@@ -21,7 +21,7 @@ export class NavigationStack {
 
     public push(id: string) {
         // remove duplicates
-        this.history = this.history.filter(item => item !== id);
+        this.history = this.history.filter((item) => item !== id);
 
         if (this.position > 0) {
             // drop forward history when navigating to a new item
@@ -59,5 +59,24 @@ export class NavigationStack {
 
     public getStack(): string[] {
         return [...this.history];
+    }
+
+    /**
+     * Remove every occurrence of `id` from the stack. Used by consumers that
+     * subscribe to `AnnotationStore.onDidDispose` so a TTL-expired or
+     * explicitly-disposed annotation cannot keep a tombstone in the
+     * navigation history. Idempotent: no-op when the id is absent.
+     */
+    public removeId(id: string): void {
+        const before = this.history.length;
+        this.history = this.history.filter((entry) => entry !== id);
+        if (this.history.length === before) {
+            return;
+        }
+        if (this.position >= this.history.length) {
+            this.position = this.history.length === 0 ? 0 : this.history.length - 1;
+        }
+        this.save();
+        this._onDidChange.fire();
     }
 }

@@ -20,7 +20,9 @@ export class AIProfileManager extends EventEmitter {
         const storagePath = context.globalStorageUri?.fsPath || context.globalStoragePath || context.extensionPath;
         this.profilesFile = path.join(storagePath, 'ai-profiles.json');
         // Load profiles asynchronously and store the promise
-        this.profilesLoaded = this.loadProfiles().catch((err: unknown) => getLogger().error('Failed to load AI profiles on startup', err));
+        this.profilesLoaded = this.loadProfiles().catch((err: unknown) =>
+            getLogger().error('Failed to load AI profiles on startup', err)
+        );
     }
 
     public async ensureLoaded(): Promise<void> {
@@ -68,32 +70,32 @@ export class AIProfileManager extends EventEmitter {
             {
                 label: loc('createNewAIProfile', '$(add) Create New Profile'),
                 description: loc('createCustomAIProfile', 'Create a custom AI profile'),
-                action: 'create'
+                action: 'create',
             },
             {
                 label: loc('editProfile', '$(edit) Edit Profile'),
                 description: loc('modifyExistingProfile', 'Modify an existing profile'),
-                action: 'edit'
+                action: 'edit',
             },
             {
                 label: loc('deleteProfile', '$(trash) Delete Profile'),
                 description: loc('removeCustomProfile', 'Remove a custom profile'),
-                action: 'delete'
+                action: 'delete',
             },
             {
                 label: loc('exportProfiles', '$(export) Export Profiles'),
                 description: loc('exportProfilesToFile', 'Export profiles to file'),
-                action: 'export'
+                action: 'export',
             },
             {
                 label: loc('importProfiles', '$(cloud-download) Import Profiles'),
                 description: loc('importProfilesFromFile', 'Import profiles from file'),
-                action: 'import'
-            }
+                action: 'import',
+            },
         ];
 
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: loc('manageAIProfiles', 'Manage AI Profiles')
+            placeHolder: loc('manageAIProfiles', 'Manage AI Profiles'),
         });
 
         if (!selected) return;
@@ -118,7 +120,6 @@ export class AIProfileManager extends EventEmitter {
     }
 
     private async createProfile(): Promise<void> {
-        
         // Get profile ID
         const id = await vscode.window.showInputBox({
             prompt: loc('profileIdPrompt', 'Profile ID (lowercase, no spaces)'),
@@ -128,7 +129,7 @@ export class AIProfileManager extends EventEmitter {
                 if (!/^[a-z0-9-]+$/.test(value)) return loc('idFormat', 'Only lowercase letters, numbers, and hyphens');
                 if (this.customProfiles.has(value)) return loc('profileIdExists', 'Profile ID already exists');
                 return null;
-            }
+            },
         });
 
         if (!id) {
@@ -138,7 +139,7 @@ export class AIProfileManager extends EventEmitter {
         // Get profile name
         const name = await vscode.window.showInputBox({
             prompt: loc('profileNamePrompt', 'Profile Name'),
-            placeHolder: loc('profileNamePlaceholder', 'Security Auditor')
+            placeHolder: loc('profileNamePlaceholder', 'Security Auditor'),
         });
 
         if (!name) return;
@@ -146,7 +147,7 @@ export class AIProfileManager extends EventEmitter {
         // Get description
         const description = await vscode.window.showInputBox({
             prompt: loc('profileDescriptionPrompt', 'Profile Description'),
-            placeHolder: loc('profileDescriptionPlaceholder', 'Focus on security vulnerabilities and best practices')
+            placeHolder: loc('profileDescriptionPlaceholder', 'Focus on security vulnerabilities and best practices'),
         });
 
         if (!description) return;
@@ -156,7 +157,7 @@ export class AIProfileManager extends EventEmitter {
             prompt: loc('analyzePromptPrompt', 'Analyze Prompt (what the AI should look for)'),
             placeHolder: loc('analyzePromptPlaceholder', 'You are a security expert. Look for vulnerabilities...'),
             ignoreFocusOut: true,
-            validateInput: (value) => value ? null : loc('promptRequired', 'Prompt is required')
+            validateInput: (value) => (value ? null : loc('promptRequired', 'Prompt is required')),
         });
 
         if (!analyzePrompt) return;
@@ -165,7 +166,7 @@ export class AIProfileManager extends EventEmitter {
         const prefix = await vscode.window.showInputBox({
             prompt: loc('annotationPrefixPrompt', 'Annotation Prefix'),
             placeHolder: '[SEC]',
-            value: `[${name.substring(0, 4).toUpperCase()}]`
+            value: `[${name.substring(0, 4).toUpperCase()}]`,
         });
 
         if (!prefix) return;
@@ -173,22 +174,25 @@ export class AIProfileManager extends EventEmitter {
         // Get tags
         const tagsInput = await vscode.window.showInputBox({
             prompt: loc('defaultTagsPrompt', 'Default Tags (comma-separated)'),
-            placeHolder: loc('defaultTagsPlaceholder', 'security, vulnerability, audit')
+            placeHolder: loc('defaultTagsPlaceholder', 'security, vulnerability, audit'),
         });
 
         if (!tagsInput) return;
 
-        const tags = tagsInput.split(',').map(t => t.trim()).filter(t => t);
+        const tags = tagsInput
+            .split(',')
+            .map((t) => t.trim())
+            .filter((t) => t);
 
         // Get severity
         const severityItems = [
             { label: loc('severityError', 'Error'), value: 'error' },
             { label: loc('severityWarning', 'Warning'), value: 'warning' },
-            { label: loc('severityInfo', 'Info'), value: 'info' }
+            { label: loc('severityInfo', 'Info'), value: 'info' },
         ];
 
         const severity = await vscode.window.showQuickPick(severityItems, {
-            placeHolder: loc('defaultSeverity', 'Default Severity')
+            placeHolder: loc('defaultSeverity', 'Default Severity'),
         });
 
         if (!severity) return;
@@ -197,11 +201,11 @@ export class AIProfileManager extends EventEmitter {
         const priorityItems = [
             { label: loc('priorityHigh', 'High (2)'), value: 2 },
             { label: loc('priorityMedium', 'Medium (1)'), value: 1 },
-            { label: loc('priorityLow', 'Low (0)'), value: 0 }
+            { label: loc('priorityLow', 'Low (0)'), value: 0 },
         ];
 
         const priority = await vscode.window.showQuickPick(priorityItems, {
-            placeHolder: loc('defaultPriority', 'Default Priority')
+            placeHolder: loc('defaultPriority', 'Default Priority'),
         });
 
         // Create the profile
@@ -212,24 +216,26 @@ export class AIProfileManager extends EventEmitter {
             prompts: {
                 analyze: analyzePrompt,
                 suggest: `Based on the ${name.toLowerCase()} perspective, suggest improvements.`,
-                review: `Review this code from a ${name.toLowerCase()} standpoint.`
+                review: `Review this code from a ${name.toLowerCase()} standpoint.`,
             },
             annotationDefaults: {
                 prefix,
                 tags,
                 severity: severity.value as 'info' | 'warning' | 'error',
-                priority: priority?.value
-            }
+                priority: priority?.value,
+            },
         };
 
         this.customProfiles.set(id, profile);
-        
+
         await this.saveProfiles();
 
         // Emit event that profiles have changed
         this.emit('profilesChanged');
-        
-        vscode.window.showInformationMessage(loc('profileCreatedSuccessfully', `Profile "{0}" created successfully!`, name));
+
+        vscode.window.showInformationMessage(
+            loc('profileCreatedSuccessfully', `Profile "{0}" created successfully!`, name)
+        );
     }
 
     private async editProfile(): Promise<void> {
@@ -239,14 +245,14 @@ export class AIProfileManager extends EventEmitter {
             return;
         }
 
-        const items = profiles.map(p => ({
+        const items = profiles.map((p) => ({
             label: p.name,
             description: p.description,
-            profile: p
+            profile: p,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: loc('selectProfileToEdit', 'Select profile to edit')
+            placeHolder: loc('selectProfileToEdit', 'Select profile to edit'),
         });
 
         if (!selected) return;
@@ -255,7 +261,7 @@ export class AIProfileManager extends EventEmitter {
         const newPrompt = await vscode.window.showInputBox({
             prompt: loc('editAnalyzePrompt', 'Edit Analyze Prompt'),
             value: selected.profile.prompts.analyze,
-            ignoreFocusOut: true
+            ignoreFocusOut: true,
         });
 
         if (newPrompt !== undefined) {
@@ -274,14 +280,14 @@ export class AIProfileManager extends EventEmitter {
             return;
         }
 
-        const items = profiles.map(p => ({
+        const items = profiles.map((p) => ({
             label: p.name,
             description: p.description,
-            profile: p
+            profile: p,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: loc('selectProfileToDelete', 'Select profile to delete')
+            placeHolder: loc('selectProfileToDelete', 'Select profile to delete'),
         });
 
         if (!selected) return;
@@ -310,14 +316,16 @@ export class AIProfileManager extends EventEmitter {
         const uri = await vscode.window.showSaveDialog({
             defaultUri: vscode.Uri.file('ai-profiles.json'),
             filters: {
-                'JSON': ['json']
-            }
+                JSON: ['json'],
+            },
         });
 
         if (uri) {
             try {
                 await fs.writeJson(uri.fsPath, { profiles }, { spaces: 2 });
-                vscode.window.showInformationMessage(loc('profilesExportedSuccessfully', 'Profiles exported successfully!'));
+                vscode.window.showInformationMessage(
+                    loc('profilesExportedSuccessfully', 'Profiles exported successfully!')
+                );
             } catch (error) {
                 vscode.window.showErrorMessage(loc('failedToExportProfiles', 'Failed to export profiles'));
             }
@@ -330,8 +338,8 @@ export class AIProfileManager extends EventEmitter {
             canSelectFolders: false,
             canSelectMany: false,
             filters: {
-                'JSON': ['json']
-            }
+                JSON: ['json'],
+            },
         });
 
         if (uri && uri[0]) {
@@ -346,11 +354,18 @@ export class AIProfileManager extends EventEmitter {
                 for (const profile of raw.profiles) {
                     // Validate required string fields with length limits.
                     const idOk = typeof profile.id === 'string' && profile.id.length > 0 && profile.id.length <= 64;
-                    const nameOk = typeof profile.name === 'string' && profile.name.length > 0 && profile.name.length <= 128;
-                    if (!idOk || !nameOk) { skipped++; continue; }
+                    const nameOk =
+                        typeof profile.name === 'string' && profile.name.length > 0 && profile.name.length <= 128;
+                    if (!idOk || !nameOk) {
+                        skipped++;
+                        continue;
+                    }
                     // Validate optional prompt strings: must be strings within length limit to prevent prompt injection.
                     if (profile.prompts !== undefined) {
-                        if (typeof profile.prompts !== 'object' || profile.prompts === null) { skipped++; continue; }
+                        if (typeof profile.prompts !== 'object' || profile.prompts === null) {
+                            skipped++;
+                            continue;
+                        }
                         for (const key of Object.keys(profile.prompts)) {
                             if (typeof profile.prompts[key] !== 'string' || profile.prompts[key].length > 4096) {
                                 skipped++;
@@ -367,9 +382,18 @@ export class AIProfileManager extends EventEmitter {
                 await this.saveProfiles();
                 this.emit('profilesChanged');
                 if (skipped > 0) {
-                    vscode.window.showWarningMessage(loc('importedProfilesWithSkipped', `Imported {0} profiles; {1} skipped (failed validation).`, imported, skipped));
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'importedProfilesWithSkipped',
+                            `Imported {0} profiles; {1} skipped (failed validation).`,
+                            imported,
+                            skipped
+                        )
+                    );
                 } else {
-                    vscode.window.showInformationMessage(loc('importedProfilesSuccessfully', `Imported {0} profiles successfully!`, data.profiles.length));
+                    vscode.window.showInformationMessage(
+                        loc('importedProfilesSuccessfully', `Imported {0} profiles successfully!`, data.profiles.length)
+                    );
                 }
             } catch (error) {
                 vscode.window.showErrorMessage(loc('failedToImportProfiles', 'Failed to import profiles'));

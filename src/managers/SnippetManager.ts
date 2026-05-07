@@ -1,7 +1,15 @@
+// SPDX-License-Identifier: MPL-2.0
+//
+// SnippetManager — singleton service for code snippets attached to
+// annotations. Lot 5 R2 worktree B: type-swapped from `Annotation` to
+// `AnnotationV2`. The 1-based `annotation.line` field no longer exists in
+// v2; line resolution flows through `editor.document.positionAt(annotation.startOffset).line`
+// (0-based, native).
+
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { Annotation } from '../common/types';
 import { localize } from '../common/localize';
+import type { AnnotationV2 } from '../transactional/types';
 
 export interface SnippetVariable {
     index: number;
@@ -78,24 +86,22 @@ export class SnippetManager {
     }
 
     /**
-     * Adds a code snippet to an annotation
+     * Adds a code snippet to an annotation. Returns a new AnnotationV2 with
+     * the `snippet` field populated; does NOT mutate the input or the store.
+     * Callers wishing to persist must route through `store.update(id, { snippet })`.
      */
-    public async addSnippet(
-        annotation: Annotation,
-        code: string,
-        language?: string
-    ): Promise<Annotation> {
+    public async addSnippet(annotation: AnnotationV2, code: string, language?: string): Promise<AnnotationV2> {
         const detectedLanguage = language || this.detectLanguage(annotation.file);
-        
+
         // Process snippet variables
         const processedCode = this.processSnippetVariables(code);
-        
+
         return {
             ...annotation,
             snippet: {
                 code: processedCode,
-                language: detectedLanguage
-            }
+                language: detectedLanguage,
+            },
         };
     }
 
@@ -103,7 +109,7 @@ export class SnippetManager {
      * Previews how a snippet will look when applied
      */
     public async previewSnippet(
-        annotation: Annotation,
+        annotation: AnnotationV2,
         editor: vscode.TextEditor
     ): Promise<SnippetPreview | undefined> {
         if (!annotation.snippet) {
@@ -111,8 +117,8 @@ export class SnippetManager {
         }
 
         const document = editor.document;
-        const line = annotation.line - 1;
-        
+        const line = document.positionAt(annotation.startOffset).line;
+
         if (line < 0 || line >= document.lineCount) {
             return undefined;
         }
@@ -120,36 +126,33 @@ export class SnippetManager {
         // Get the current line content
         const currentLine = document.lineAt(line);
         const originalCode = currentLine.text;
-        
+
         // Get the snippet code without variables
         const modifiedCode = this.expandSnippetVariables(annotation.snippet.code);
-        
+
         // Generate diff
         const diff = this.generateDiff(originalCode, modifiedCode);
-        
+
         return {
             original: originalCode,
             modified: modifiedCode,
             diff,
-            language: annotation.snippet.language
+            language: annotation.snippet.language,
         };
     }
 
     /**
      * Applies a snippet to replace code in the editor
      */
-    public async applySnippet(
-        annotation: Annotation,
-        editor: vscode.TextEditor
-    ): Promise<boolean> {
+    public async applySnippet(annotation: AnnotationV2, editor: vscode.TextEditor): Promise<boolean> {
         if (!annotation.snippet) {
             vscode.window.showErrorMessage(localize('noSnippet', 'No snippet found in annotation'));
             return false;
         }
 
         const document = editor.document;
-        const line = annotation.line - 1;
-        
+        const line = document.positionAt(annotation.startOffset).line;
+
         if (line < 0 || line >= document.lineCount) {
             vscode.window.showErrorMessage(localize('invalidLine', 'Invalid line number'));
             return false;
@@ -160,20 +163,22 @@ export class SnippetManager {
             const currentLine = document.lineAt(line);
             const range = currentLine.range;
             const originalCode = currentLine.text;
-            
+
             // Prepare the snippet for insertion
             const snippetString = new vscode.SnippetString(annotation.snippet.code);
-            
+
             // Store in history before applying
             this.addToHistory(annotation, originalCode, annotation.snippet.code, document.uri.fsPath, line, range);
-            
+
             // Apply the snippet
             await editor.insertSnippet(snippetString, range);
-            
+
             vscode.window.showInformationMessage(localize('snippetApplied', 'Snippet applied successfully'));
             return true;
         } catch (error) {
-            vscode.window.showErrorMessage(localize('snippetError', 'Failed to apply snippet: {0}', (error as Error).message));
+            vscode.window.showErrorMessage(
+                localize('snippetError', 'Failed to apply snippet: {0}', (error as Error).message)
+            );
             return false;
         }
     }
@@ -188,7 +193,10 @@ export class SnippetManager {
     /**
      * Validates a snippet for syntax and variables
      */
-    public validateSnippet(code: string, language: string): {
+    public validateSnippet(
+        code: string,
+        language: string
+    ): {
         valid: boolean;
         errors: string[];
         warnings: string[];
@@ -197,34 +205,34 @@ export class SnippetManager {
         const errors: string[] = [];
         const warnings: string[] = [];
         const variables: SnippetVariable[] = [];
-        
+
         // Check for balanced brackets/braces based on language
         if (!this.checkBalancedDelimiters(code, language)) {
             errors.push(localize('unbalancedDelimiters', 'Unbalanced brackets or braces detected'));
         }
-        
+
         // Extract and validate snippet variables
         const variablePattern = /\$\{(\d+):([^}]+)\}|\$(\d+)/g;
         let match;
         const seenIndices = new Set<number>();
-        
+
         while ((match = variablePattern.exec(code)) !== null) {
             const index = parseInt(match[1] || match[3]);
             const placeholder = match[2] || '';
-            
+
             if (seenIndices.has(index)) {
                 warnings.push(localize('duplicateVariable', 'Duplicate variable index: {0}', index));
             }
             seenIndices.add(index);
-            
+
             variables.push({
                 index,
                 name: `var${index}`,
                 placeholder,
-                defaultValue: placeholder
+                defaultValue: placeholder,
             });
         }
-        
+
         // Check for sequential variable indices
         if (variables.length > 0) {
             const sortedIndices = Array.from(seenIndices).sort((a, b) => a - b);
@@ -234,15 +242,15 @@ export class SnippetManager {
                 }
             }
         }
-        
+
         // Language-specific validations
         this.performLanguageSpecificValidation(code, language, errors, warnings);
-        
+
         return {
             valid: errors.length === 0,
             errors,
             warnings,
-            variables
+            variables,
         };
     }
 
@@ -253,7 +261,7 @@ export class SnippetManager {
         if (file) {
             return this.snippetHistory.get(file) || [];
         }
-        
+
         // Return all history entries
         const allHistory: SnippetHistoryEntry[] = [];
         for (const entries of this.snippetHistory.values()) {
@@ -285,27 +293,29 @@ export class SnippetManager {
 
         const lastEntry = history[history.length - 1];
         const editor = vscode.window.activeTextEditor;
-        
+
         if (!editor || editor.document.uri.fsPath !== file) {
             vscode.window.showErrorMessage(localize('wrongFile', 'Please open the target file in the editor'));
             return false;
         }
 
         try {
-            await editor.edit(editBuilder => {
+            await editor.edit((editBuilder) => {
                 editBuilder.replace(lastEntry.range, lastEntry.originalCode);
             });
-            
+
             // Remove from history
             history.pop();
             if (history.length === 0) {
                 this.snippetHistory.delete(file);
             }
-            
+
             vscode.window.showInformationMessage(localize('snippetUndone', 'Snippet application undone'));
             return true;
         } catch (error) {
-            vscode.window.showErrorMessage(localize('undoError', 'Failed to undo snippet: {0}', (error as Error).message));
+            vscode.window.showErrorMessage(
+                localize('undoError', 'Failed to undo snippet: {0}', (error as Error).message)
+            );
             return false;
         }
     }
@@ -338,16 +348,16 @@ export class SnippetManager {
      */
     private generateDiff(original: string, modified: string): string[] {
         const diff: string[] = [];
-        
+
         if (original === modified) {
             diff.push('  ' + original);
             return diff;
         }
-        
+
         // Simple line-based diff
         diff.push('- ' + original);
         diff.push('+ ' + modified);
-        
+
         return diff;
     }
 
@@ -360,10 +370,10 @@ export class SnippetManager {
             '[': ']',
             '(': ')',
         };
-        
+
         // Skip string literals and comments based on language
         const cleanCode = this.removeStringLiteralsAndComments(code, language);
-        
+
         const stack: string[] = [];
         for (const char of cleanCode) {
             if (Object.keys(pairs).includes(char)) {
@@ -375,7 +385,7 @@ export class SnippetManager {
                 }
             }
         }
-        
+
         return stack.length === 0;
     }
 
@@ -385,14 +395,29 @@ export class SnippetManager {
     private removeStringLiteralsAndComments(code: string, language: string): string {
         // Simplified implementation - in production, use proper lexer
         let cleanCode = code;
-        
+
         // Remove string literals
         cleanCode = cleanCode.replace(/"([^"\\]|\\.)*"/g, '');
         cleanCode = cleanCode.replace(/'([^'\\]|\\.)*'/g, '');
         cleanCode = cleanCode.replace(/`([^`\\]|\\.)*`/g, '');
-        
+
         // Remove comments based on language
-        if (['javascript', 'typescript', 'java', 'c', 'cpp', 'csharp', 'go', 'rust', 'swift', 'kotlin', 'scala', 'dart'].includes(language)) {
+        if (
+            [
+                'javascript',
+                'typescript',
+                'java',
+                'c',
+                'cpp',
+                'csharp',
+                'go',
+                'rust',
+                'swift',
+                'kotlin',
+                'scala',
+                'dart',
+            ].includes(language)
+        ) {
             cleanCode = cleanCode.replace(/\/\/.*$/gm, '');
             cleanCode = cleanCode.replace(/\/\*[\s\S]*?\*\//g, '');
         } else if (['python', 'ruby', 'shell', 'yaml', 'r'].includes(language)) {
@@ -400,30 +425,35 @@ export class SnippetManager {
         } else if (language === 'sql') {
             cleanCode = cleanCode.replace(/--.*$/gm, '');
         }
-        
+
         return cleanCode;
     }
 
     /**
      * Performs language-specific validation
      */
-    private performLanguageSpecificValidation(code: string, language: string, errors: string[], warnings: string[]): void {
+    private performLanguageSpecificValidation(
+        code: string,
+        language: string,
+        errors: string[],
+        warnings: string[]
+    ): void {
         // Add language-specific checks here
         switch (language) {
             case 'python': {
                 const lines = code.split('\n');
-                const indentations = lines.map(line => line.match(/^(\s*)/)?.[1].length || 0);
-                const nonZeroIndents = indentations.filter(i => i > 0);
+                const indentations = lines.map((line) => line.match(/^(\s*)/)?.[1].length || 0);
+                const nonZeroIndents = indentations.filter((i) => i > 0);
                 if (nonZeroIndents.length > 0) {
                     const firstIndent = nonZeroIndents[0];
-                    const inconsistent = nonZeroIndents.some(i => i % firstIndent !== 0);
+                    const inconsistent = nonZeroIndents.some((i) => i % firstIndent !== 0);
                     if (inconsistent) {
                         warnings.push(localize('inconsistentIndentation', 'Inconsistent indentation detected'));
                     }
                 }
                 break;
             }
-                
+
             case 'javascript':
             case 'typescript':
                 // Check for missing semicolons (optional warning)
@@ -438,7 +468,7 @@ export class SnippetManager {
      * Adds an entry to snippet history
      */
     private addToHistory(
-        annotation: Annotation,
+        annotation: AnnotationV2,
         originalCode: string,
         appliedCode: string,
         file: string,
@@ -452,13 +482,13 @@ export class SnippetManager {
             appliedCode,
             file,
             line,
-            range
+            range,
         };
-        
+
         if (!this.snippetHistory.has(file)) {
             this.snippetHistory.set(file, []);
         }
-        
+
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         this.snippetHistory.get(file)!.push(entry);
 
@@ -489,16 +519,18 @@ export class SnippetManager {
         try {
             const historyObject = JSON.parse(json);
             this.snippetHistory.clear();
-            
+
             for (const [file, entries] of Object.entries(historyObject)) {
                 if (Array.isArray(entries)) {
                     this.snippetHistory.set(file, entries as SnippetHistoryEntry[]);
                 }
             }
-            
+
             return true;
         } catch (error) {
-            vscode.window.showErrorMessage(localize('importError', 'Failed to import history: {0}', (error as Error).message));
+            vscode.window.showErrorMessage(
+                localize('importError', 'Failed to import history: {0}', (error as Error).message)
+            );
             return false;
         }
     }

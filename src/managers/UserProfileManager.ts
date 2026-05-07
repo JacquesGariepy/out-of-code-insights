@@ -42,7 +42,7 @@ export class UserProfileManager extends EventEmitter {
     private async initialize(): Promise<void> {
         // Load profiles from workspace state
         const savedProfiles = this.context.workspaceState.get<UserProfile[]>('userProfiles', []);
-        savedProfiles.forEach(profile => this.profiles.set(profile.id, profile));
+        savedProfiles.forEach((profile) => this.profiles.set(profile.id, profile));
 
         // Create default profiles if none exist
         if (this.profiles.size === 0) {
@@ -76,15 +76,15 @@ export class UserProfileManager extends EventEmitter {
                 defaultPriority: 'medium',
                 autoSuggestEnabled: true,
                 preferredProvider: 'claude',
-                claudeProfileId: 'developer'
+                claudeProfileId: 'developer',
             },
             permissions: {
                 canCreateAnnotations: true,
                 canEditAllAnnotations: true,
                 canDeleteAnnotations: true,
                 canExportAnnotations: true,
-                canUseAI: true
-            }
+                canUseAI: true,
+            },
         };
 
         // Analyst Profile
@@ -99,15 +99,15 @@ export class UserProfileManager extends EventEmitter {
                 defaultPriority: 'low',
                 autoSuggestEnabled: true,
                 preferredProvider: 'claude',
-                claudeProfileId: 'analyst'
+                claudeProfileId: 'analyst',
             },
             permissions: {
                 canCreateAnnotations: true,
                 canEditAllAnnotations: false,
                 canDeleteAnnotations: false,
                 canExportAnnotations: true,
-                canUseAI: true
-            }
+                canUseAI: true,
+            },
         };
 
         // Architect Profile
@@ -122,15 +122,15 @@ export class UserProfileManager extends EventEmitter {
                 defaultPriority: 'high',
                 autoSuggestEnabled: true,
                 preferredProvider: 'claude',
-                claudeProfileId: 'architect'
+                claudeProfileId: 'architect',
             },
             permissions: {
                 canCreateAnnotations: true,
                 canEditAllAnnotations: true,
                 canDeleteAnnotations: true,
                 canExportAnnotations: true,
-                canUseAI: true
-            }
+                canUseAI: true,
+            },
         };
 
         this.profiles.set(developerProfile.id, developerProfile);
@@ -159,7 +159,7 @@ export class UserProfileManager extends EventEmitter {
     public async createProfile(profile: Omit<UserProfile, 'id'>): Promise<UserProfile> {
         const newProfile: UserProfile = {
             ...profile,
-            id: `profile-${Date.now()}`
+            id: `profile-${Date.now()}`,
         };
 
         this.profiles.set(newProfile.id, newProfile);
@@ -238,21 +238,21 @@ export class UserProfileManager extends EventEmitter {
     }
 
     public getProfilesByRole(role: UserProfile['role']): UserProfile[] {
-        return Array.from(this.profiles.values()).filter(p => p.role === role);
+        return Array.from(this.profiles.values()).filter((p) => p.role === role);
     }
 
     public async showProfileSelector(): Promise<UserProfile | undefined> {
         const profiles = this.getAllProfiles();
-        const items = profiles.map(profile => ({
+        const items = profiles.map((profile) => ({
             label: `$(account) ${profile.name}`,
             description: `${profile.role} - ${profile.isActive ? 'Active' : 'Inactive'}`,
             detail: `Tags: ${profile.preferences.defaultTags.join(', ')}`,
-            profile
+            profile,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
             placeHolder: 'Select a user profile',
-            title: 'User Profiles'
+            title: 'User Profiles',
         });
 
         if (selected) {
@@ -269,12 +269,12 @@ export class UserProfileManager extends EventEmitter {
             { label: '$(add) Create New Profile', action: 'create' },
             { label: '$(edit) Edit Current Profile', action: 'edit' },
             { label: '$(trash) Delete Profile', action: 'delete' },
-            { label: '$(gear) Manage All Profiles', action: 'manage' }
+            { label: '$(gear) Manage All Profiles', action: 'manage' },
         ];
 
         const selected = await vscode.window.showQuickPick(actions, {
             placeHolder: 'What would you like to do?',
-            title: 'Profile Management'
+            title: 'Profile Management',
         });
 
         if (!selected) {
@@ -305,7 +305,7 @@ export class UserProfileManager extends EventEmitter {
     private async createProfileWizard(): Promise<void> {
         const name = await vscode.window.showInputBox({
             prompt: localize('enterProfileName', 'Enter profile name'),
-            placeHolder: localize('profileNamePlaceholder', 'My Profile')
+            placeHolder: localize('profileNamePlaceholder', 'My Profile'),
         });
 
         if (!name) {
@@ -316,11 +316,11 @@ export class UserProfileManager extends EventEmitter {
             { label: 'Developer', value: 'developer' },
             { label: 'Business Analyst', value: 'analyst' },
             { label: 'Software Architect', value: 'architect' },
-            { label: 'Custom', value: 'custom' }
+            { label: 'Custom', value: 'custom' },
         ];
 
         const roleSelection = await vscode.window.showQuickPick(roles, {
-            placeHolder: 'Select role'
+            placeHolder: 'Select role',
         });
 
         if (!roleSelection) {
@@ -337,10 +337,12 @@ export class UserProfileManager extends EventEmitter {
             role,
             isActive: true,
             preferences: defaultPreferences,
-            permissions: this.getDefaultPermissionsForRole(role)
+            permissions: this.getDefaultPermissionsForRole(role),
         });
 
-        vscode.window.showInformationMessage(localize('profileCreatedSuccessfully', 'Profile \'{0}\' created successfully!', name));
+        vscode.window.showInformationMessage(
+            localize('profileCreatedSuccessfully', "Profile '{0}' created successfully!", name)
+        );
     }
 
     private async editProfileWizard(profileId: string): Promise<void> {
@@ -355,19 +357,23 @@ export class UserProfileManager extends EventEmitter {
 
     private async deleteProfileWizard(): Promise<void> {
         const profiles = this.getAllProfiles();
-        const items = profiles.map(profile => ({
+        const items = profiles.map((profile) => ({
             label: profile.name,
             description: profile.role,
-            profile
+            profile,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: 'Select profile to delete'
+            placeHolder: 'Select profile to delete',
         });
 
         if (selected) {
             const confirm = await vscode.window.showWarningMessage(
-                localize('deleteProfileConfirm', 'Are you sure you want to delete the profile \'{0}\'?', selected.profile.name),
+                localize(
+                    'deleteProfileConfirm',
+                    "Are you sure you want to delete the profile '{0}'?",
+                    selected.profile.name
+                ),
                 'Delete',
                 'Cancel'
             );
@@ -380,7 +386,9 @@ export class UserProfileManager extends EventEmitter {
 
     private async showProfilesWebview(): Promise<void> {
         // This would open a webview panel for comprehensive profile management
-        vscode.window.showInformationMessage(localize('profileManagementWebview', 'Profile management webview would open here'));
+        vscode.window.showInformationMessage(
+            localize('profileManagementWebview', 'Profile management webview would open here')
+        );
     }
 
     private getDefaultPreferencesForRole(role: UserProfile['role']): UserProfile['preferences'] {
@@ -392,7 +400,7 @@ export class UserProfileManager extends EventEmitter {
                     defaultPriority: 'medium',
                     autoSuggestEnabled: true,
                     preferredProvider: 'claude',
-                    claudeProfileId: 'developer'
+                    claudeProfileId: 'developer',
                 };
             case 'analyst':
                 return {
@@ -401,7 +409,7 @@ export class UserProfileManager extends EventEmitter {
                     defaultPriority: 'low',
                     autoSuggestEnabled: true,
                     preferredProvider: 'claude',
-                    claudeProfileId: 'analyst'
+                    claudeProfileId: 'analyst',
                 };
             case 'architect':
                 return {
@@ -410,7 +418,7 @@ export class UserProfileManager extends EventEmitter {
                     defaultPriority: 'high',
                     autoSuggestEnabled: true,
                     preferredProvider: 'claude',
-                    claudeProfileId: 'architect'
+                    claudeProfileId: 'architect',
                 };
             default:
                 return {
@@ -418,7 +426,7 @@ export class UserProfileManager extends EventEmitter {
                     defaultSeverity: 'info',
                     defaultPriority: 'medium',
                     autoSuggestEnabled: false,
-                    preferredProvider: 'openai'
+                    preferredProvider: 'openai',
                 };
         }
     }
@@ -432,7 +440,7 @@ export class UserProfileManager extends EventEmitter {
                     canEditAllAnnotations: true,
                     canDeleteAnnotations: true,
                     canExportAnnotations: true,
-                    canUseAI: true
+                    canUseAI: true,
                 };
             case 'analyst':
                 return {
@@ -440,7 +448,7 @@ export class UserProfileManager extends EventEmitter {
                     canEditAllAnnotations: false,
                     canDeleteAnnotations: false,
                     canExportAnnotations: true,
-                    canUseAI: true
+                    canUseAI: true,
                 };
             default:
                 return {
@@ -448,7 +456,7 @@ export class UserProfileManager extends EventEmitter {
                     canEditAllAnnotations: false,
                     canDeleteAnnotations: false,
                     canExportAnnotations: false,
-                    canUseAI: false
+                    canUseAI: false,
                 };
         }
     }

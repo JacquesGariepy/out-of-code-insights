@@ -1,505 +1,359 @@
+// SPDX-License-Identifier: MPL-2.0
+//
+// LinkedAnnotationManager — manages outgoing/incoming links between
+// annotations. Lot 5 R2 worktree B: migrated from AnnotationManager to
+// AnnotationStore + an optional AnnotationNavigation (for the post-jump
+// navigation stack push and side-panel focus).
+//
+// Storage shape: `LinkedAnnotation { targetFile, targetLine, relationship }`
+// stays as-is in v2 (decision §D1 in lot5-migration-plan.md). Resolution to
+// an actual annotation goes through `findAnnotationByLocation` which uses
+// the store's `getLineForAnnotation` against open documents.
+
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
-import { Annotation, LinkedAnnotation } from '../common/types';
-import { AnnotationManager } from './AnnotationManager';
+import type { LinkedAnnotation } from '../common/types';
 import { localize } from '../common/localize';
-import { AnnotationTreeItem } from '../tree/AnnotationsTree';
+import type { AnnotationStore } from '../transactional/AnnotationStore';
+import type { AnnotationNavigation } from '../transactional/AnnotationNavigation';
+import type { AnnotationV2 } from '../transactional/types';
+
+interface LinkGraphNode {
+    id: string;
+    file: string;
+    line: number | null;
+    message: string;
+    author?: string;
+}
+
+interface LinkGraphEdge {
+    source: string;
+    target: string;
+    relationship: string;
+}
 
 interface LinkGraph {
-    nodes: Array<{
-        id: string;
-        file: string;
-        line: number;
-        message: string;
-        author?: string;
-    }>;
-    edges: Array<{
-        source: string;
-        target: string;
-        relationship: string;
-    }>;
+    nodes: LinkGraphNode[];
+    edges: LinkGraphEdge[];
 }
 
 export class LinkedAnnotationManager extends EventEmitter {
-    private annotationManager: AnnotationManager;
-    private linkIndicatorDecoration: vscode.TextEditorDecorationType;
-    
-    constructor(context: vscode.ExtensionContext, annotationManager: AnnotationManager) {
+    private readonly linkIndicatorDecoration: vscode.TextEditorDecorationType;
+    private readonly subscriptions: vscode.Disposable[] = [];
+
+    constructor(
+        _context: vscode.ExtensionContext,
+        private readonly store: AnnotationStore,
+        private readonly navigation?: AnnotationNavigation
+    ) {
         super();
-        this.annotationManager = annotationManager;
-        
-        // Create decoration type for link indicators
+
         this.linkIndicatorDecoration = vscode.window.createTextEditorDecorationType({
             after: {
                 contentText: '🔗',
                 margin: '0 0 0 1em',
-                color: new vscode.ThemeColor('editorCodeLens.foreground')
-            }
+                color: new vscode.ThemeColor('editorCodeLens.foreground'),
+            },
         });
-        
-        // Listen for annotation changes to update decorations
-        this.annotationManager.on('annotationChanged', () => {
-            this.updateLinkDecorations();
-        });
+
+        this.subscriptions.push(
+            this.store.onDidChange(() => {
+                this.updateLinkDecorations();
+            })
+        );
     }
-    
+
     /**
-     * Creates a link between two annotations
+     * Creates a link between two annotations.
      */
     public async createLink(
-        sourceId: string, 
-        targetFile: string, 
-        targetLine: number, 
+        sourceId: string,
+        targetFile: string,
+        targetLine: number,
         relationship = 'related'
     ): Promise<void> {
-        const sourceAnnotation = this.annotationManager.annotations.get(sourceId);
+        const sourceAnnotation = this.store.get(sourceId);
         if (!sourceAnnotation) {
             throw new Error(localize('annotationNotFound', 'Source annotation not found'));
         }
-        
-        // Find target annotation
+
         const targetAnnotation = this.findAnnotationByLocation(targetFile, targetLine);
         if (!targetAnnotation) {
             throw new Error(localize('targetAnnotationNotFound', 'Target annotation not found at specified location'));
         }
-        
-        // Check for circular references
+
         if (this.wouldCreateCircularReference(sourceId, targetAnnotation.id)) {
             throw new Error(localize('circularReference', 'Cannot create link: would create circular reference'));
         }
-        
-        // Initialize linkedAnnotations array if not exists
-        if (!sourceAnnotation.linkedAnnotations) {
-            sourceAnnotation.linkedAnnotations = [];
-        }
-        
-        // Check if link already exists
-        const existingLink = sourceAnnotation.linkedAnnotations.find(
-            link => link.targetFile === targetFile && link.targetLine === targetLine
-        );
-        
-        if (existingLink) {
+
+        const existing = sourceAnnotation.linkedAnnotations ?? [];
+        if (existing.some((link) => link.targetFile === targetFile && link.targetLine === targetLine)) {
             throw new Error(localize('linkExists', 'Link already exists'));
         }
-        
-        // Add the link
-        const newLink: LinkedAnnotation = {
-            targetFile,
-            targetLine,
-            relationship
-        };
-        
-        sourceAnnotation.linkedAnnotations.push(newLink);
-        
-        // Save annotations
-        await this.annotationManager.saveAnnotations();
-        
-        // Emit event
+
+        const newLink: LinkedAnnotation = { targetFile, targetLine, relationship };
+        const linkedAnnotations = [...existing, newLink];
+        this.store.update(sourceId, { linkedAnnotations });
+
         this.emit('linkCreated', { sourceId, targetFile, targetLine, relationship });
-        
-        // Update decorations
         this.updateLinkDecorations();
-        
-        // Trigger annotation changed event
-        this.annotationManager.emit('annotationChanged');
     }
-    
+
     /**
-     * Removes a link between annotations
+     * Removes a link between annotations.
      */
     public async removeLink(sourceId: string, targetFile: string, targetLine: number): Promise<void> {
-        const sourceAnnotation = this.annotationManager.annotations.get(sourceId);
+        const sourceAnnotation = this.store.get(sourceId);
         if (!sourceAnnotation || !sourceAnnotation.linkedAnnotations) {
             throw new Error(localize('annotationNotFound', 'Source annotation not found'));
         }
-        
+
         const linkIndex = sourceAnnotation.linkedAnnotations.findIndex(
-            link => link.targetFile === targetFile && link.targetLine === targetLine
+            (link) => link.targetFile === targetFile && link.targetLine === targetLine
         );
-        
         if (linkIndex === -1) {
             throw new Error(localize('linkNotFound', 'Link not found'));
         }
-        
-        // Remove the link
-        sourceAnnotation.linkedAnnotations.splice(linkIndex, 1);
-        
-        // Save annotations
-        await this.annotationManager.saveAnnotations();
-        
-        // Emit event
+
+        const linkedAnnotations = sourceAnnotation.linkedAnnotations.filter((_, i) => i !== linkIndex);
+        this.store.update(sourceId, { linkedAnnotations });
+
         this.emit('linkRemoved', { sourceId, targetFile, targetLine });
-        
-        // Update decorations
         this.updateLinkDecorations();
-        
-        // Trigger annotation changed event
-        this.annotationManager.emit('annotationChanged');
     }
-    
+
     /**
-     * Navigate to a linked annotation
+     * Navigate to a linked annotation.
      */
     public async goToLinkedAnnotation(sourceId: string, targetIndex = 0): Promise<void> {
-        const sourceAnnotation = this.annotationManager.annotations.get(sourceId);
-        if (!sourceAnnotation || !sourceAnnotation.linkedAnnotations || sourceAnnotation.linkedAnnotations.length === 0) {
+        const sourceAnnotation = this.store.get(sourceId);
+        if (
+            !sourceAnnotation ||
+            !sourceAnnotation.linkedAnnotations ||
+            sourceAnnotation.linkedAnnotations.length === 0
+        ) {
             vscode.window.showWarningMessage(localize('noLinkedAnnotations', 'No linked annotations found'));
             return;
         }
-        
+
         if (targetIndex < 0 || targetIndex >= sourceAnnotation.linkedAnnotations.length) {
             vscode.window.showErrorMessage(localize('invalidLinkIndex', 'Invalid link index'));
             return;
         }
-        
+
         const link = sourceAnnotation.linkedAnnotations[targetIndex];
-        
+
         try {
-            // Open the target file
             const document = await vscode.workspace.openTextDocument(link.targetFile);
             const editor = await vscode.window.showTextDocument(document);
-            
-            // Navigate to the target line
+
             const position = new vscode.Position(link.targetLine, 0);
             editor.selection = new vscode.Selection(position, position);
             editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-            
-            // Find and highlight the target annotation
+
             const targetAnnotation = this.findAnnotationByLocation(link.targetFile, link.targetLine);
-            if (targetAnnotation) {
-                // Add to navigation stack
-                this.annotationManager.navigationStack.push(targetAnnotation.id);
-                
-                // Focus on the annotation if possible
-                this.annotationManager.focusAnnotationInPanel(targetAnnotation.id);
+            if (targetAnnotation && this.navigation) {
+                this.navigation.stack.push(targetAnnotation.id);
+                await this.navigation.focusAnnotationInPanel(targetAnnotation.id);
             }
-            
         } catch (error) {
             vscode.window.showErrorMessage(
                 localize('navigationFailed', 'Failed to navigate to linked annotation: {0}', String(error))
             );
         }
     }
-    
+
     /**
-     * Get all linked annotations for a given annotation
+     * Get all linked annotations for a given annotation.
      */
     public getLinkedAnnotationsForAnnotation(annotationId: string): LinkedAnnotation[] {
-        const annotation = this.annotationManager.annotations.get(annotationId);
-        return annotation?.linkedAnnotations || [];
+        const annotation = this.store.get(annotationId);
+        return annotation?.linkedAnnotations ? [...annotation.linkedAnnotations] : [];
     }
-    
+
     /**
-     * Get all annotations that link to a given annotation
+     * Get all annotations that link to a given (file, line) target.
      */
-    public getIncomingLinks(targetFile: string, targetLine: number): Array<{annotation: Annotation, relationship: string}> {
-        const incomingLinks: Array<{annotation: Annotation, relationship: string}> = [];
-        
-        for (const annotation of this.annotationManager.annotations.values()) {
-            if (annotation.linkedAnnotations) {
-                for (const link of annotation.linkedAnnotations) {
-                    if (link.targetFile === targetFile && link.targetLine === targetLine) {
-                        incomingLinks.push({
-                            annotation,
-                            relationship: link.relationship
-                        });
-                    }
+    public getIncomingLinks(
+        targetFile: string,
+        targetLine: number
+    ): Array<{ annotation: Readonly<AnnotationV2>; relationship: string }> {
+        const incoming: Array<{ annotation: Readonly<AnnotationV2>; relationship: string }> = [];
+        for (const annotation of this.store.list()) {
+            if (!annotation.linkedAnnotations) {
+                continue;
+            }
+            for (const link of annotation.linkedAnnotations) {
+                if (link.targetFile === targetFile && link.targetLine === targetLine) {
+                    incoming.push({ annotation, relationship: link.relationship });
                 }
             }
         }
-        
-        return incomingLinks;
+        return incoming;
     }
-    
+
     /**
-     * Export linked annotations in graph format
+     * Export linked annotations in graph format. Lines are resolved against
+     * currently-open documents; closed-file nodes carry `line: null`.
      */
     public exportAsGraph(): LinkGraph {
-        const graph: LinkGraph = {
-            nodes: [],
-            edges: []
-        };
-        
-        // Add all annotations as nodes
-        for (const [id, annotation] of this.annotationManager.annotations) {
+        const openDocs = vscode.workspace.textDocuments;
+        const graph: LinkGraph = { nodes: [], edges: [] };
+
+        for (const annotation of this.store.list()) {
             graph.nodes.push({
-                id,
+                id: annotation.id,
                 file: annotation.file,
-                line: annotation.line,
+                line: this.store.getLineForAnnotation(annotation.id, openDocs),
                 message: annotation.message,
-                author: annotation.author
+                author: annotation.author,
             });
         }
-        
-        // Add all links as edges
-        for (const [sourceId, annotation] of this.annotationManager.annotations) {
-            if (annotation.linkedAnnotations) {
-                for (const link of annotation.linkedAnnotations) {
-                    const targetAnnotation = this.findAnnotationByLocation(link.targetFile, link.targetLine);
-                    if (targetAnnotation) {
-                        graph.edges.push({
-                            source: sourceId,
-                            target: targetAnnotation.id,
-                            relationship: link.relationship
-                        });
-                    }
+
+        for (const annotation of this.store.list()) {
+            if (!annotation.linkedAnnotations) {
+                continue;
+            }
+            for (const link of annotation.linkedAnnotations) {
+                const target = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                if (target) {
+                    graph.edges.push({
+                        source: annotation.id,
+                        target: target.id,
+                        relationship: link.relationship,
+                    });
                 }
             }
         }
-        
         return graph;
     }
-    
+
     /**
-     * Export linked annotations in DOT format for visualization
+     * Export linked annotations in DOT format for visualization.
      */
     public exportAsDot(): string {
         const graph = this.exportAsGraph();
         let dot = 'digraph AnnotationLinks {\n';
         dot += '  rankdir=LR;\n';
         dot += '  node [shape=box, style=rounded];\n\n';
-        
-        // Add nodes
+
         for (const node of graph.nodes) {
-            const label = `${node.file}:${node.line + 1}\\n${node.message.substring(0, 30)}...`;
+            const lineLabel = node.line === null ? '?' : node.line + 1;
+            const label = `${node.file}:${lineLabel}\\n${node.message.substring(0, 30)}...`;
             dot += `  "${node.id}" [label="${label}"];\n`;
         }
-        
+
         dot += '\n';
-        
-        // Add edges
+
         for (const edge of graph.edges) {
             dot += `  "${edge.source}" -> "${edge.target}" [label="${edge.relationship}"];\n`;
         }
-        
+
         dot += '}\n';
         return dot;
     }
-    
+
     /**
-     * Update tree view to show link indicators
-     */
-    public updateTreeViewLinkIndicators(): void {
-        // Trigger tree refresh with link information
-        if (this.annotationManager.annotationsTreeDataProvider) {
-            this.annotationManager.annotationsTreeDataProvider.refresh();
-        }
-    }
-    
-    /**
-     * Enhance tree item with link indicators
-     */
-    public enhanceTreeItem(treeItem: AnnotationTreeItem): void {
-        const annotation = treeItem.annotation;
-        if (!annotation) return;
-        
-        const linkCount = this.getLinkCount(annotation.id);
-        const incomingLinks = this.getIncomingLinks(annotation.file, annotation.line);
-        
-        if (linkCount > 0 || incomingLinks.length > 0) {
-            // Update label to show link indicator
-            const linkIndicator = linkCount > 0 ? `🔗(${linkCount})` : '';
-            const incomingIndicator = incomingLinks.length > 0 ? `⬅️(${incomingLinks.length})` : '';
-            
-            if (treeItem.description) {
-                treeItem.description = `${treeItem.description} ${linkIndicator} ${incomingIndicator}`.trim();
-            }
-            
-            // Update tooltip to include link information
-            if (treeItem.tooltip instanceof vscode.MarkdownString) {
-                let linkInfo = '';
-                
-                if (linkCount > 0) {
-                    linkInfo += `\n**Outgoing Links:** ${linkCount}`;
-                    const links = this.getLinkedAnnotationsForAnnotation(annotation.id);
-                    links.forEach((link, index) => {
-                        linkInfo += `\n  ${index + 1}. ${link.relationship} → ${link.targetFile}:${link.targetLine + 1}`;
-                    });
-                }
-                
-                if (incomingLinks.length > 0) {
-                    linkInfo += `\n**Incoming Links:** ${incomingLinks.length}`;
-                    incomingLinks.forEach((incoming, index) => {
-                        linkInfo += `\n  ${index + 1}. ${incoming.relationship} ← ${incoming.annotation.file}:${incoming.annotation.line + 1}`;
-                    });
-                }
-                
-                treeItem.tooltip.appendMarkdown(linkInfo);
-            }
-            
-            // Add context value for linked annotations
-            treeItem.contextValue = linkCount > 0 ? 'annotation-linked' : 'annotation';
-        }
-    }
-    
-    /**
-     * Check if annotation has any links
+     * True iff the annotation has at least one outgoing link.
      */
     public hasLinks(annotationId: string): boolean {
-        const annotation = this.annotationManager.annotations.get(annotationId);
+        const annotation = this.store.get(annotationId);
         return !!(annotation?.linkedAnnotations && annotation.linkedAnnotations.length > 0);
     }
-    
+
     /**
-     * Get link count for an annotation
+     * Number of outgoing links for an annotation.
      */
     public getLinkCount(annotationId: string): number {
-        const annotation = this.annotationManager.annotations.get(annotationId);
-        return annotation?.linkedAnnotations?.length || 0;
+        const annotation = this.store.get(annotationId);
+        return annotation?.linkedAnnotations?.length ?? 0;
     }
-    
+
     /**
-     * Update decorations to show link indicators in the editor
+     * Get all annotations that are involved in any link (source or target).
      */
-    private updateLinkDecorations(): void {
-        const activeEditor = vscode.window.activeTextEditor;
-        if (!activeEditor) return;
-        
-        const decorations: vscode.DecorationOptions[] = [];
-        const currentFile = activeEditor.document.uri.fsPath;
-        
-        // Find all annotations in current file that have links
-        for (const [_id, annotation] of this.annotationManager.annotations) {
-            if (annotation.file === currentFile && annotation.linkedAnnotations && annotation.linkedAnnotations.length > 0) {
-                const range = new vscode.Range(annotation.line, 0, annotation.line, 0);
-                decorations.push({ range });
-            }
-        }
-        
-        activeEditor.setDecorations(this.linkIndicatorDecoration, decorations);
-    }
-    
-    /**
-     * Find annotation by file and line
-     */
-    private findAnnotationByLocation(file: string, line: number): Annotation | undefined {
-        for (const annotation of this.annotationManager.annotations.values()) {
-            if (annotation.file === file && annotation.line === line) {
-                return annotation;
-            }
-        }
-        return undefined;
-    }
-    
-    /**
-     * Check if creating a link would result in a circular reference
-     */
-    private wouldCreateCircularReference(sourceId: string, targetId: string): boolean {
-        // If source and target are the same, it's circular
-        if (sourceId === targetId) return true;
-        
-        // Use BFS to check if target can reach source
-        const visited = new Set<string>();
-        const queue = [targetId];
-        
-        while (queue.length > 0) {
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            const currentId = queue.shift()!;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-            
-            const currentAnnotation = this.annotationManager.annotations.get(currentId);
-            if (currentAnnotation?.linkedAnnotations) {
-                for (const link of currentAnnotation.linkedAnnotations) {
-                    const linkedAnnotation = this.findAnnotationByLocation(link.targetFile, link.targetLine);
-                    if (linkedAnnotation) {
-                        if (linkedAnnotation.id === sourceId) {
-                            return true; // Found circular reference
-                        }
-                        queue.push(linkedAnnotation.id);
-                    }
-                }
-            }
-        }
-        
-        return false;
-    }
-    
-    /**
-     * Get all annotations that are linked (either source or target)
-     */
-    public getLinkedAnnotations(): Map<string, Annotation> {
-        const linkedAnnotations = new Map<string, Annotation>();
-        
-        // Add all annotations that have outgoing links
-        for (const [id, annotation] of this.annotationManager.annotations) {
+    public getLinkedAnnotations(): Map<string, Readonly<AnnotationV2>> {
+        const linked = new Map<string, Readonly<AnnotationV2>>();
+
+        for (const annotation of this.store.list()) {
             if (annotation.linkedAnnotations && annotation.linkedAnnotations.length > 0) {
-                linkedAnnotations.set(id, annotation);
+                linked.set(annotation.id, annotation);
             }
         }
-        
-        // Add all annotations that are targets of links
-        for (const annotation of this.annotationManager.annotations.values()) {
-            if (annotation.linkedAnnotations) {
-                for (const link of annotation.linkedAnnotations) {
-                    const targetAnnotation = this.findAnnotationByLocation(link.targetFile, link.targetLine);
-                    if (targetAnnotation && !linkedAnnotations.has(targetAnnotation.id)) {
-                        linkedAnnotations.set(targetAnnotation.id, targetAnnotation);
-                    }
+
+        for (const annotation of this.store.list()) {
+            if (!annotation.linkedAnnotations) {
+                continue;
+            }
+            for (const link of annotation.linkedAnnotations) {
+                const target = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                if (target && !linked.has(target.id)) {
+                    linked.set(target.id, target);
                 }
             }
         }
-        
-        return linkedAnnotations;
+        return linked;
     }
-    
+
     /**
-     * Export linked annotations as JSON with full graph data
+     * Export linked annotations as JSON with full graph data.
      */
     public exportLinkedAnnotationsAsJSON(): string {
         const graph = this.exportAsGraph();
-        const linkedAnnotations = this.getLinkedAnnotations();
-        
+        const linked = this.getLinkedAnnotations();
+
         const exportData = {
             timestamp: new Date().toISOString(),
-            annotations: Array.from(linkedAnnotations.values()),
-            graph: graph,
+            annotations: Array.from(linked.values()),
+            graph,
             statistics: {
-                totalAnnotations: this.annotationManager.annotations.size,
-                linkedAnnotations: linkedAnnotations.size,
+                totalAnnotations: this.store.size(),
+                linkedAnnotations: linked.size,
                 totalLinks: graph.edges.length,
-                averageLinksPerAnnotation: graph.edges.length / Math.max(linkedAnnotations.size, 1)
-            }
+                averageLinksPerAnnotation: graph.edges.length / Math.max(linked.size, 1),
+            },
         };
-        
+
         return JSON.stringify(exportData, null, 2);
     }
-    
+
     /**
-     * Find all paths between two annotations
+     * Find all paths between two annotations, bounded by `maxDepth`.
      */
     public findPaths(sourceId: string, targetId: string, maxDepth = 5): string[][] {
         const paths: string[][] = [];
         const visited = new Set<string>();
-        
-        const dfs = (currentId: string, currentPath: string[], depth: number) => {
-            if (depth > maxDepth) return;
+
+        const dfs = (currentId: string, currentPath: string[], depth: number): void => {
+            if (depth > maxDepth) {
+                return;
+            }
             if (currentId === targetId) {
                 paths.push([...currentPath]);
                 return;
             }
-            
+
             visited.add(currentId);
-            const annotation = this.annotationManager.annotations.get(currentId);
-            
+            const annotation = this.store.get(currentId);
+
             if (annotation?.linkedAnnotations) {
                 for (const link of annotation.linkedAnnotations) {
-                    const linkedAnnotation = this.findAnnotationByLocation(link.targetFile, link.targetLine);
-                    if (linkedAnnotation && !visited.has(linkedAnnotation.id)) {
-                        dfs(linkedAnnotation.id, [...currentPath, linkedAnnotation.id], depth + 1);
+                    const next = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                    if (next && !visited.has(next.id)) {
+                        dfs(next.id, [...currentPath, next.id], depth + 1);
                     }
                 }
             }
-            
+
             visited.delete(currentId);
         };
-        
+
         dfs(sourceId, [sourceId], 0);
         return paths;
     }
-    
+
     /**
-     * Get link statistics
+     * Aggregate link statistics across the store.
      */
     public getLinkStatistics(): {
         totalLinks: number;
@@ -512,34 +366,115 @@ export class LinkedAnnotationManager extends EventEmitter {
         let maxLinks = 0;
         const relationshipCounts: Record<string, number> = {};
         const annotationsWithLinks = new Set<string>();
-        
-        for (const [id, annotation] of this.annotationManager.annotations) {
+
+        for (const annotation of this.store.list()) {
             if (annotation.linkedAnnotations && annotation.linkedAnnotations.length > 0) {
-                annotationsWithLinks.add(id);
+                annotationsWithLinks.add(annotation.id);
                 totalLinks += annotation.linkedAnnotations.length;
                 maxLinks = Math.max(maxLinks, annotation.linkedAnnotations.length);
-                
+
                 for (const link of annotation.linkedAnnotations) {
                     const relationship = link.relationship || 'related';
-                    relationshipCounts[relationship] = (relationshipCounts[relationship] || 0) + 1;
+                    relationshipCounts[relationship] = (relationshipCounts[relationship] ?? 0) + 1;
                 }
             }
         }
-        
+
         return {
             totalLinks,
             annotationsWithLinks: annotationsWithLinks.size,
             averageLinksPerAnnotation: annotationsWithLinks.size > 0 ? totalLinks / annotationsWithLinks.size : 0,
             maxLinks,
-            relationshipCounts
+            relationshipCounts,
         };
     }
-    
-    /**
-     * Dispose of resources
-     */
+
     public dispose(): void {
         this.linkIndicatorDecoration.dispose();
+        for (const sub of this.subscriptions) {
+            sub.dispose();
+        }
+        this.subscriptions.length = 0;
         this.removeAllListeners();
+    }
+
+    /**
+     * Update editor decorations to show link indicators in the active editor.
+     * Resolves annotation lines via the store + the editor's document so we
+     * never read a non-existent `annotation.line` field.
+     */
+    private updateLinkDecorations(): void {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            return;
+        }
+
+        const document = editor.document;
+        const decorations: vscode.DecorationOptions[] = [];
+
+        for (const annotation of this.store.listForFile(document.uri.toString())) {
+            if (!annotation.linkedAnnotations || annotation.linkedAnnotations.length === 0) {
+                continue;
+            }
+            const line = this.store.getLineForAnnotation(annotation.id, document);
+            if (line === null) {
+                continue;
+            }
+            decorations.push({ range: new vscode.Range(line, 0, line, 0) });
+        }
+
+        editor.setDecorations(this.linkIndicatorDecoration, decorations);
+    }
+
+    /**
+     * Find an annotation by its (relative file path, 0-based line) pair.
+     * Resolves the line against currently-open documents.
+     */
+    private findAnnotationByLocation(file: string, line: number): Readonly<AnnotationV2> | undefined {
+        const openDocs = vscode.workspace.textDocuments;
+        for (const annotation of this.store.list()) {
+            if (annotation.file !== file) {
+                continue;
+            }
+            if (this.store.getLineForAnnotation(annotation.id, openDocs) === line) {
+                return annotation;
+            }
+        }
+        return undefined;
+    }
+
+    /**
+     * Check whether linking source → target would form a cycle.
+     */
+    private wouldCreateCircularReference(sourceId: string, targetId: string): boolean {
+        if (sourceId === targetId) {
+            return true;
+        }
+
+        const visited = new Set<string>();
+        const queue = [targetId];
+
+        while (queue.length > 0) {
+            const currentId = queue.shift();
+            if (currentId === undefined || visited.has(currentId)) {
+                continue;
+            }
+            visited.add(currentId);
+
+            const current = this.store.get(currentId);
+            if (!current?.linkedAnnotations) {
+                continue;
+            }
+            for (const link of current.linkedAnnotations) {
+                const next = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                if (next) {
+                    if (next.id === sourceId) {
+                        return true;
+                    }
+                    queue.push(next.id);
+                }
+            }
+        }
+        return false;
     }
 }

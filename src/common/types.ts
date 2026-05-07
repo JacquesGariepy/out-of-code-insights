@@ -154,23 +154,23 @@ export const DEFAULT_CONFIG: ExtensionConfig = {
         light: {
             annotation: '#0366d6',
             highlightBackground: '#f1f8ff',
-            commentBorder: '#e1e4e8'
+            commentBorder: '#e1e4e8',
         },
         dark: {
             annotation: '#58a6ff',
             highlightBackground: '#182030',
-            commentBorder: '#30363d'
-        }
+            commentBorder: '#30363d',
+        },
     },
     debounceDelay: 300,
     maxAnnotationsPerFile: 100,
     username: localize('anonymous', 'Anonymous'),
     codelens: {
         enable: true,
-        showCommands: true
+        showCommands: true,
     },
     enableAnnotations: true,
     disabledTags: [],
     enableAiSuggest: false,
-    defaultSeverity: 'info'
+    defaultSeverity: 'info',
 };

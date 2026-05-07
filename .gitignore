@@ -38,3 +38,12 @@ Thumbs.db
 !.vscode/tasks.json
 !.vscode/settings.json
 !.vscode/extensions.json
+
+# Orchestrator runtime state
+.orchestra/
+data/memory.db
+data/memory.db-shm
+data/memory.db-wal
+.claude/undo-snapshots.json
+reports/mission-*.json
+

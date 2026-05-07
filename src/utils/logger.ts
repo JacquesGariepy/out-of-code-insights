@@ -74,9 +74,7 @@ class ExtensionLogger implements Logger {
     }
 
     private readLevel(): LogLevel {
-        return vscode.workspace
-            .getConfiguration('outOfCodeInsights')
-            .get<LogLevel>('logLevel', 'info');
+        return vscode.workspace.getConfiguration('outOfCodeInsights').get<LogLevel>('logLevel', 'info');
     }
 
     private write(level: LogLevel, msg: string, err?: unknown, meta?: Record<string, unknown>): void {
@@ -84,15 +82,26 @@ class ExtensionLogger implements Logger {
             return;
         }
         switch (level) {
-            case 'debug': this.channel.debug(msg); break;
-            case 'info':  this.channel.info(msg);  break;
-            case 'warn':  this.channel.warn(msg);  break;
-            case 'error': this.channel.error(msg); break;
+            case 'debug':
+                this.channel.debug(msg);
+                break;
+            case 'info':
+                this.channel.info(msg);
+                break;
+            case 'warn':
+                this.channel.warn(msg);
+                break;
+            case 'error':
+                this.channel.error(msg);
+                break;
         }
         if (this.logFilePath) {
-            const errStr = err instanceof Error
-                ? `\n  ${err.message}${err.stack ? `\n  ${err.stack}` : ''}`
-                : err !== undefined ? `\n  ${String(err)}` : '';
+            const errStr =
+                err instanceof Error
+                    ? `\n  ${err.message}${err.stack ? `\n  ${err.stack}` : ''}`
+                    : err !== undefined
+                      ? `\n  ${String(err)}`
+                      : '';
             const metaStr = meta ? ` ${JSON.stringify(meta)}` : '';
             const line = `[${new Date().toISOString()}] [${level.toUpperCase().padEnd(5)}] [${this.name}] ${msg}${metaStr}${errStr}\n`;
             this.appendToFile(this.logFilePath, line);
@@ -115,10 +124,18 @@ class ExtensionLogger implements Logger {
             const from = `${filePath}.${i}`;
             const to = `${filePath}.${i + 1}`;
             if (fs.existsSync(from)) {
-                try { fs.renameSync(from, to); } catch { /* best-effort */ }
+                try {
+                    fs.renameSync(from, to);
+                } catch {
+                    /* best-effort */
+                }
             }
         }
-        try { fs.renameSync(filePath, `${filePath}.1`); } catch { /* best-effort */ }
+        try {
+            fs.renameSync(filePath, `${filePath}.1`);
+        } catch {
+            /* best-effort */
+        }
     }
 }
 
@@ -128,13 +145,23 @@ export function initializeLogger(name: string, context: vscode.ExtensionContext)
 }
 
 export function getLogger(): Logger {
-    return _instance ?? {
-        debug: () => { /* noop before logger is initialized */ },
-        info:  () => { /* noop before logger is initialized */ },
-        warn:  (msg: string) => console.warn(`[WARN] ${msg}`),
-        error: (msg: string, err?: unknown) => console.error(`[ERROR] ${msg}`, err),
-        show:  () => { /* noop before logger is initialized */ },
-        dispose: () => { /* noop before logger is initialized */ },
-        getLogFilePath: () => undefined
-    };
+    return (
+        _instance ?? {
+            debug: () => {
+                /* noop before logger is initialized */
+            },
+            info: () => {
+                /* noop before logger is initialized */
+            },
+            warn: (msg: string) => console.warn(`[WARN] ${msg}`),
+            error: (msg: string, err?: unknown) => console.error(`[ERROR] ${msg}`, err),
+            show: () => {
+                /* noop before logger is initialized */
+            },
+            dispose: () => {
+                /* noop before logger is initialized */
+            },
+            getLogFilePath: () => undefined,
+        }
+    );
 }

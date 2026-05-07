@@ -18,7 +18,6 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 
 [![GitHub Discussions](https://img.shields.io/github/discussions/JacquesGariepy/out-of-code-insights)](https://github.com/JacquesGariepy/out-of-code-insights/discussions)
 
-
 [![GitHub Discussions](https://img.shields.io/badge/buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacquesgarx)
 
 ## Why use Out-of-code Insights?
@@ -35,7 +34,7 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 - **Keyword Search**: Quickly find annotations by searching for specific keywords.
 - **Filter by Severity**: Categorize and view annotations based on their severity levels.
 - **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
-- **Show AI Suggestion**: Display simulated suggestions from AI. 
+- **Show AI Suggestion**: Display simulated suggestions from AI.
 - **Auto-Resolve Stale Annotations**: Automatically handle annotations that are no longer relevant or outdated.
 
 [![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw) (v1.0.3)
@@ -69,31 +68,36 @@ We’d love to hear your thoughts, feedback, and ideas! Feel free to join the co
 ![linked](https://github.com/user-attachments/assets/573270ea-2057-41df-994d-970b5347f65b)
 
 Create relationships between annotations across different files to improve code traceability and documentation:
+
 - **Create links**: Connect related annotations with contextual relationships (implements, references, depends-on, etc.)
 - **Visual indicators**: 🔗 icon in TreeView shows linked annotations
 - **Smart navigation**: `Ctrl+Alt+L` to quickly jump between linked annotations
 - **Comprehensive visualization**: "Show All Links" command opens an interactive view with statistics and navigation
 
 ### 📋 Customizable Annotation Templates
+
 Standardize your annotation format with reusable templates:
+
 - **Pre-built templates**: Bug, TODO, Refactor, Performance, Security, Documentation
 - **Custom templates**: Create your own with variable substitution (`{{description}}`, `{{priority}}`, etc.)
 - **Quick access**: `Ctrl+Shift+Alt+T` to apply templates instantly
 - **Team consistency**: Share templates across your development team
 
 ### 🔍 Review Mode
+
 ![review](https://github.com/user-attachments/assets/7726ea14-bd24-4e3c-be42-ac03f516d864)
 
 Systematically review annotations with advanced filtering and tracking:
+
 - **Structured review**: Navigate through annotations sequentially with `F8`/`Shift+F8`
 - **Advanced filtering**: Filter by author, date, severity, tags, and status
 - **Progress tracking**: Visual progress bar shows reviewed vs. total annotations
 - **Review statistics**: Get insights on annotation distribution and completion
 
 ### 📋 Kanban-style Workspace
+
 Manage annotations visually with a dedicated Kanban board:
 ![Kanban](https://github.com/user-attachments/assets/499bbbec-f773-47c8-9c5a-84f3ad5bb079)
-
 
 - **Visual organization**: Drag & drop annotations between customizable columns (To Do, In Progress, Review, Done)
 - **Smart filtering**: Filter by author, severity, tags, or file
@@ -102,7 +106,9 @@ Manage annotations visually with a dedicated Kanban board:
 - **Quick navigation**: Double-click cards to jump to code location
 
 ### ⚡ Executable Code Snippets
+
 Attach and execute code directly from annotations:
+
 - **Code attachment**: Add reusable code snippets to annotations
 - **Preview changes**: See modifications before applying them
 - **Variable support**: Use placeholders (`$1`, `$2`) for dynamic snippets
@@ -110,6 +116,7 @@ Attach and execute code directly from annotations:
 - **Multiple languages**: Support for all programming languages
 
 ### Annotation History
+
 ![STACK](https://github.com/user-attachments/assets/7d821ca0-d38f-48df-81ae-58fc94fcb3ce)
 
 ## Requirements
@@ -123,17 +130,18 @@ Attach and execute code directly from annotations:
 
 1. **Open Visual Studio Code**.
 2. **Access the Extensions Manager**:
-   - Click the Extensions icon in the sidebar.
-   - Or use the shortcut `Ctrl+Shift+X` (`Cmd+Shift+X` on Mac).
+    - Click the Extensions icon in the sidebar.
+    - Or use the shortcut `Ctrl+Shift+X` (`Cmd+Shift+X` on Mac).
 3. **Search for the extension**:
-   - Type **"Out-of-code Insights"** in the search bar.
+    - Type **"Out-of-code Insights"** in the search bar.
 4. **Install the extension**:
-   - Click **"Install"** next to the appropriate result.
+    - Click **"Install"** next to the appropriate result.
 5. **Restart Visual Studio Code** (if required).
 
 ## Quick Start Guide
 
 ### Your First Annotation
+
 1. **Open any file** in your project
 2. **Position your cursor** on the line you want to annotate
 3. **Right-click** → "Out-of-Code Insight" → "Add Annotation"
@@ -141,6 +149,7 @@ Attach and execute code directly from annotations:
 5. **See your annotation** appear in the Activity Bar sidebar
 
 ### Essential Workflow
+
 1. **Add annotations** during code review or development (`Ctrl+Alt+A`)
 2. **Organize with templates** for consistent formatting (`Ctrl+Shift+Alt+T`)
 3. **Link related annotations** across files (`Ctrl+Alt+L`)
@@ -148,6 +157,7 @@ Attach and execute code directly from annotations:
 5. **Visualize progress** with the Kanban board (`Ctrl+Alt+K`)
 
 ### Common Use Cases
+
 - **Code Review**: Add review comments without modifying source files
 - **Technical Documentation**: Document complex logic and architectural decisions
 - **Bug Tracking**: Track issues with linked corrections and code snippets
@@ -159,75 +169,75 @@ Attach and execute code directly from annotations:
 ### Adding an Annotation
 
 - **Using the context menu**:
-  - Right-click on the line where you want to add an annotation.
-  - Select **`Add Annotation`**.
+    - Right-click on the line where you want to add an annotation.
+    - Select **`Add Annotation`**.
 - **Using keyboard shortcuts**:
-  - Place your cursor on the desired line.
-  - Press `Ctrl+Alt+A` (Windows/Linux) or `Cmd+Alt+A` (Mac).
+    - Place your cursor on the desired line.
+    - Press `Ctrl+Alt+A` (Windows/Linux) or `Cmd+Alt+A` (Mac).
 
 ### Editing or Deleting an Annotation
 
 - **Using the context menu**:
-  - Right-click on the line containing the annotation.
-  - Select **`Edit Annotation`** or **`Delete Annotation`**.
+    - Right-click on the line containing the annotation.
+    - Select **`Edit Annotation`** or **`Delete Annotation`**.
 - **Using keyboard shortcuts**:
-  - **Edit an annotation**:
-    - Press `Ctrl+Alt+E` (Windows/Linux) or `Cmd+Alt+E` (Mac).
-  - **Delete an annotation**:
-    - Press `Ctrl+Alt+D` (Windows/Linux) or `Cmd+Alt+D` (Mac).
+    - **Edit an annotation**:
+        - Press `Ctrl+Alt+E` (Windows/Linux) or `Cmd+Alt+E` (Mac).
+    - **Delete an annotation**:
+        - Press `Ctrl+Alt+D` (Windows/Linux) or `Cmd+Alt+D` (Mac).
 
 ### Viewing and Managing Annotations
 
 - **Open the annotations panel**:
-  - Use the **`View Annotations`** command from the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
-  - Or click the annotations icon in the status bar.
+    - Use the **`View Annotations`** command from the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
+    - Or click the annotations icon in the status bar.
 - **Toggle annotation visibility**:
-  - Use the **`Toggle Annotation Visibility`** command to make annotations visible or hidden in the editor.
-  - Shortcut: `Ctrl+Alt+T` (Windows/Linux) or `Cmd+Alt+T` (Mac).
+    - Use the **`Toggle Annotation Visibility`** command to make annotations visible or hidden in the editor.
+    - Shortcut: `Ctrl+Alt+T` (Windows/Linux) or `Cmd+Alt+T` (Mac).
 
 ### Moving Annotations
 
 - **Move an annotation within the editor**:
-  - Position your cursor on the line above or below the annotation.
-  - Use the **`Move Annotation Up`** or **`Move Annotation Down`** commands available in the context menu or annotations panel.
-  - Annotations automatically follow their lines when you modify code within Visual Studio Code.
+    - Position your cursor on the line above or below the annotation.
+    - Use the **`Move Annotation Up`** or **`Move Annotation Down`** commands available in the context menu or annotations panel.
+    - Annotations automatically follow their lines when you modify code within Visual Studio Code.
 
 ### Replying to an Annotation
 
 - **Add a comment to an existing annotation**:
-  - In the annotations panel, select the annotation you want to reply to.
-  - Click **`Reply`** to add a comment and start a thread.
+    - In the annotations panel, select the annotation you want to reply to.
+    - Click **`Reply`** to add a comment and start a thread.
 
 ### Filtering and Sorting Annotations
 
 - **Filter annotations**:
-  - Use the filtering options in the annotations panel to display annotations by file or author.
+    - Use the filtering options in the annotations panel to display annotations by file or author.
 - **Sort annotations**:
-  - Sort annotations by date, number of comments, etc., for efficient management.
+    - Sort annotations by date, number of comments, etc., for efficient management.
 
 ### Batch Editing Annotations
 
 - **Modify multiple annotations**:
-  - Open the annotations panel.
-  - Select the annotations you wish to edit.
-  - Use the **`Batch Edit Annotations`** command to apply changes to all selected annotations simultaneously.
+    - Open the annotations panel.
+    - Select the annotations you wish to edit.
+    - Use the **`Batch Edit Annotations`** command to apply changes to all selected annotations simultaneously.
 
 ### Keyword Search
 
 - **Search for annotations by keyword**:
-  - Use the **`Keyword Search`** feature in the annotations panel.
-  - Enter the desired keyword to filter annotations containing that term.
+    - Use the **`Keyword Search`** feature in the annotations panel.
+    - Enter the desired keyword to filter annotations containing that term.
 
 ### Filter by Severity
 
 - **Categorize annotations**:
-  - Use the **`Filter by Severity`** option to display annotations based on their assigned severity levels (e.g., info, warning, error).
+    - Use the **`Filter by Severity`** option to display annotations based on their assigned severity levels (e.g., info, warning, error).
 
 ### Set Annotation Severity
 
 - **Adjust severity**:
-  - Right-click on an annotated line and choose **`Set Annotation Severity`**.
-  - Select the appropriate level (`info`, `warning`, or `error`) to better classify the annotation.
+    - Right-click on an annotated line and choose **`Set Annotation Severity`**.
+    - Select the appropriate level (`info`, `warning`, or `error`) to better classify the annotation.
 
 ## 🤖 AI-Powered Features
 
@@ -237,6 +247,7 @@ Attach and execute code directly from annotations:
 Out-of-Code Insights now supports **all major LLM providers**, giving you flexibility in choosing your AI assistant:
 
 **Supported Providers:**
+
 - OpenAI
 - Anthropic (Claude)
 - Google (Gemini)
@@ -247,6 +258,7 @@ Out-of-Code Insights now supports **all major LLM providers**, giving you flexib
 - And many more...
 
 **Quick Setup:**
+
 1. Open VS Code Settings (`Ctrl+,`)
 2. Search for "annotation.provider"
 3. Select your preferred LLM provider
@@ -257,16 +269,18 @@ Out-of-Code Insights now supports **all major LLM providers**, giving you flexib
 Create specialized AI profiles for different analysis needs:
 
 **Creating a Custom Profile:**
+
 1. Right-click → "Out-of-Code Insight" → "AI Analysis" → "AI: Manage Custom Profiles"
 2. Select "Create New Profile"
 3. Configure:
-   - **Profile ID**: Unique identifier (e.g., `security-auditor`)
-   - **Name**: Display name
-   - **Analysis Prompt**: What the AI should look for
-   - **Default Tags**: Automatically applied tags
-   - **Severity & Priority**: Default annotation settings
+    - **Profile ID**: Unique identifier (e.g., `security-auditor`)
+    - **Name**: Display name
+    - **Analysis Prompt**: What the AI should look for
+    - **Default Tags**: Automatically applied tags
+    - **Severity & Priority**: Default annotation settings
 
 **Example Custom Profiles:**
+
 - **Security Auditor**: Focuses on vulnerabilities and security best practices
 - **Performance Optimizer**: Identifies bottlenecks and optimization opportunities
 - **Code Reviewer**: Comprehensive code quality analysis
@@ -275,16 +289,19 @@ Create specialized AI profiles for different analysis needs:
 ### Enhanced AI Analysis
 
 **AI Suggest with Profile** (`Ctrl+Alt+I`):
+
 - Select from both user profiles and AI profiles
 - Option to add custom instructions
 - Context-aware suggestions based on surrounding code
 
 **AI Analyze File**:
+
 - Analyze entire files with selected AI profile
 - Pre-analysis confirmation with file details
 - Batch review of suggested annotations
 
 **Custom Prompts**:
+
 - Add specific instructions to any AI analysis
 - Prompts stack with profile behavior
 - Perfect for one-off requirements
@@ -294,7 +311,7 @@ Create specialized AI profiles for different analysis needs:
 ### Auto-Resolve Stale Annotations
 
 - **Automatic management**:
-  - Enable **`Auto-Resolve Stale Annotations`** to automatically handle annotations that are outdated or no longer relevant.
+    - Enable **`Auto-Resolve Stale Annotations`** to automatically handle annotations that are outdated or no longer relevant.
 
 ### Batch Creation System
 
@@ -304,12 +321,13 @@ This feature allows you to create multiple types of items in a single operation 
 - **Access**: Right-click → "Out-of-Code Insight" → "AI Analysis" → "Batch Create Mixed Items"
 - **Multiple selection**: Choose any combination of items to create
 - **Available types**:
-  - 📝 **Annotations**: Generate multiple annotations with AI to analyze your code
-  - 📋 **Templates**: Create reusable templates to standardize your annotations
-  - 🔗 **Links**: Connect existing annotations to create logical connections
-  - 💻 **Snippets**: Generate reusable code snippets
+    - 📝 **Annotations**: Generate multiple annotations with AI to analyze your code
+    - 📋 **Templates**: Create reusable templates to standardize your annotations
+    - 🔗 **Links**: Connect existing annotations to create logical connections
+    - 💻 **Snippets**: Generate reusable code snippets
 
 **Usage examples**:
+
 1. **Complete code review**: Create annotations + templates for a standardized review
 2. **Feature documentation**: Create links between annotations + example code snippets
 3. **Refactoring**: Create refactoring templates + annotations for areas to modify
@@ -317,16 +335,19 @@ This feature allows you to create multiple types of items in a single operation 
 **Details by type**:
 
 📋 **Template Batch Creation**:
+
 - Create up to 10 annotation templates at once
 - Define for each template: name, message with variables, tags, and severity
 - Templates are immediately available via `Ctrl+Shift+Alt+T`
 
 🔗 **Link Batch Creation**:
+
 - Select multiple existing annotations to link
 - Create named link groups (e.g., "Authentication flow")
 - Ideal for tracing implementations across multiple files
 
 💻 **Snippet Batch Creation**:
+
 - **From selection**: Transform selected code into reusable snippet
 - **With AI**: Generate snippets based on your needs (e.g., "error handling patterns")
 - **Manual input**: Create multiple snippets with custom code and descriptions
@@ -334,6 +355,7 @@ This feature allows you to create multiple types of items in a single operation 
 ## 📋 Key Commands
 
 ### AI Commands
+
 - **AI: Analyze Entire File** - Analyze complete file with current AI profile
 - **AI: Analyze File with Profile** - Choose specific profile for analysis
 - **AI: Batch Generate Annotations** - Create multiple annotations with focus areas
@@ -342,10 +364,12 @@ This feature allows you to create multiple types of items in a single operation 
 - **Batch Create Mixed Items** - Create templates, links, and snippets in batch
 
 ### Profile Commands
+
 - **Select User Profile** - Switch between user and AI profiles
 - **Manage User Profiles** - Manage your personal profiles
 
 ### Keyboard Shortcuts
+
 - `Ctrl+Alt+I` - AI Suggest Annotation
 - `Ctrl+Alt+A` - Add Annotation
 - `Ctrl+Alt+E` - Edit Annotation
@@ -360,120 +384,120 @@ For the full command reference grouped by feature, see
 
 ### Quick reference -- most-used commands
 
-| Command | Keybinding (Win/Linux) | Description |
-|---|---|---|
-| Add Annotation | `Ctrl+Alt+A` | Insert annotation on current line |
-| Edit Annotation | `Ctrl+Alt+E` | Edit annotation on current line |
-| Toggle Display | `Ctrl+Alt+T` | Show or hide all annotations |
-| Show Kanban Board | `Ctrl+Alt+K` | Open Kanban view |
-| AI Suggest | `Ctrl+Alt+I` | Generate AI annotation for current line |
-| Next Annotation | `F8` | Navigate to next annotation (review mode) |
-| Navigate to Linked | `Ctrl+Alt+L` | Jump to linked annotation |
-| Apply Template | `Ctrl+Shift+Alt+T` | Apply annotation template |
+| Command            | Keybinding (Win/Linux) | Description                               |
+| ------------------ | ---------------------- | ----------------------------------------- |
+| Add Annotation     | `Ctrl+Alt+A`           | Insert annotation on current line         |
+| Edit Annotation    | `Ctrl+Alt+E`           | Edit annotation on current line           |
+| Toggle Display     | `Ctrl+Alt+T`           | Show or hide all annotations              |
+| Show Kanban Board  | `Ctrl+Alt+K`           | Open Kanban view                          |
+| AI Suggest         | `Ctrl+Alt+I`           | Generate AI annotation for current line   |
+| Next Annotation    | `F8`                   | Navigate to next annotation (review mode) |
+| Navigate to Linked | `Ctrl+Alt+L`           | Jump to linked annotation                 |
+| Apply Template     | `Ctrl+Shift+Alt+T`     | Apply annotation template                 |
 
 ### Annotation lifecycle
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.add` | Add Annotation | `Ctrl+Alt+A` |
-| `annotations.edit` | Edit Annotation | `Ctrl+Alt+E` |
-| `annotations.delete` | Delete Annotation | `Ctrl+Alt+D` |
-| `annotations.reply` | Reply to Annotation |  -  |
-| `annotations.clearAll` | Clear All Annotations |  -  |
-| `annotations.pinToggle` | Toggle Annotation Pin |  -  |
-| `annotations.setSeverity` | Set Annotation Severity |  -  |
-| `annotations.markAsViewed` | Mark Annotation as Viewed |  -  |
-| `annotations.batchEdit` | Batch Edit Annotations in File |  -  |
+| Command ID                 | Title                          | Default keybinding |
+| -------------------------- | ------------------------------ | ------------------ |
+| `annotations.add`          | Add Annotation                 | `Ctrl+Alt+A`       |
+| `annotations.edit`         | Edit Annotation                | `Ctrl+Alt+E`       |
+| `annotations.delete`       | Delete Annotation              | `Ctrl+Alt+D`       |
+| `annotations.reply`        | Reply to Annotation            | -                  |
+| `annotations.clearAll`     | Clear All Annotations          | -                  |
+| `annotations.pinToggle`    | Toggle Annotation Pin          | -                  |
+| `annotations.setSeverity`  | Set Annotation Severity        | -                  |
+| `annotations.markAsViewed` | Mark Annotation as Viewed      | -                  |
+| `annotations.batchEdit`    | Batch Edit Annotations in File | -                  |
 
 ### Display & navigation
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.show` | Show Annotations Panel | `Ctrl+Alt+S` |
-| `annotations.toggleDisplay` | Toggle Annotations Display | `Ctrl+Alt+T` |
-| `annotations.navigate` | Navigate to Annotation |  -  |
-| `annotations.moveUp` | Move Annotation Up |  -  |
-| `annotations.moveDown` | Move Annotation Down |  -  |
-| `annotations.nextAnnotation` | Next Annotation | `F8` |
-| `annotations.previousAnnotation` | Previous Annotation | `Shift+F8` |
-| `stack.back` | Navigation Stack  -  Back | `Alt+Left` |
-| `stack.forward` | Navigation Stack  -  Forward | `Alt+Right` |
+| Command ID                       | Title                      | Default keybinding |
+| -------------------------------- | -------------------------- | ------------------ |
+| `annotations.show`               | Show Annotations Panel     | `Ctrl+Alt+S`       |
+| `annotations.toggleDisplay`      | Toggle Annotations Display | `Ctrl+Alt+T`       |
+| `annotations.navigate`           | Navigate to Annotation     | -                  |
+| `annotations.moveUp`             | Move Annotation Up         | -                  |
+| `annotations.moveDown`           | Move Annotation Down       | -                  |
+| `annotations.nextAnnotation`     | Next Annotation            | `F8`               |
+| `annotations.previousAnnotation` | Previous Annotation        | `Shift+F8`         |
+| `stack.back`                     | Navigation Stack - Back    | `Alt+Left`         |
+| `stack.forward`                  | Navigation Stack - Forward | `Alt+Right`        |
 
 ### Search
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.keywordSearch` | Keyword Search in Annotations |  -  |
+| Command ID                  | Title                         | Default keybinding |
+| --------------------------- | ----------------------------- | ------------------ |
+| `annotations.keywordSearch` | Keyword Search in Annotations | -                  |
 
 ### Linked annotations
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.createLink` | Create Annotation Link |  -  |
-| `annotations.removeLink` | Remove Annotation Link |  -  |
-| `annotations.navigateToLinked` | Navigate to Linked Annotation | `Ctrl+Alt+L` |
-| `annotations.showLinks` | Show All Links |  -  |
+| Command ID                     | Title                         | Default keybinding |
+| ------------------------------ | ----------------------------- | ------------------ |
+| `annotations.createLink`       | Create Annotation Link        | -                  |
+| `annotations.removeLink`       | Remove Annotation Link        | -                  |
+| `annotations.navigateToLinked` | Navigate to Linked Annotation | `Ctrl+Alt+L`       |
+| `annotations.showLinks`        | Show All Links                | -                  |
 
 ### Templates
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.createTemplate` | Create Annotation Template |  -  |
-| `annotations.applyTemplate` | Apply Template | `Ctrl+Shift+Alt+T` |
-| `annotations.manageTemplates` | Manage Templates |  -  |
+| Command ID                    | Title                      | Default keybinding |
+| ----------------------------- | -------------------------- | ------------------ |
+| `annotations.createTemplate`  | Create Annotation Template | -                  |
+| `annotations.applyTemplate`   | Apply Template             | `Ctrl+Shift+Alt+T` |
+| `annotations.manageTemplates` | Manage Templates           | -                  |
 
 ### Code snippets
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.addSnippet` | Add Code Snippet to Annotation |  -  |
-| `annotations.applySnippet` | Apply Code Snippet |  -  |
-| `annotations.previewSnippet` | Preview Snippet Changes |  -  |
+| Command ID                   | Title                          | Default keybinding |
+| ---------------------------- | ------------------------------ | ------------------ |
+| `annotations.addSnippet`     | Add Code Snippet to Annotation | -                  |
+| `annotations.applySnippet`   | Apply Code Snippet             | -                  |
+| `annotations.previewSnippet` | Preview Snippet Changes        | -                  |
 
 ### Review mode
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.startReview` | Start Review Mode |  -  |
-| `annotations.stopReview` | Stop Review Mode |  -  |
-| `annotations.reviewMode.filter` | Filter Annotations for Review |  -  |
+| Command ID                      | Title                         | Default keybinding |
+| ------------------------------- | ----------------------------- | ------------------ |
+| `annotations.startReview`       | Start Review Mode             | -                  |
+| `annotations.stopReview`        | Stop Review Mode              | -                  |
+| `annotations.reviewMode.filter` | Filter Annotations for Review | -                  |
 
 ### Kanban board
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.showKanban` | Show Kanban Board | `Ctrl+Alt+K` |
-| `annotations.addKanbanColumn` | Add Kanban Column |  -  |
-| `annotations.moveToColumn` | Move Annotation to Column |  -  |
+| Command ID                    | Title                     | Default keybinding |
+| ----------------------------- | ------------------------- | ------------------ |
+| `annotations.showKanban`      | Show Kanban Board         | `Ctrl+Alt+K`       |
+| `annotations.addKanbanColumn` | Add Kanban Column         | -                  |
+| `annotations.moveToColumn`    | Move Annotation to Column | -                  |
 
 ### Import / export
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.exportJSON` | Export Annotations to JSON |  -  |
-| `annotations.importJSON` | Import Annotations from JSON |  -  |
+| Command ID               | Title                        | Default keybinding |
+| ------------------------ | ---------------------------- | ------------------ |
+| `annotations.exportJSON` | Export Annotations to JSON   | -                  |
+| `annotations.importJSON` | Import Annotations from JSON | -                  |
 
 ### User profiles
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.selectProfile` | Select User Profile |  -  |
-| `annotations.manageProfiles` | Manage User Profiles |  -  |
+| Command ID                   | Title                | Default keybinding |
+| ---------------------------- | -------------------- | ------------------ |
+| `annotations.selectProfile`  | Select User Profile  | -                  |
+| `annotations.manageProfiles` | Manage User Profiles | -                  |
 
 ### AI features
 
-| Command ID | Title | Default keybinding |
-|---|---|---|
-| `annotations.aiSuggest` | AI Suggest Annotation | `Ctrl+Alt+I` |
-| `annotations.aiSuggestWithProfile` | AI Suggest with Profile |  -  |
-| `annotations.aiAnalyzeFile` | AI: Analyze Entire File |  -  |
-| `annotations.aiAnalyzeFileWithProfile` | AI: Analyze File with Profile |  -  |
-| `annotations.aiBatchAnnotate` | AI: Batch Generate Annotations |  -  |
-| `annotations.batchCreateMixed` | Batch Create Mixed Items (templates / links / snippets) |  -  |
-| `annotations.manageAIProfiles` | AI: Manage Custom Profiles |  -  |
-| `annotations.updateApiKey` | Update AI Provider API Key |  -  |
-| `annotations.updateOpenAIKey` | Update OpenAI Key *(legacy)* |  -  |
-| `annotations.resetOpenAIKey` | Reset OpenAI Key *(legacy)* |  -  |
+| Command ID                             | Title                                                   | Default keybinding |
+| -------------------------------------- | ------------------------------------------------------- | ------------------ |
+| `annotations.aiSuggest`                | AI Suggest Annotation                                   | `Ctrl+Alt+I`       |
+| `annotations.aiSuggestWithProfile`     | AI Suggest with Profile                                 | -                  |
+| `annotations.aiAnalyzeFile`            | AI: Analyze Entire File                                 | -                  |
+| `annotations.aiAnalyzeFileWithProfile` | AI: Analyze File with Profile                           | -                  |
+| `annotations.aiBatchAnnotate`          | AI: Batch Generate Annotations                          | -                  |
+| `annotations.batchCreateMixed`         | Batch Create Mixed Items (templates / links / snippets) | -                  |
+| `annotations.manageAIProfiles`         | AI: Manage Custom Profiles                              | -                  |
+| `annotations.updateApiKey`             | Update AI Provider API Key                              | -                  |
+| `annotations.updateOpenAIKey`          | Update OpenAI Key _(legacy)_                            | -                  |
+| `annotations.resetOpenAIKey`           | Reset OpenAI Key _(legacy)_                             | -                  |
 
 For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./docs/ai-features.md).
 
@@ -482,6 +506,7 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ### Creating and Managing Linked Annotations
 
 **Create a Link:**
+
 1. Position cursor on an existing annotation
 2. Right-click → "Out-of-Code Insight" → "Create Link to Another Annotation"
 3. Choose between linking to existing annotation or creating a new one
@@ -489,18 +514,21 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 5. Navigate with `Ctrl+Alt+L` or click 🔗 indicators in TreeView
 
 **Visualize All Links:**
+
 - Use "Show All Links" command to open interactive link visualization
 - View statistics, outgoing/incoming relationships, and navigate directly
 
 ### Working with Annotation Templates
 
 **Apply a Template:**
+
 1. Position cursor where you want to add an annotation
 2. Use `Ctrl+Shift+Alt+T` or "Apply Template" command
 3. Select from pre-built templates (Bug, TODO, Refactor, etc.)
 4. Fill in template variables with your specific information
 
 **Create Custom Templates:**
+
 1. Use "Create Annotation Template" command
 2. Define template name, content with variables (`{{variableName}}`)
 3. Set default severity and tags
@@ -509,6 +537,7 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ### Using Review Mode
 
 **Start a Review Session:**
+
 1. Open Command Palette (`Ctrl+Shift+P`) → "Start Review Mode"
 2. Configure filters (optional): author, date range, severity, tags
 3. Navigate with `F8` (next) / `Shift+F8` (previous)
@@ -518,12 +547,14 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ### Managing the Kanban Board
 
 **Open Kanban:**
+
 - Use `Ctrl+Alt+K` or "Show Kanban Board" command
 - Drag & drop annotations between columns
 - Add custom columns for your workflow
 - Filter view by author, severity, or tags
 
 **Kanban Actions:**
+
 - **Move annotations**: Drag between columns or use "Move to Column"
 - **Smart deletion**: Choose to remove from kanban only or delete completely
 - **Quick navigation**: Double-click cards to open file location
@@ -532,6 +563,7 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ### Working with Code Snippets
 
 **Add Snippets to Annotations:**
+
 1. Right-click on annotation → "Add Code Snippet to Annotation"
 2. Enter code with optional variables (`$1`, `$2`, `${1:placeholder}`)
 3. Set language and description
@@ -541,6 +573,7 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ## 💡 Practical Examples & Best Practices
 
 ### Example 1: Code Review Workflow
+
 ```
 1. Reviewer adds annotation: "Consider using async/await here for better readability"
 2. Create template: "REVIEW: {{suggestion}} - Priority: {{priority}}"
@@ -550,17 +583,19 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ```
 
 ### Example 2: Bug Tracking System
+
 ```
 1. Bug report: "BUG: Authentication fails on token refresh"
 2. Link related annotations:
    - Bug annotation → Implementation file
-   - Implementation → Test file  
+   - Implementation → Test file
    - Test file → Documentation
 3. Attach fix snippet: "if (token.isExpired()) { await refreshToken(); }"
 4. Use Review Mode to systematically check all auth-related annotations
 ```
 
 ### Example 3: Team Documentation
+
 ```
 1. Architect creates templates:
    - "ARCHITECTURE: {{component}} - Purpose: {{purpose}}"
@@ -572,6 +607,7 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ```
 
 ### Pre-built Templates Available
+
 - **Bug**: Report bugs with steps to reproduce and expected vs actual results
 - **TODO**: Task tracking with priority and assignment
 - **Refactor**: Code improvement suggestions with rationale
@@ -581,6 +617,7 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 - **Question**: Questions for team discussion with context
 
 ### Best Practices
+
 - **Use consistent templates** across your team for better communication
 - **Link related annotations** to create a knowledge graph of your codebase
 - **Review annotations regularly** using Review Mode to keep them current
@@ -592,71 +629,70 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ### Configure the annotations.json File Path
 
 - **Set the path to the annotations file**:
-  - Access the extension settings.
-  - Enter the desired path in the **`Path to annotations file`** field. Include the file name (e.g., `annotations.json`), if you not specify the file name, the extension will use the default name (`annotations.json`).
-  - Per default, the annotations file is located in the **`.out-of-code-insights/annotations.json`** directory of your project.
-  - If you change the path, ensure that the directory exists and is accessible. All project using the extension will use this path after the change, else the extension will use the default path in each project.
+    - Access the extension settings.
+    - Enter the desired path in the **`Path to annotations file`** field. Include the file name (e.g., `annotations.json`), if you not specify the file name, the extension will use the default name (`annotations.json`).
+    - Per default, the annotations file is located in the **`.out-of-code-insights/annotations.json`** directory of your project.
+    - If you change the path, ensure that the directory exists and is accessible. All project using the extension will use this path after the change, else the extension will use the default path in each project.
 
 ### Default Severity Setting
 
 - **Specify a default severity**:
-  - In the extension settings, modify **`Default Severity`** to define the severity level applied when creating new annotations.
+    - In the extension settings, modify **`Default Severity`** to define the severity level applied when creating new annotations.
 
 ### Exporting and Importing Annotations
 
 - **Export Annotations to JSON**
-  - Use the `Export Annotations to JSON` command to export all annotations to a JSON file.
-  - Command: `annotations.exportJSON`
-  
+    - Use the `Export Annotations to JSON` command to export all annotations to a JSON file.
+    - Command: `annotations.exportJSON`
 - **Import Annotations from JSON**
-  - Use the `Import Annotations from JSON` command to import annotations from a JSON file.
-  - Command: `annotations.importJSON`
+    - Use the `Import Annotations from JSON` command to import annotations from a JSON file.
+    - Command: `annotations.importJSON`
 
 ### Managing Annotations
 
 - **Toggle Annotation Pin**
-  - Pin or unpin annotations to keep important notes visible.
-  - Command: `annotations.pinToggle`
+    - Pin or unpin annotations to keep important notes visible.
+    - Command: `annotations.pinToggle`
 
 ### Enhanced Features
 
 - **Batch Edit Annotations in File**
-  - Modify multiple annotations simultaneously within a file to streamline your workflow.
-  - Command: `annotations.batchEdit`
+    - Modify multiple annotations simultaneously within a file to streamline your workflow.
+    - Command: `annotations.batchEdit`
 
 - **Keyword Search in Annotations**
-  - Quickly locate annotations by searching for specific keywords.
-  - Command: `annotations.keywordSearch`
+    - Quickly locate annotations by searching for specific keywords.
+    - Command: `annotations.keywordSearch`
 
 ### Important Notes
 
 - **File modification**:
-  - To ensure annotations track file changes correctly, always modify files **within Visual Studio Code**. External modifications may disrupt annotation tracking.
+    - To ensure annotations track file changes correctly, always modify files **within Visual Studio Code**. External modifications may disrupt annotation tracking.
 - **Compatibility with all file types**:
-  - You can add annotations to **any file in your project**, including source code, Markdown, JSON, XML, text, etc.
+    - You can add annotations to **any file in your project**, including source code, Markdown, JSON, XML, text, etc.
 - **Annotation storage**:
-  - Annotations are stored in a JSON file named **`annotations.json`**, located by default in the **`.out-of-code-insights`** directory of your project.
-  - **Include this file in your version control repository** if you want to preserve annotation history and share comments with your team.
+    - Annotations are stored in a JSON file named **`annotations.json`**, located by default in the **`.out-of-code-insights`** directory of your project.
+    - **Include this file in your version control repository** if you want to preserve annotation history and share comments with your team.
 - **OpenAI API Key Management**:
-  - The extension uses your OpenAI API key for AI-powered features.
-  - The key is securely stored using VS Code's Secret Storage, ensuring that your key is protected and only accessible by this extension.
-  - **To remove or update your OpenAI API key**:
-    1. **Open the Command Palette**:
-       - Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac).
-    2. **Type**: `Developer: Clear Extension Secret Storage`.
-    3. **Select Your Extension**:
-       - In the list that appears, select **Out-of-Code Insights**.
-    - This will clear all secrets stored by the extension, including your OpenAI API key.
+    - The extension uses your OpenAI API key for AI-powered features.
+    - The key is securely stored using VS Code's Secret Storage, ensuring that your key is protected and only accessible by this extension.
+    - **To remove or update your OpenAI API key**:
+        1. **Open the Command Palette**:
+            - Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac).
+        2. **Type**: `Developer: Clear Extension Secret Storage`.
+        3. **Select Your Extension**:
+            - In the list that appears, select **Out-of-Code Insights**.
+        - This will clear all secrets stored by the extension, including your OpenAI API key.
 
 ## Configuration
 
 Customize the extension according to your needs by modifying the available settings:
 
 - **Username** (`annotation.username`): Specifies the name that will appear as the annotation author.
-  - **Important**: Update the username to properly identify authors.
+    - **Important**: Update the username to properly identify authors.
 - **Enable annotations** (`annotation.enableAnnotations`): Toggles annotation visibility in the editor.
 - **Custom colors** (`annotation.colors`):
-  - Customize annotation colors, highlight background, and comment borders for both light and dark themes.
+    - Customize annotation colors, highlight background, and comment borders for both light and dark themes.
 - **Enable CodeLens** (`annotation.codelens.enable`): Toggles CodeLens integration.
 - **Show commands in CodeLens** (`annotation.codelens.showCommands`): Toggles command display in CodeLens.
 - **Batch Edit Annotations** (`annotation.batchEdit`): Enable or disable the batch editing feature.
@@ -664,8 +700,8 @@ Customize the extension according to your needs by modifying the available setti
 - **Filter by Severity** (`annotation.filterBySeverity`): Set preferences for severity-based annotation filtering.
 - **Default Severity** (`annotation.defaultSeverity`): Choose the severity level automatically applied to new annotations.
 - **Advanced settings**:
-  - **Change detection delay** (`annotation.debounceDelay`)
-  - **Maximum annotations per file** (`annotation.maxAnnotationsPerFile`)
+    - **Change detection delay** (`annotation.debounceDelay`)
+    - **Maximum annotations per file** (`annotation.maxAnnotationsPerFile`)
 
 **Access settings**:
 
@@ -681,20 +717,20 @@ You can customize Out-of-Code Insights using the following settings (available i
 - **annotation.provider**: Select the LLM provider to use for AI-powered features. Supported values: `openai`, `anthropic`, `azure`, `cerebras`, `deepseek`, `google`, `groq`, `meta`, `mistralai`, `ollama`, `openrouter`, `togetherai`, `xai`.
 - **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-opus`, etc.).
 - **annotation.llm.apiKeys**: Object containing API keys for all supported LLM providers. Example:
-  ```json
-  "annotation.llm.apiKeys": {
-    "openai": "sk-...",
-    "anthropic": "sk-ant-...",
-    "azure": "...",
-    "mistralai": "...",
-    "groq": "...",
-    "ollama": "...",
-    "google": "...",
-    "openrouter": "...",
-    "togetherai": "...",
-    "xai": "..."
-  }
-  ```
+    ```json
+    "annotation.llm.apiKeys": {
+      "openai": "sk-...",
+      "anthropic": "sk-ant-...",
+      "azure": "...",
+      "mistralai": "...",
+      "groq": "...",
+      "ollama": "...",
+      "google": "...",
+      "openrouter": "...",
+      "togetherai": "...",
+      "xai": "..."
+    }
+    ```
 - **annotation.colors.light.annotation**: Annotation color for light theme.
 - **annotation.colors.light.highlightBackground**: Highlight background for annotations in light theme.
 - **annotation.colors.light.commentBorder**: Comment border color in light theme.
@@ -737,67 +773,68 @@ To use AI-powered annotation generation, you can choose from multiple LLM provid
 - You can change providers or models at any time in the settings; the relevant key will be requested if needed.
 
 ### Notes
+
 - If no key is set for the selected provider, the extension will prompt you to enter it on first use.
 - All keys can be managed in the settings for quick and centralized access.
 - The multi-provider system lets you easily switch between LLMs and models according to your needs or quotas.
 
 ## Keyboard Shortcuts
 
-| **Action**                          | **Shortcut (Windows/Linux)** | **Shortcut (Mac)**  |
-|-------------------------------------|------------------------------|---------------------|
-| Add an annotation                   | `Ctrl+Alt+A`                 | `Cmd+Alt+A`         |
-| Edit an annotation                  | `Ctrl+Alt+E`                 | `Cmd+Alt+E`         |
-| Delete an annotation                | `Ctrl+Alt+D`                 | `Cmd+Alt+D`         |
-| Show annotations panel              | `Ctrl+Alt+S`                 | `Cmd+Alt+S`         |
-| Toggle annotation visibility        | `Ctrl+Alt+T`                 | `Cmd+Alt+T`         |
-| Batch Edit Annotations              | `Ctrl+Alt+B`                 | `Cmd+Alt+B`         |
-| Keyword Search                      | `Ctrl+Alt+K`                 | `Cmd+Alt+K`         |
-| Filter by Severity                  | `Ctrl+Alt+F`                 | `Cmd+Alt+F`         |
-| Show AI Suggestion             | `Ctrl+Alt+G`                 | `Cmd+Alt+G`         |
-| Auto-Resolve Stale Annotations      | `Ctrl+Alt+R`                 | `Cmd+Alt+R`         |
-| **Advanced Features**               |                               |                     |
-| Create Link to Annotation          | `Ctrl+Alt+L`                 | `Cmd+Alt+L`         |
-| Apply Annotation Template          | `Ctrl+Shift+Alt+T`           | `Cmd+Shift+Alt+T`   |
-| Show Kanban Board                  | `Ctrl+Alt+K`                 | `Cmd+Alt+K`         |
-| Next Annotation (Review Mode)      | `F8`                         | `F8`                |
-| Previous Annotation (Review Mode)  | `Shift+F8`                   | `Shift+F8`          |
+| **Action**                        | **Shortcut (Windows/Linux)** | **Shortcut (Mac)** |
+| --------------------------------- | ---------------------------- | ------------------ |
+| Add an annotation                 | `Ctrl+Alt+A`                 | `Cmd+Alt+A`        |
+| Edit an annotation                | `Ctrl+Alt+E`                 | `Cmd+Alt+E`        |
+| Delete an annotation              | `Ctrl+Alt+D`                 | `Cmd+Alt+D`        |
+| Show annotations panel            | `Ctrl+Alt+S`                 | `Cmd+Alt+S`        |
+| Toggle annotation visibility      | `Ctrl+Alt+T`                 | `Cmd+Alt+T`        |
+| Batch Edit Annotations            | `Ctrl+Alt+B`                 | `Cmd+Alt+B`        |
+| Keyword Search                    | `Ctrl+Alt+K`                 | `Cmd+Alt+K`        |
+| Filter by Severity                | `Ctrl+Alt+F`                 | `Cmd+Alt+F`        |
+| Show AI Suggestion                | `Ctrl+Alt+G`                 | `Cmd+Alt+G`        |
+| Auto-Resolve Stale Annotations    | `Ctrl+Alt+R`                 | `Cmd+Alt+R`        |
+| **Advanced Features**             |                              |                    |
+| Create Link to Annotation         | `Ctrl+Alt+L`                 | `Cmd+Alt+L`        |
+| Apply Annotation Template         | `Ctrl+Shift+Alt+T`           | `Cmd+Shift+Alt+T`  |
+| Show Kanban Board                 | `Ctrl+Alt+K`                 | `Cmd+Alt+K`        |
+| Next Annotation (Review Mode)     | `F8`                         | `F8`               |
+| Previous Annotation (Review Mode) | `Shift+F8`                   | `Shift+F8`         |
 
 Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tabular format, suitable for inclusion in your README. Each command can be run by opening the Command Palette (**Ctrl+Shift+P**) and typing its name:
 
-| **Action**                        | **Command**                  | **Description**                                                            |
-|-----------------------------------|------------------------------|----------------------------------------------------------------------------|
-| Add Annotation                    | `annotations.add`            | Adds a new annotation to the current line of code.                         |
-| Reply to Annotation               | `annotations.reply`          | Adds a reply/comment to an existing annotation.                            |
-| Clear All Annotations             | `annotations.clearAll`       | Removes all annotations from the project.                                  |
-| Delete Annotation                 | `annotations.delete`         | Deletes the annotation on the current line.                                |
-| Edit Annotation                   | `annotations.edit`           | Edits the annotation on the current line.                                  |
-| Toggle Annotations Display        | `annotations.toggleDisplay`  | Shows or hides all annotations in the editor.                              |
-| Navigate to Annotation            | `annotations.navigate`       | Jumps directly to the specified annotation.                                |
-| Export Annotations to JSON        | `annotations.exportJSON`     | Exports all annotations to a JSON file.                                    |
-| Import Annotations from JSON      | `annotations.importJSON`     | Imports annotations from a JSON file.                                      |
-| Toggle Annotation Pin             | `annotations.pinToggle`      | Pins or unpins the annotation at the current line.                         |
-| Batch Edit Annotations in File    | `annotations.batchEdit`      | Updates all annotations within the current file at once.                   |
-| Keyword Search in Annotations     | `annotations.keywordSearch`   | Searches annotations by a keyword.                                         |
-| AI Suggest Annotation             | `annotations.aiSuggest`      | Requests an AI-generated annotation for the current line of code.          |
-| Move Annotation Up                | `annotations.moveUp`         | Moves the annotation on the current line up by one line.                   |
-| Move Annotation Down              | `annotations.moveDown`       | Moves the annotation on the current line down by one line.                 |
-| Show Annotations Panel            | `annotations.show`           | Opens the annotations panel to view and manage all annotations.            |
-| Update OpenAI Key                 | `annotations.updateOpenAIKey`| Prompts you to enter a new OpenAI API key.                                 |
-| Reset OpenAI Key                  | `annotations.resetOpenAIKey` | Clears the stored OpenAI API key, requiring a new key on the next AI call. |
-| **Advanced Features**             |                              |                                                                            |
-| Create Link to Another Annotation| `annotations.createLink`     | Creates a relationship link between two annotations across files.           |
-| Navigate to Linked Annotation    | `annotations.navigateToLinked`| Navigates to annotations linked to the current one.                       |
-| Show All Links                    | `annotations.showLinks`      | Opens interactive visualization of all annotation links.                   |
-| Apply Annotation Template        | `annotations.applyTemplate`  | Applies a pre-built or custom template to create structured annotations.   |
-| Create Annotation Template       | `annotations.createTemplate` | Creates a new custom annotation template with variables.                   |
-| Manage Templates                  | `annotations.manageTemplates`| Opens template management interface.                                       |
-| Start Review Mode                 | `annotations.startReview`    | Begins systematic review of annotations with filtering options.            |
-| Stop Review Mode                  | `annotations.stopReview`     | Ends the current review session and shows statistics.                     |
-| Next Annotation                   | `annotations.nextAnnotation` | Navigates to the next annotation in review mode.                          |
-| Previous Annotation               | `annotations.previousAnnotation` | Navigates to the previous annotation in review mode.                  |
-| Show Kanban Board                 | `annotations.showKanban`     | Opens the visual Kanban board for annotation management.                  |
-| Add Code Snippet to Annotation   | `annotations.addSnippet`     | Attaches an executable code snippet to an annotation.                     |
-| Apply Code Snippet               | `annotations.applySnippet`   | Executes and applies a code snippet from an annotation.                   |
+| **Action**                        | **Command**                      | **Description**                                                            |
+| --------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| Add Annotation                    | `annotations.add`                | Adds a new annotation to the current line of code.                         |
+| Reply to Annotation               | `annotations.reply`              | Adds a reply/comment to an existing annotation.                            |
+| Clear All Annotations             | `annotations.clearAll`           | Removes all annotations from the project.                                  |
+| Delete Annotation                 | `annotations.delete`             | Deletes the annotation on the current line.                                |
+| Edit Annotation                   | `annotations.edit`               | Edits the annotation on the current line.                                  |
+| Toggle Annotations Display        | `annotations.toggleDisplay`      | Shows or hides all annotations in the editor.                              |
+| Navigate to Annotation            | `annotations.navigate`           | Jumps directly to the specified annotation.                                |
+| Export Annotations to JSON        | `annotations.exportJSON`         | Exports all annotations to a JSON file.                                    |
+| Import Annotations from JSON      | `annotations.importJSON`         | Imports annotations from a JSON file.                                      |
+| Toggle Annotation Pin             | `annotations.pinToggle`          | Pins or unpins the annotation at the current line.                         |
+| Batch Edit Annotations in File    | `annotations.batchEdit`          | Updates all annotations within the current file at once.                   |
+| Keyword Search in Annotations     | `annotations.keywordSearch`      | Searches annotations by a keyword.                                         |
+| AI Suggest Annotation             | `annotations.aiSuggest`          | Requests an AI-generated annotation for the current line of code.          |
+| Move Annotation Up                | `annotations.moveUp`             | Moves the annotation on the current line up by one line.                   |
+| Move Annotation Down              | `annotations.moveDown`           | Moves the annotation on the current line down by one line.                 |
+| Show Annotations Panel            | `annotations.show`               | Opens the annotations panel to view and manage all annotations.            |
+| Update OpenAI Key                 | `annotations.updateOpenAIKey`    | Prompts you to enter a new OpenAI API key.                                 |
+| Reset OpenAI Key                  | `annotations.resetOpenAIKey`     | Clears the stored OpenAI API key, requiring a new key on the next AI call. |
+| **Advanced Features**             |                                  |                                                                            |
+| Create Link to Another Annotation | `annotations.createLink`         | Creates a relationship link between two annotations across files.          |
+| Navigate to Linked Annotation     | `annotations.navigateToLinked`   | Navigates to annotations linked to the current one.                        |
+| Show All Links                    | `annotations.showLinks`          | Opens interactive visualization of all annotation links.                   |
+| Apply Annotation Template         | `annotations.applyTemplate`      | Applies a pre-built or custom template to create structured annotations.   |
+| Create Annotation Template        | `annotations.createTemplate`     | Creates a new custom annotation template with variables.                   |
+| Manage Templates                  | `annotations.manageTemplates`    | Opens template management interface.                                       |
+| Start Review Mode                 | `annotations.startReview`        | Begins systematic review of annotations with filtering options.            |
+| Stop Review Mode                  | `annotations.stopReview`         | Ends the current review session and shows statistics.                      |
+| Next Annotation                   | `annotations.nextAnnotation`     | Navigates to the next annotation in review mode.                           |
+| Previous Annotation               | `annotations.previousAnnotation` | Navigates to the previous annotation in review mode.                       |
+| Show Kanban Board                 | `annotations.showKanban`         | Opens the visual Kanban board for annotation management.                   |
+| Add Code Snippet to Annotation    | `annotations.addSnippet`         | Attaches an executable code snippet to an annotation.                      |
+| Apply Code Snippet                | `annotations.applySnippet`       | Executes and applies a code snippet from an annotation.                    |
 
 ## Additional Features
 
@@ -822,7 +859,9 @@ The **Out-of-Code Insights** extension includes a **Tree View** and an **Activit
 The **Tree View** allows you to visualize and manage annotations in a structured manner. It is accessible via the Activity Bar in Visual Studio Code.
 
 - **Grouping by file**: Annotations are grouped by file, making navigation and management easier.
+
 ### Example Usage
+
 - **Annotation display**: Each file contains a list of annotations with details such as the author, date, and annotation message.
 - **Annotation actions**: You can navigate to an annotation, edit it, delete it, or add comments directly from the Tree View.
 
@@ -836,20 +875,20 @@ The **Activity Bar** adds a dedicated icon for **Out-of-Code Insights** in the V
 ### Example Usage
 
 1. **Open the Tree View**:
-   - Click the **Out-of-Code Insights** icon in the Activity Bar.
-   - The Tree View opens, displaying annotations grouped by file.
+    - Click the **Out-of-Code Insights** icon in the Activity Bar.
+    - The Tree View opens, displaying annotations grouped by file.
 
 2. **Navigate to an annotation**:
-   - Click on an annotation in the Tree View.
-   - The code editor automatically positions itself on the line of the selected annotation.
+    - Click on an annotation in the Tree View.
+    - The code editor automatically positions itself on the line of the selected annotation.
 
 3. **Edit or delete an annotation**:
-   - Right-click on an annotation in the Tree View.
-   - Select **Edit** or **Delete** from the context menu.
+    - Right-click on an annotation in the Tree View.
+    - Select **Edit** or **Delete** from the context menu.
 
 4. **Add a comment**:
-   - Select an annotation in the Tree View.
-   - Click **Reply** to add a comment to the annotation.
+    - Select an annotation in the Tree View.
+    - Click **Reply** to add a comment to the annotation.
 
 These features enhance annotation management by providing an overview and management tools directly integrated into the Visual Studio Code interface.
 
@@ -858,41 +897,49 @@ These features enhance annotation management by providing an overview and manage
 ### Common Issues and Solutions
 
 #### "Annotations not showing in editor"
+
 - **Check visibility**: Use `Ctrl+Alt+T` to toggle annotation display
 - **Verify file path**: Ensure annotations.json is in the correct location (`.out-of-code-insights/` by default)
 - **Restart VS Code**: Sometimes a restart is needed after installation
 
 #### "Template variables not working"
+
 - **Use correct syntax**: Variables should be `{{variableName}}` with double curly braces
 - **Check template format**: Ensure template is properly saved and contains variables
 - **Verify input**: Make sure you're entering values for all template variables
 
 #### "Linked annotations not navigating correctly"
+
 - **Check file paths**: Ensure linked files exist and paths are correct
 - **Verify line numbers**: Line numbers should match the actual annotation location
 - **Use relative paths**: For better portability, use relative paths when linking
 
 #### "Kanban board not updating"
+
 - **Refresh manually**: Use the refresh button in the Kanban board
 - **Check column assignments**: Ensure annotations are assigned to valid columns
 - **Restart extension**: Disable and re-enable the extension if needed
 
 #### "Code snippets not applying"
+
 - **Position correctly**: Ensure cursor is on the annotation line before applying
 - **Check snippet syntax**: Variables should use `$1`, `$2`, `${1:placeholder}` format
 - **Verify language**: Make sure the snippet language matches the target file
 
 #### "Review Mode not starting"
+
 - **Check filters**: Ensure filter settings aren't excluding all annotations
 - **Verify annotations exist**: Make sure there are annotations to review
 - **Reset filters**: Clear all filters and try again
 
 #### "Performance issues with large projects"
+
 - **Increase limits**: Adjust `annotation.maxAnnotationsPerFile` in settings
 - **Use filters**: Filter annotations by file, author, or date to reduce load
 - **Close unused features**: Close Kanban board and Review Mode when not needed
 
 ### Getting Help
+
 - **Check settings**: Review all extension settings in VS Code preferences
 - **Console logs**: Open Developer Tools (F12) to check for error messages
 - **Extension page**: Visit the VS Code marketplace page for updates and known issues
@@ -900,10 +947,10 @@ These features enhance annotation management by providing an overview and manage
 
 ## Known Issues
 
-- **`AnnotationManager` God Object**  -  the core class is currently ~3,450 lines and concentrates 13 responsibilities. A decomposition into focused services is on the v2 roadmap (tracked as a `good first issue (architecture)`). Functionality is unaffected; the code is harder to navigate for new contributors.
-- **HTML inline in webviews**  -  three webviews embed HTML/CSS/JS inside TypeScript template literals, which prevents IDE syntax highlighting and complicates debugging. Extraction to standalone files is planned.
-- **No automated UI tests yet**  -  the test suite covers integration smoke paths only. Exhaustive UI test coverage is a backlog item.
-- **`npm install` reports transitive vulnerabilities**  -  these come from third-party transitive dependencies (notably in dev tooling). They do not affect runtime; we track upstream fixes and run `npm audit` regularly.
+- **`AnnotationManager` God Object** - the core class is currently ~3,450 lines and concentrates 13 responsibilities. A decomposition into focused services is on the v2 roadmap (tracked as a `good first issue (architecture)`). Functionality is unaffected; the code is harder to navigate for new contributors.
+- **HTML inline in webviews** - three webviews embed HTML/CSS/JS inside TypeScript template literals, which prevents IDE syntax highlighting and complicates debugging. Extraction to standalone files is planned.
+- **No automated UI tests yet** - the test suite covers integration smoke paths only. Exhaustive UI test coverage is a backlog item.
+- **`npm install` reports transitive vulnerabilities** - these come from third-party transitive dependencies (notably in dev tooling). They do not affect runtime; we track upstream fixes and run `npm audit` regularly.
 
 If you hit any other issue, please [open a GitHub Issue](https://github.com/JacquesGariepy/out-of-code-insights/issues) using the bug report template.
 

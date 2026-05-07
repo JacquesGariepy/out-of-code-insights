@@ -1,20 +1,20 @@
-import * as vscode from "vscode";
-import * as path from "path";
-import { EventEmitter } from "events";
-import { igniteEngine, loadModels, Message } from "multi-llm-ts";
-import { Annotation, AnnotationAnchor, Comment, ExtensionConfig, ResolvedAnnotationAnchor } from "../common/types";
-import { localize } from "../common/localize";
-import { loc } from "./LocalizationManager";
-import { ConfigurationManager } from "./ConfigurationManager";
-import { AnnotationCodeLensProvider } from "../providers/AnnotationCodeLensProvider";
-import { AnnotationsTreeDataProvider, FileTreeItem, AnnotationTreeItem } from "../tree/AnnotationsTree";
-import { NavigationStack } from "./NavigationStack";
-import { NavigationStackDataProvider } from "../tree/NavigationStackTree";
-import { LinkedAnnotationManager } from "./LinkedAnnotationManager";
-import { TemplateManager, AnnotationTemplate } from "./TemplateManager";
-import { ReviewModeManager } from "./ReviewModeManager";
-import { SnippetManager, SnippetHistoryEntry } from "./SnippetManager";
-import { KanbanView } from "../views/KanbanView";
+import * as vscode from 'vscode';
+import * as path from 'path';
+import { EventEmitter } from 'events';
+import { igniteEngine, loadModels, Message } from 'multi-llm-ts';
+import { Annotation, AnnotationAnchor, Comment, ExtensionConfig, ResolvedAnnotationAnchor } from '../common/types';
+import { localize } from '../common/localize';
+import { loc } from './LocalizationManager';
+import { ConfigurationManager } from './ConfigurationManager';
+import { AnnotationsTreeDataProvider, FileTreeItem, AnnotationTreeItem } from '../tree/AnnotationsTree';
+import { NavigationStack } from './NavigationStack';
+import { NavigationStackDataProvider } from '../tree/NavigationStackTree';
+import { LinkedAnnotationManager } from './LinkedAnnotationManager';
+import { TemplateManager, AnnotationTemplate } from './TemplateManager';
+import { ReviewModeManager } from './ReviewModeManager';
+import { SnippetManager, SnippetHistoryEntry } from './SnippetManager';
+import { AnnotationStore } from '../transactional/AnnotationStore';
+import { KanbanView } from '../views/KanbanView';
 import { AnnotationManagerErrorHandling } from './AnnotationManagerErrorHandling';
 import { escapeHtml, generateNonce } from '../common/utils';
 import {
@@ -25,6 +25,7 @@ import {
     EMPTY_LINE_HASH,
     AnchorData,
     MovedBlock,
+    reanchor,
 } from '../anchoring/anchor';
 
 interface CopySourceSnapshot {
@@ -49,16 +50,29 @@ export class AnnotationManager extends EventEmitter {
     public stackDataProvider?: NavigationStackDataProvider;
     public navigationStack: NavigationStack;
     private configManager: ConfigurationManager;
-    private linkedAnnotationManager: LinkedAnnotationManager;
+    // Lot 5 R2 worktree B: LinkedAnnotationManager + ReviewModeManager have
+    // been migrated to take an AnnotationStore. We keep instantiating them
+    // here during R2 (backed by a dedicated empty store) so their VS Code
+    // command registrations stay alive until worker-1 wires the real
+    // store-backed instances in extension.ts. R3 deletes this whole class
+    // and the field declarations together. The fields are optional so
+    // future de-instantiation tweaks don't require touching every call site.
+    private linkedAnnotationManager: LinkedAnnotationManager | undefined;
     private templateManager: TemplateManager;
-    private reviewModeManager: ReviewModeManager;
+    private reviewModeManager: ReviewModeManager | undefined;
     private snippetManager: SnippetManager;
+    /**
+     * Backing store for the legacy linked/review manager pair during R2.
+     * Always empty (no I/O) so legacy command handlers operate on a no-op
+     * surface. Disposed when AnnotationManager itself disposes.
+     */
+    private legacyEmptyStoreForRetiredManagers: AnnotationStore | undefined;
     public annotations: Map<string, Annotation> = new Map();
     private kanbanColumns: Map<string, string> = new Map([
         ['todo', 'To Do'],
         ['in_progress', 'In Progress'],
         ['review', 'Review'],
-        ['done', 'Done']
+        ['done', 'Done'],
     ]);
     private readonly disposables: vscode.Disposable[] = [];
     private readonly decorationTypes: Map<string, vscode.TextEditorDecorationType> = new Map();
@@ -71,29 +85,33 @@ export class AnnotationManager extends EventEmitter {
     private currentSort = 'line_asc';
     private codeLensProviderDisposable: vscode.Disposable | null = null;
     public annotationsEnabled = true;
-    private temporaryHighlightDecoration: vscode.TextEditorDecorationType = vscode.window.createTextEditorDecorationType({
-        backgroundColor: 'rgba(255, 255, 0, 0.3)'
-    });
+    private temporaryHighlightDecoration: vscode.TextEditorDecorationType =
+        vscode.window.createTextEditorDecorationType({
+            backgroundColor: 'rgba(255, 255, 0, 0.3)',
+        });
     private initializationPromise: Promise<void>;
     private documentSnapshots: Map<string, string[]> = new Map();
     /** Milliseconds to hold a deferred (cut) annotation before showing the expiry dialog. */
     public clipboardWindowMs = 5000;
-    private recentDeletions: Map<string, {
-        annotation: Annotation;
-        deletedAt: number;
-        /** Offset of annotation.line within the deleted block (for block-relative paste recovery). */
-        offsetInBlock: number;
-        /** Offset of the tracked code line within the deleted block. */
-        trackingOffsetInBlock?: number;
-        /** Render-line delta relative to the tracked code line. */
-        renderOffsetFromTracking?: number;
-        /** Hash of the tracked code line; differs from annotation.lineHash for blank-line annotations. */
-        trackingLineHash?: string;
-        /** Exact text removed by the cut/delete event, when known from the previous document snapshot. */
-        cutText?: string;
-        /** Hashes for each removed line; used to verify that a later edit is the matching paste. */
-        cutLineHashes?: string[];
-    }> = new Map();
+    private recentDeletions: Map<
+        string,
+        {
+            annotation: Annotation;
+            deletedAt: number;
+            /** Offset of annotation.line within the deleted block (for block-relative paste recovery). */
+            offsetInBlock: number;
+            /** Offset of the tracked code line within the deleted block. */
+            trackingOffsetInBlock?: number;
+            /** Render-line delta relative to the tracked code line. */
+            renderOffsetFromTracking?: number;
+            /** Hash of the tracked code line; differs from annotation.lineHash for blank-line annotations. */
+            trackingLineHash?: string;
+            /** Exact text removed by the cut/delete event, when known from the previous document snapshot. */
+            cutText?: string;
+            /** Hashes for each removed line; used to verify that a later edit is the matching paste. */
+            cutLineHashes?: string[];
+        }
+    > = new Map();
     /** Annotations silently removed via cut-expiry, kept briefly for Undo toast. */
     private deletedRecently: Map<string, { annotation: Annotation; removedAt: number }> = new Map();
     /** TTL (ms) to keep a silently-deleted annotation available for Undo. Default: 30 s. */
@@ -118,22 +136,38 @@ export class AnnotationManager extends EventEmitter {
         }
         vscode.window.showInformationMessage(localize('searchReset', 'Search reset.'));
     }
-    
+
     constructor(private readonly context: vscode.ExtensionContext) {
         super();
         this.configManager = new ConfigurationManager();
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
         this.navigationStack = new NavigationStack(context);
-        
+
         // Create output channel for logging
         this.outputChannel = vscode.window.createOutputChannel('Out-of-Code Insights');
         this.disposables.push(this.outputChannel);
         this.log('Extension starting...');
-        
-        // Initialize new managers
-        this.linkedAnnotationManager = new LinkedAnnotationManager(context, this);
+
+        // Initialize new managers.
+        // Lot 5 R2 worktree B: LinkedAnnotationManager + ReviewModeManager
+        // were migrated to consume an AnnotationStore. To preserve VS Code
+        // command registration during the R2 coexistence window (those
+        // managers register commands like `annotations.startReview` in their
+        // ctor), we keep instantiating them HERE — backed by a dedicated
+        // empty store. The empty store carries no annotations, so every
+        // command operates on a no-op surface; users invoke the real flow
+        // via the store-backed instances that worker-1 wires in
+        // extension.ts. R3 retires this whole class together with the
+        // duplicate instantiation.
+        this.legacyEmptyStoreForRetiredManagers = new AnnotationStore();
+        this.legacyEmptyStoreForRetiredManagers.markInitialized();
+        this.linkedAnnotationManager = new LinkedAnnotationManager(context, this.legacyEmptyStoreForRetiredManagers);
         this.templateManager = new TemplateManager(context);
-        this.reviewModeManager = new ReviewModeManager(context, this);
+        this.reviewModeManager = new ReviewModeManager(
+            context,
+            this.legacyEmptyStoreForRetiredManagers,
+            () => this.config.username || 'Unknown'
+        );
         this.snippetManager = SnippetManager.getInstance();
         // Initialize annotation display state from globalState
         const stored = this.context.globalState.get<boolean>('annotationsEnabled');
@@ -154,9 +188,11 @@ export class AnnotationManager extends EventEmitter {
         return this.templateManager;
     }
 
-    public getLinkedAnnotationManager(): LinkedAnnotationManager {
-        return this.linkedAnnotationManager;
-    }
+    // Lot 5 R2 worktree B: getLinkedAnnotationManager() removed. Consumers
+    // that need a LinkedAnnotationManager receive the store-backed instance
+    // via DI from extension.ts. The legacy field on `AnnotationManager`
+    // stays accessible (as `undefined`) only for the `as any` cheat in
+    // UnifiedAIAdapter, which worker-2 retires in worktree C.
 
     public getSnippetManager(): SnippetManager {
         return this.snippetManager;
@@ -165,11 +201,11 @@ export class AnnotationManager extends EventEmitter {
     private async initialize(): Promise<void> {
         this.log('Initializing AnnotationManager...');
         this.loadConfiguration();
-        
+
         this.currentUser = this.config.username?.trim() || 'Anonymous';
         this.annotationsEnabled = this.config.enableAnnotations === true;
         this.createChatParticipant(this.context);
-        
+
         try {
             if (this.annotationsEnabled) {
                 await this.loadKanbanColumns(); // Load kanban columns first
@@ -194,7 +230,7 @@ export class AnnotationManager extends EventEmitter {
                 this.updateStatusBar();
                 this.emit('annotationChanged');
                 this.log('Extension initialization complete');
-                
+
                 // Mark as successfully initialized
                 AnnotationManagerErrorHandling.setInitialized(true);
             } else {
@@ -232,35 +268,54 @@ export class AnnotationManager extends EventEmitter {
             );
         }
     }
-   
+
     public async configureProviderAndKeys(): Promise<void> {
         const config = vscode.workspace.getConfiguration('annotation');
         const chosenProvider = config.get<string>('provider', 'openai');
         this.provider = chosenProvider;
         const secretStorage = this.context.secrets;
-        
+
         // List of supported providers
         const providers = [
-            'openai', 'anthropic', 'azure', 'cerebras', 'deepseek', 'google', 'groq', 'meta', 'mistralai', 'ollama', 'openrouter', 'togetherai', 'xai'
+            'openai',
+            'anthropic',
+            'azure',
+            'cerebras',
+            'deepseek',
+            'google',
+            'groq',
+            'meta',
+            'mistralai',
+            'ollama',
+            'openrouter',
+            'togetherai',
+            'xai',
         ];
-        
+
         for (const prov of providers) {
             const keyName = `annotation.${prov}Key`;
             let key = await secretStorage.get(keyName);
             if (!key && this.provider === prov) {
-                key = await vscode.window.showInputBox({ prompt: localize('enterProviderAPIKey', 'Enter your {0} API key', prov), password: true });
+                key = await vscode.window.showInputBox({
+                    prompt: localize('enterProviderAPIKey', 'Enter your {0} API key', prov),
+                    password: true,
+                });
                 if (!key) {
-                    vscode.window.showErrorMessage(localize('providerKeyRequired', '{0} key is required for AI suggestions.', prov));
+                    vscode.window.showErrorMessage(
+                        localize('providerKeyRequired', '{0} key is required for AI suggestions.', prov)
+                    );
                     continue;
                 }
                 await secretStorage.store(keyName, key);
             }
             this.providerKeys[prov] = key;
         }
-        
+
         this.llmKey = this.providerKeys[this.provider];
         if (!this.llmKey) {
-            vscode.window.showErrorMessage(localize('noAPIKeyFound', 'No API key found for provider {0}.', this.provider));
+            vscode.window.showErrorMessage(
+                localize('noAPIKeyFound', 'No API key found for provider {0}.', this.provider)
+            );
             return;
         }
         this.llm = igniteEngine(this.provider, { apiKey: this.llmKey });
@@ -283,7 +338,10 @@ export class AnnotationManager extends EventEmitter {
     // Generic methods to update or reset a provider API key
     private async updateProviderKey(provider: string): Promise<void> {
         const secretStorage = this.context.secrets;
-        const newKey = await vscode.window.showInputBox({ prompt: localize('enterNewProviderAPIKey', 'Enter your new {0} API key', provider), password: true });
+        const newKey = await vscode.window.showInputBox({
+            prompt: localize('enterNewProviderAPIKey', 'Enter your new {0} API key', provider),
+            password: true,
+        });
         if (!newKey) {
             vscode.window.showInformationMessage(localize('noKeyEnteredCanceled', 'No key entered. Update canceled.'));
             return;
@@ -294,7 +352,9 @@ export class AnnotationManager extends EventEmitter {
             this.llmKey = newKey;
             this.llm = igniteEngine(this.provider, { apiKey: this.llmKey });
         }
-        vscode.window.showInformationMessage(localize('providerKeyUpdatedSuccessfully', '{0} key updated successfully!', provider));
+        vscode.window.showInformationMessage(
+            localize('providerKeyUpdatedSuccessfully', '{0} key updated successfully!', provider)
+        );
     }
 
     private async resetProviderKey(provider: string): Promise<void> {
@@ -305,12 +365,22 @@ export class AnnotationManager extends EventEmitter {
             this.llmKey = undefined;
             this.llm = undefined;
         }
-        vscode.window.showInformationMessage(localize('providerKeyReset', '{0} key has been reset. Next AI Suggest request will prompt for a new key.', provider));
+        vscode.window.showInformationMessage(
+            localize(
+                'providerKeyReset',
+                '{0} key has been reset. Next AI Suggest request will prompt for a new key.',
+                provider
+            )
+        );
     }
 
     public createChatParticipant(context: vscode.ExtensionContext) {
-        const handler: vscode.ChatRequestHandler = async (request: vscode.ChatRequest, context: vscode.ChatContext, stream: vscode.ChatResponseStream, token: vscode.CancellationToken) => {
-
+        const handler: vscode.ChatRequestHandler = async (
+            request: vscode.ChatRequest,
+            context: vscode.ChatContext,
+            stream: vscode.ChatResponseStream,
+            token: vscode.CancellationToken
+        ) => {
             const editor = vscode.window.activeTextEditor;
             if (!editor) {
                 vscode.window.showErrorMessage(localize('noActiveEditor', 'No active editor'));
@@ -328,16 +398,11 @@ export class AnnotationManager extends EventEmitter {
             next statement." (No special characters like >, {}, or others are included in the 
             comment).`;
             try {
-                
                 // initialize the messages array with the prompt
-                const messages = [
-                    vscode.LanguageModelChatMessage.User(prompt),
-                ];
+                const messages = [vscode.LanguageModelChatMessage.User(prompt)];
 
                 // get all the previous participant messages
-                const previousMessages = context.history.filter(
-                    (h) => h instanceof vscode.ChatResponseTurn
-                );
+                const previousMessages = context.history.filter((h) => h instanceof vscode.ChatResponseTurn);
 
                 // add the previous messages to the messages array
                 previousMessages.forEach((m) => {
@@ -363,30 +428,32 @@ export class AnnotationManager extends EventEmitter {
                 }
 
                 return;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
             } catch (error: any) {
-                stream.markdown("Failed to get response: " + error.message);
+                stream.markdown('Failed to get response: ' + error.message);
                 return { metadata: {} };
             }
         };
 
-        const tutor = vscode.chat.createChatParticipant("chat.code", handler);
+        const tutor = vscode.chat.createChatParticipant('chat.code', handler);
         tutor.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'logo.png');
         this.catParticipant = tutor;
-        
     }
-    
+
     private async aiSuggestAnnotation() {
         this.loadConfiguration();
         if (!this.config.enableAiSuggest) {
             vscode.window.showInformationMessage(
-                localize('aiSuggestDisabled', 'AI Suggest Annotation feature is disabled. Enable it in the extension settings.')
+                localize(
+                    'aiSuggestDisabled',
+                    'AI Suggest Annotation feature is disabled. Enable it in the extension settings.'
+                )
             );
             return;
         }
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            vscode.window.showErrorMessage("No active editor");
+            vscode.window.showErrorMessage('No active editor');
             return;
         }
         const line = editor.selection.active.line;
@@ -397,7 +464,8 @@ export class AnnotationManager extends EventEmitter {
         const confirm = await vscode.window.showWarningMessage(
             `Do you want to send this code line to the LLM provider (${this.provider}) for annotation?`,
             { modal: true },
-            'Yes', 'No'
+            'Yes',
+            'No'
         );
         if (confirm !== 'Yes') {
             vscode.window.showInformationMessage(localize('aiSuggestionCancelled', 'AI Suggestion cancelled.'));
@@ -414,14 +482,16 @@ export class AnnotationManager extends EventEmitter {
             const chosenModel = config.get<string>('model', 'gpt-4o-mini');
             const models = await loadModels(this.provider, { apiKey: this.llmKey });
             if (!models || !models.chat || !Array.isArray(models.chat) || models.chat.length === 0) {
-                vscode.window.showErrorMessage(localize('noChatModelsAvailable', 'No chat models available for this provider.'));
+                vscode.window.showErrorMessage(
+                    localize('noChatModelsAvailable', 'No chat models available for this provider.')
+                );
                 return;
             }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const modelObj = models.chat.find((m: any) => m.id === chosenModel) || models.chat[0];
             const messages = [
                 new Message('system', 'You are a code annotation assistant.'),
-                new Message('user', prompt)
+                new Message('user', prompt),
             ];
             const response = await this.llm.complete(modelObj, messages);
             const suggestion = response?.choices?.[0]?.message?.content?.trim() || response?.content?.trim();
@@ -441,17 +511,21 @@ export class AnnotationManager extends EventEmitter {
                 pinned: false,
                 priority: 0,
                 severity: 'info',
-                resolved: false
+                resolved: false,
             };
             await this.populateAnchor(annotation, editor.document, line);
             this.annotations.set(annotation.id, annotation);
             await this.saveAnnotations();
             await this.refreshAnnotations();
-            vscode.window.showInformationMessage(localize('annotationAddedFromProvider', 'Annotation added from {0}.', this.provider));
+            vscode.window.showInformationMessage(
+                localize('annotationAddedFromProvider', 'Annotation added from {0}.', this.provider)
+            );
             this.emit('annotationChanged');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (err: any) {
-            vscode.window.showErrorMessage(localize('failedToGetAISuggestion', 'Failed to get AI suggestion: {0}', err.message));
+            vscode.window.showErrorMessage(
+                localize('failedToGetAISuggestion', 'Failed to get AI suggestion: {0}', err.message)
+            );
         }
     }
 
@@ -459,13 +533,15 @@ export class AnnotationManager extends EventEmitter {
         const newUsername = await vscode.window.showInputBox({
             prompt: localize('enterUsername', 'Enter your name (for annotations)'),
             placeHolder: localize('usernamePlaceholder', 'John Doe'),
-            validateInput: text =>
-                text.trim().length === 0 ? localize('emptyUsernameError', 'Username cannot be empty') : null
+            validateInput: (text) =>
+                text.trim().length === 0 ? localize('emptyUsernameError', 'Username cannot be empty') : null,
         });
 
         if (newUsername) {
             this.currentUser = newUsername.trim();
-            await vscode.workspace.getConfiguration('annotation').update('username', this.currentUser, vscode.ConfigurationTarget.Global);
+            await vscode.workspace
+                .getConfiguration('annotation')
+                .update('username', this.currentUser, vscode.ConfigurationTarget.Global);
             vscode.window.showInformationMessage(localize('usernameUpdated', 'Username has been updated.'));
         } else {
             this.currentUser = localize('anonymous', 'Anonymous');
@@ -476,11 +552,11 @@ export class AnnotationManager extends EventEmitter {
         if (!this.annotationsPanel) {
             await this.showAnnotationsPanel(); // Open the panel if not already open
         }
-    
+
         if (this.annotationsPanel) {
             this.annotationsPanel.webview.postMessage({
                 command: 'focusAnnotation',
-                annotationId: annotationId
+                annotationId: annotationId,
             });
         }
     }
@@ -489,19 +565,22 @@ export class AnnotationManager extends EventEmitter {
 
     // Improved keyword search function
     private async keywordSearch(): Promise<void> {
-        const keyword = await vscode.window.showInputBox({ 
-            prompt: localize('enterKeyword', 'Enter a keyword to search in annotations') 
+        const keyword = await vscode.window.showInputBox({
+            prompt: localize('enterKeyword', 'Enter a keyword to search in annotations'),
         });
         if (!keyword) return;
 
         // Find first annotation containing the keyword
-        const found = Array.from(this.annotations.values()).find(a =>
-            (a.message?.toLowerCase().includes(keyword.toLowerCase()) ?? false) ||
-            (a.thread?.some(c => c.message.toLowerCase().includes(keyword.toLowerCase())) ?? false)
+        const found = Array.from(this.annotations.values()).find(
+            (a) =>
+                (a.message?.toLowerCase().includes(keyword.toLowerCase()) ?? false) ||
+                (a.thread?.some((c) => c.message.toLowerCase().includes(keyword.toLowerCase())) ?? false)
         );
 
         if (!found) {
-            vscode.window.showInformationMessage(localize('noAnnotationFoundForKeyword', 'No annotation found for this keyword.'));
+            vscode.window.showInformationMessage(
+                localize('noAnnotationFoundForKeyword', 'No annotation found for this keyword.')
+            );
             return;
         }
 
@@ -525,13 +604,18 @@ export class AnnotationManager extends EventEmitter {
             await this.focusInPanel(annotationId);
 
             // 4. Message de confirmation
-            const message = searchKeyword 
+            const message = searchKeyword
                 ? localize('keywordNavigate', 'Navigating to annotation found for "{0}".', searchKeyword)
                 : localize('annotationFocused', 'Focused on annotation.');
             vscode.window.showInformationMessage(message);
-
         } catch (error) {
-            vscode.window.showErrorMessage(localize('errorFocusingAnnotation', 'Error focusing on annotation: {0}', error instanceof Error ? error.message : String(error)));
+            vscode.window.showErrorMessage(
+                localize(
+                    'errorFocusingAnnotation',
+                    'Error focusing on annotation: {0}',
+                    error instanceof Error ? error.message : String(error)
+                )
+            );
         }
     }
 
@@ -547,24 +631,30 @@ export class AnnotationManager extends EventEmitter {
             this.annotationsTreeDataProvider.refresh();
 
             // Wait briefly for the refresh to complete
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise((resolve) => setTimeout(resolve, 100));
 
-            // Build items for the hierarchy
-            const fileItem = new FileTreeItem(annotation.file, [annotation]);
-            const annotationItem = new AnnotationTreeItem(annotation);
+            // Build items for the hierarchy.
+            // Lot 5 R2 transition: FileTreeItem/AnnotationTreeItem now accept
+            // store-aware shapes (ResolvedAnnotation[], 2-3 args). The legacy
+            // AnnotationManager focus path is dead during R2 — its caller
+            // bails on the empty in-memory map before reaching here. Cast
+            // through `unknown` to keep the typecheck green; R3 deletes the
+            // entire focus-in-tree path with the manager.
+            const fileItem = new FileTreeItem(annotation.file, [annotation] as unknown as never);
+            const annotationItem = new AnnotationTreeItem(annotation as unknown as never, null as unknown as never);
 
             // First reveal and expand the parent file node
             await this.annotationsTreeView.reveal(fileItem, {
                 select: false,
                 focus: false,
-                expand: true
+                expand: true,
             });
 
             // Then reveal and select the annotation node
             await this.annotationsTreeView.reveal(annotationItem, {
                 select: true,
                 focus: true,
-                expand: false
+                expand: false,
             });
         } catch (error) {
             console.warn('Error focusing in treeview:', error);
@@ -583,13 +673,13 @@ export class AnnotationManager extends EventEmitter {
             this.annotationsPanel.reveal(vscode.ViewColumn.Beside, false);
 
             // Wait briefly for the panel to be ready
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise((resolve) => setTimeout(resolve, 200));
 
             // Send the focus message (without filtering)
             this.annotationsPanel.webview.postMessage({
                 command: 'focusAnnotation',
                 annotationId: annotationId,
-                clearFilter: false  // Important: do not filter
+                clearFilter: false, // Important: do not filter
             });
         }
     }
@@ -600,29 +690,34 @@ export class AnnotationManager extends EventEmitter {
     }
 
     // Helper to find annotations by tag or other criterion
-    public async searchAnnotationsByFilter(filterType: 'tag' | 'severity' | 'author', filterValue: string): Promise<void> {
+    public async searchAnnotationsByFilter(
+        filterType: 'tag' | 'severity' | 'author',
+        filterValue: string
+    ): Promise<void> {
         let found: Annotation | undefined;
 
         switch (filterType) {
             case 'tag':
-                found = Array.from(this.annotations.values()).find(a =>
-                    a.tags?.some(tag => tag.toLowerCase().includes(filterValue.toLowerCase()))
+                found = Array.from(this.annotations.values()).find((a) =>
+                    a.tags?.some((tag) => tag.toLowerCase().includes(filterValue.toLowerCase()))
                 );
                 break;
             case 'severity':
-                found = Array.from(this.annotations.values()).find(a =>
-                    a.severity?.toLowerCase() === filterValue.toLowerCase()
+                found = Array.from(this.annotations.values()).find(
+                    (a) => a.severity?.toLowerCase() === filterValue.toLowerCase()
                 );
                 break;
             case 'author':
-                found = Array.from(this.annotations.values()).find(a =>
+                found = Array.from(this.annotations.values()).find((a) =>
                     a.author?.toLowerCase().includes(filterValue.toLowerCase())
                 );
                 break;
         }
 
         if (!found) {
-            vscode.window.showInformationMessage(localize('noAnnotationFoundForFilter', 'No annotation found for {0}: {1}', filterType, filterValue));
+            vscode.window.showInformationMessage(
+                localize('noAnnotationFoundForFilter', 'No annotation found for {0}: {1}', filterType, filterValue)
+            );
             return;
         }
 
@@ -635,11 +730,11 @@ export class AnnotationManager extends EventEmitter {
 
     // LinkedAnnotationManager delegation
     public async createLinkedAnnotation(sourceId: string, targetFile: string, targetLine: number): Promise<void> {
-        return this.linkedAnnotationManager.createLink(sourceId, targetFile, targetLine);
+        return this.linkedAnnotationManager?.createLink(sourceId, targetFile, targetLine);
     }
 
     public async navigateToLinked(annotationId: string): Promise<void> {
-        return this.linkedAnnotationManager.goToLinkedAnnotation(annotationId);
+        return this.linkedAnnotationManager?.goToLinkedAnnotation(annotationId);
     }
 
     // TemplateManager delegation
@@ -655,18 +750,27 @@ export class AnnotationManager extends EventEmitter {
         return this.templateManager.getAllTemplates();
     }
 
-    // SnippetManager delegation
+    // SnippetManager delegation.
+    // Lot 5 R2 transition: SnippetManager now operates on AnnotationV2.
+    // The legacy AnnotationManager.Annotation type and AnnotationV2 differ
+    // structurally; these delegation methods are unreachable at R2 runtime
+    // (the in-memory map is empty under the I/O stub) but kept compiling
+    // through `unknown` casts. R3 retires the entire AnnotationManager.
     public async addSnippet(annotation: Annotation, code: string, language?: string): Promise<Annotation> {
-        return this.snippetManager.addSnippet(annotation, code, language);
+        return this.snippetManager.addSnippet(
+            annotation as unknown as never,
+            code,
+            language
+        ) as unknown as Promise<Annotation>;
     }
 
     public async applySnippet(annotation: Annotation, editor: vscode.TextEditor): Promise<boolean> {
-        return this.snippetManager.applySnippet(annotation, editor);
+        return this.snippetManager.applySnippet(annotation as unknown as never, editor);
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     public async previewSnippet(annotation: Annotation, editor: vscode.TextEditor): Promise<any> {
-        return this.snippetManager.previewSnippet(annotation, editor);
+        return this.snippetManager.previewSnippet(annotation as unknown as never, editor);
     }
 
     public getSnippets(): SnippetHistoryEntry[] {
@@ -681,15 +785,45 @@ export class AnnotationManager extends EventEmitter {
         // These are more complex commands that need full initialization
         this.disposables.push(
             vscode.commands.registerCommand('annotations.updateProviderKey', async () => {
-                const provider = await vscode.window.showQuickPick([
-                    'openai', 'anthropic', 'azure', 'cerebras', 'deepseek', 'google', 'groq', 'meta', 'mistralai', 'ollama', 'openrouter', 'togetherai', 'xai'
-                ], { placeHolder: 'Select the provider to update the API key for' });
+                const provider = await vscode.window.showQuickPick(
+                    [
+                        'openai',
+                        'anthropic',
+                        'azure',
+                        'cerebras',
+                        'deepseek',
+                        'google',
+                        'groq',
+                        'meta',
+                        'mistralai',
+                        'ollama',
+                        'openrouter',
+                        'togetherai',
+                        'xai',
+                    ],
+                    { placeHolder: 'Select the provider to update the API key for' }
+                );
                 if (provider) await this.updateProviderKey(provider);
             }),
             vscode.commands.registerCommand('annotations.resetProviderKey', async () => {
-                const provider = await vscode.window.showQuickPick([
-                    'openai', 'anthropic', 'azure', 'cerebras', 'deepseek', 'google', 'groq', 'meta', 'mistralai', 'ollama', 'openrouter', 'togetherai', 'xai'
-                ], { placeHolder: 'Select the provider to reset the API key for' });
+                const provider = await vscode.window.showQuickPick(
+                    [
+                        'openai',
+                        'anthropic',
+                        'azure',
+                        'cerebras',
+                        'deepseek',
+                        'google',
+                        'groq',
+                        'meta',
+                        'mistralai',
+                        'ollama',
+                        'openrouter',
+                        'togetherai',
+                        'xai',
+                    ],
+                    { placeHolder: 'Select the provider to reset the API key for' }
+                );
                 if (provider) await this.resetProviderKey(provider);
             }),
 
@@ -700,7 +834,7 @@ export class AnnotationManager extends EventEmitter {
             vscode.commands.registerCommand('annotations.searchAndFocus', async () => {
                 await this.keywordSearch();
             }),
-            
+
             // Command for direct annotation focus
             vscode.commands.registerCommand('annotations.focusAnnotation', async (annotationId: string) => {
                 await this.focusOnAnnotation(annotationId);
@@ -718,14 +852,16 @@ export class AnnotationManager extends EventEmitter {
             vscode.commands.registerCommand('annotations.manage', this.manageAnnotationCommand.bind(this)),
             vscode.commands.registerCommand('annotations.showActivityBar', this.showAnnotationsPanel.bind(this)),
             vscode.commands.registerCommand('annotations.resolve', this.resolveAnnotation.bind(this)),
-            vscode.commands.registerCommand('annotations.autoResolveStale', this.autoResolveStaleAnnotations.bind(this)),
+            vscode.commands.registerCommand(
+                'annotations.autoResolveStale',
+                this.autoResolveStaleAnnotations.bind(this)
+            ),
             vscode.commands.registerCommand('annotations.filterBySeverity', this.filterBySeverity.bind(this)),
             vscode.commands.registerCommand('annotations.navigateToPanel', async (annotationId: string) => {
                 await this.navigateFromAnnotationToPanel(annotationId);
             }),
             vscode.commands.registerCommand('annotations.changeSeverity', this.changeSeverity.bind(this)),
-            vscode.commands.registerCommand('annotations.editTags', this.editAnnotationTags.bind(this))
-            ,
+            vscode.commands.registerCommand('annotations.editTags', this.editAnnotationTags.bind(this)),
             vscode.commands.registerCommand('stack.back', async () => {
                 const id = this.navigationStack.back();
                 if (id) {
@@ -745,65 +881,83 @@ export class AnnotationManager extends EventEmitter {
                 if (!editor) return;
                 const sourceAnnotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
                 if (!sourceAnnotation) {
-                    vscode.window.showErrorMessage(localize('noAnnotationOnLineToLink', 'No annotation on this line to link from.'));
+                    vscode.window.showErrorMessage(
+                        localize('noAnnotationOnLineToLink', 'No annotation on this line to link from.')
+                    );
                     return;
                 }
-                
+
                 // Ask user what they want to do
-                const action = await vscode.window.showQuickPick([
-                    { label: '$(link) Link to existing annotation', value: 'existing' },
-                    { label: '$(add) Create new linked annotation', value: 'new' }
-                ], {
-                    placeHolder: 'How would you like to link this annotation?'
-                });
-                
+                const action = await vscode.window.showQuickPick(
+                    [
+                        { label: '$(link) Link to existing annotation', value: 'existing' },
+                        { label: '$(add) Create new linked annotation', value: 'new' },
+                    ],
+                    {
+                        placeHolder: 'How would you like to link this annotation?',
+                    }
+                );
+
                 if (!action) return;
-                
+
                 if (action.value === 'existing') {
                     // Show list of all annotations to link to
                     const allAnnotations = Array.from(this.annotations.values())
-                        .filter(a => a.id !== sourceAnnotation.id)
+                        .filter((a) => a.id !== sourceAnnotation.id)
                         .sort((a, b) => a.file.localeCompare(b.file));
-                    
+
                     if (allAnnotations.length === 0) {
-                        vscode.window.showInformationMessage(localize('noOtherAnnotationsToLink', 'No other annotations found to link to.'));
+                        vscode.window.showInformationMessage(
+                            localize('noOtherAnnotationsToLink', 'No other annotations found to link to.')
+                        );
                         return;
                     }
-                    
-                    const items = allAnnotations.map(annotation => ({
+
+                    const items = allAnnotations.map((annotation) => ({
                         label: `$(file) ${annotation.file}:${annotation.line}`,
-                        description: annotation.message.substring(0, 60) + (annotation.message.length > 60 ? '...' : ''),
+                        description:
+                            annotation.message.substring(0, 60) + (annotation.message.length > 60 ? '...' : ''),
                         detail: `Author: ${annotation.author || 'Unknown'} | ${new Date(annotation.timestamp).toLocaleDateString()}`,
-                        annotation: annotation
+                        annotation: annotation,
                     }));
-                    
+
                     const selected = await vscode.window.showQuickPick(items, {
                         placeHolder: 'Select annotation to link to',
                         matchOnDescription: true,
-                        matchOnDetail: true
+                        matchOnDetail: true,
                     });
-                    
+
                     if (selected && selected.annotation) {
                         // Ask for relationship type
-                        const relationship = await vscode.window.showQuickPick([
-                            { label: 'Related to', value: 'related' },
-                            { label: 'Implements', value: 'implements' },
-                            { label: 'References', value: 'references' },
-                            { label: 'Depends on', value: 'depends-on' },
-                            { label: 'Blocks', value: 'blocks' },
-                            { label: 'Duplicates', value: 'duplicates' }
-                        ], {
-                            placeHolder: 'Select relationship type'
-                        });
-                        
+                        const relationship = await vscode.window.showQuickPick(
+                            [
+                                { label: 'Related to', value: 'related' },
+                                { label: 'Implements', value: 'implements' },
+                                { label: 'References', value: 'references' },
+                                { label: 'Depends on', value: 'depends-on' },
+                                { label: 'Blocks', value: 'blocks' },
+                                { label: 'Duplicates', value: 'duplicates' },
+                            ],
+                            {
+                                placeHolder: 'Select relationship type',
+                            }
+                        );
+
                         if (relationship) {
-                            await this.linkedAnnotationManager.createLink(
+                            await this.linkedAnnotationManager?.createLink(
                                 sourceAnnotation.id,
                                 selected.annotation.file,
                                 selected.annotation.line,
                                 relationship.value
                             );
-                            vscode.window.showInformationMessage(localize('linkedToAnnotation', 'Linked to annotation in {0}:{1}', selected.annotation.file, selected.annotation.line));
+                            vscode.window.showInformationMessage(
+                                localize(
+                                    'linkedToAnnotation',
+                                    'Linked to annotation in {0}:{1}',
+                                    selected.annotation.file,
+                                    selected.annotation.line
+                                )
+                            );
                         }
                     }
                 } else {
@@ -811,27 +965,27 @@ export class AnnotationManager extends EventEmitter {
                     const targetFile = await vscode.window.showInputBox({
                         prompt: localize('enterTargetFile', 'Enter target file path (relative to workspace)'),
                         placeHolder: 'src/file.ts',
-                        value: editor.document.fileName
+                        value: editor.document.fileName,
                     });
                     if (!targetFile) return;
-                    
+
                     const targetLine = await vscode.window.showInputBox({
                         prompt: localize('enterTargetLine', 'Enter target line number'),
                         placeHolder: '1',
                         validateInput: (value) => {
                             const num = parseInt(value);
-                            return (isNaN(num) || num < 1) ? 'Please enter a valid line number' : null;
-                        }
+                            return isNaN(num) || num < 1 ? 'Please enter a valid line number' : null;
+                        },
                     });
                     if (!targetLine) return;
-                    
+
                     const message = await vscode.window.showInputBox({
                         prompt: localize('enterAnnotationMessage', 'Enter annotation message'),
-                        placeHolder: 'Related implementation...'
+                        placeHolder: 'Related implementation...',
                     });
                     if (!message) return;
                     const targetLineIndex = parseInt(targetLine, 10) - 1;
-                    
+
                     // Create the new annotation FIRST
                     const newAnnotation: Annotation = {
                         id: this.generateId(),
@@ -840,12 +994,13 @@ export class AnnotationManager extends EventEmitter {
                         message: message,
                         author: this.currentUser,
                         timestamp: new Date().toISOString(),
-                        severity: this.config.defaultSeverity
+                        severity: this.config.defaultSeverity,
                     };
                     // Capture anchor if the target document is currently open
                     const linkedDoc = vscode.workspace.textDocuments.find(
-                        d => this.normalizePath(this.getRelativePath(d.fileName)) ===
-                             this.normalizePath(this.getRelativePath(targetFile))
+                        (d) =>
+                            this.normalizePath(this.getRelativePath(d.fileName)) ===
+                            this.normalizePath(this.getRelativePath(targetFile))
                     );
                     if (linkedDoc) {
                         await this.populateAnchor(newAnnotation, linkedDoc, newAnnotation.line);
@@ -853,16 +1008,18 @@ export class AnnotationManager extends EventEmitter {
                     this.annotations.set(newAnnotation.id, newAnnotation);
                     await this.saveAnnotations();
                     await this.refreshAnnotations();
-                    
+
                     // THEN link the annotations (now that target exists)
-                    await this.linkedAnnotationManager.createLink(
+                    await this.linkedAnnotationManager?.createLink(
                         sourceAnnotation.id,
                         this.getRelativePath(targetFile),
                         targetLineIndex,
                         'related'
                     );
-                    
-                    vscode.window.showInformationMessage(localize('createdAndLinkedAnnotation', 'Created and linked new annotation'));
+
+                    vscode.window.showInformationMessage(
+                        localize('createdAndLinkedAnnotation', 'Created and linked new annotation')
+                    );
                 }
             }),
             vscode.commands.registerCommand('annotations.navigateToLinked', async (annotationId?: string) => {
@@ -876,13 +1033,15 @@ export class AnnotationManager extends EventEmitter {
                     }
                     annotationId = annotation.id;
                 }
-                
+
                 const annotation = this.annotations.get(annotationId);
                 if (!annotation || !annotation.linkedAnnotations || annotation.linkedAnnotations.length === 0) {
-                    vscode.window.showInformationMessage(localize('thisAnnotationHasNoLinks', 'This annotation has no links.'));
+                    vscode.window.showInformationMessage(
+                        localize('thisAnnotationHasNoLinks', 'This annotation has no links.')
+                    );
                     return;
                 }
-                
+
                 if (annotation.linkedAnnotations.length === 1) {
                     // Direct navigation if only one link
                     await this.navigateToLinked(annotationId);
@@ -891,30 +1050,35 @@ export class AnnotationManager extends EventEmitter {
                     const items = annotation.linkedAnnotations.map((link, index) => {
                         // Find the target annotation to show its message
                         const targetAnnotation = Array.from(this.annotations.values()).find(
-                            a => a.file === link.targetFile && a.line === link.targetLine + 1
+                            (a) => a.file === link.targetFile && a.line === link.targetLine + 1
                         );
-                        
+
                         return {
                             label: `$(link) ${link.relationship || 'related'} → ${link.targetFile}:${link.targetLine + 1}`,
-                            description: targetAnnotation ? targetAnnotation.message.substring(0, 60) + (targetAnnotation.message.length > 60 ? '...' : '') : '',
-                            detail: targetAnnotation ? `Author: ${targetAnnotation.author || 'Unknown'} | ${new Date(targetAnnotation.timestamp).toLocaleDateString()}` : '',
-                            index: index
+                            description: targetAnnotation
+                                ? targetAnnotation.message.substring(0, 60) +
+                                  (targetAnnotation.message.length > 60 ? '...' : '')
+                                : '',
+                            detail: targetAnnotation
+                                ? `Author: ${targetAnnotation.author || 'Unknown'} | ${new Date(targetAnnotation.timestamp).toLocaleDateString()}`
+                                : '',
+                            index: index,
                         };
                     });
-                    
+
                     const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: 'Select linked annotation to navigate to'
+                        placeHolder: 'Select linked annotation to navigate to',
                     });
-                    
+
                     if (selected !== undefined) {
-                        await this.linkedAnnotationManager.goToLinkedAnnotation(annotationId, selected.index);
+                        await this.linkedAnnotationManager?.goToLinkedAnnotation(annotationId, selected.index);
                     }
                 }
             }),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             vscode.commands.registerCommand('annotations.showLinks', async (treeItemOrId?: any) => {
                 let annotationId: string;
-                
+
                 // If called from TreeView inline action, treeItemOrId is the TreeItem
                 if (treeItemOrId && typeof treeItemOrId === 'object' && treeItemOrId.annotation) {
                     annotationId = treeItemOrId.annotation.id;
@@ -932,10 +1096,10 @@ export class AnnotationManager extends EventEmitter {
                     }
                     annotationId = annotation.id;
                 }
-                
+
                 const annotation = this.annotations.get(annotationId);
                 if (!annotation) return;
-                
+
                 // Create webview panel to show links
                 const panel = vscode.window.createWebviewPanel(
                     'annotationLinks',
@@ -943,25 +1107,27 @@ export class AnnotationManager extends EventEmitter {
                     vscode.ViewColumn.Two,
                     { enableScripts: true }
                 );
-                
+
                 // Find all incoming links
-                const incomingLinks = Array.from(this.annotations.values()).filter(a => 
-                    a.linkedAnnotations && a.linkedAnnotations.some(link => 
-                        link.targetFile === annotation.file && link.targetLine === annotation.line
-                    )
+                const incomingLinks = Array.from(this.annotations.values()).filter(
+                    (a) =>
+                        a.linkedAnnotations &&
+                        a.linkedAnnotations.some(
+                            (link) => link.targetFile === annotation.file && link.targetLine === annotation.line
+                        )
                 );
-                
+
                 panel.webview.html = this.getLinksWebviewContent(annotation, incomingLinks);
-                
+
                 // Handle messages from webview
                 panel.webview.onDidReceiveMessage(
-                    async message => {
+                    async (message) => {
                         if (message.command === 'navigate') {
                             try {
                                 // Try to open the file with workspace URI
                                 const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
                                 let uri: vscode.Uri;
-                                
+
                                 if (workspaceFolder) {
                                     // Try as relative path from workspace
                                     uri = vscode.Uri.joinPath(workspaceFolder.uri, message.file);
@@ -974,13 +1140,16 @@ export class AnnotationManager extends EventEmitter {
                                 } else {
                                     uri = vscode.Uri.file(message.file);
                                 }
-                                
+
                                 const document = await vscode.workspace.openTextDocument(uri);
                                 const editor = await vscode.window.showTextDocument(document);
                                 const position = new vscode.Position(message.line, 0);
                                 editor.selection = new vscode.Selection(position, position);
-                                editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
-                                
+                                editor.revealRange(
+                                    new vscode.Range(position, position),
+                                    vscode.TextEditorRevealType.InCenter
+                                );
+
                                 // Find and focus the annotation at that line
                                 const annotation = this.findAnnotation(message.file, message.line);
                                 if (annotation) {
@@ -992,7 +1161,15 @@ export class AnnotationManager extends EventEmitter {
                                     this.focusAnnotationInPanel(annotation.id);
                                 }
                             } catch (error) {
-                                vscode.window.showErrorMessage(localize('failedToNavigate', 'Failed to navigate to {0}:{1}: {2}', message.file, message.line + 1, String(error)));
+                                vscode.window.showErrorMessage(
+                                    localize(
+                                        'failedToNavigate',
+                                        'Failed to navigate to {0}:{1}: {2}',
+                                        message.file,
+                                        message.line + 1,
+                                        String(error)
+                                    )
+                                );
                             }
                         }
                     },
@@ -1011,27 +1188,33 @@ export class AnnotationManager extends EventEmitter {
                     }
                     annotationId = annotation.id;
                 }
-                
+
                 const annotation = this.annotations.get(annotationId);
                 if (!annotation || !annotation.linkedAnnotations || annotation.linkedAnnotations.length === 0) {
-                    vscode.window.showInformationMessage(localize('noLinkedAnnotationsToRemove', 'No linked annotations to remove.'));
+                    vscode.window.showInformationMessage(
+                        localize('noLinkedAnnotationsToRemove', 'No linked annotations to remove.')
+                    );
                     return;
                 }
-                
+
                 // Show quick pick of linked annotations to remove
                 const items = annotation.linkedAnnotations.map((link, index) => ({
                     label: `${link.targetFile}:${link.targetLine + 1}`,
                     description: link.relationship,
-                    index: index
+                    index: index,
                 }));
-                
+
                 const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select link to remove'
+                    placeHolder: 'Select link to remove',
                 });
-                
+
                 if (selected) {
                     const linkToRemove = annotation.linkedAnnotations[selected.index];
-                    await this.linkedAnnotationManager.removeLink(annotationId, linkToRemove.targetFile, linkToRemove.targetLine);
+                    await this.linkedAnnotationManager?.removeLink(
+                        annotationId,
+                        linkToRemove.targetFile,
+                        linkToRemove.targetLine
+                    );
                 }
             }),
 
@@ -1039,7 +1222,7 @@ export class AnnotationManager extends EventEmitter {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             vscode.commands.registerCommand('annotations.moveToColumn', async (treeItemOrId?: any) => {
                 let annotationId: string;
-                
+
                 // If called from TreeView inline action, treeItemOrId is the TreeItem
                 if (treeItemOrId && typeof treeItemOrId === 'object' && treeItemOrId.annotation) {
                     annotationId = treeItemOrId.annotation.id;
@@ -1057,31 +1240,33 @@ export class AnnotationManager extends EventEmitter {
                     }
                     annotationId = annotation.id;
                 }
-                
+
                 // Get current kanban columns dynamically
                 const items = Array.from(this.kanbanColumns.entries()).map(([id, name]) => ({
                     label: name,
-                    value: id
+                    value: id,
                 }));
-                
+
                 const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select column to move annotation to'
+                    placeHolder: 'Select column to move annotation to',
                 });
-                
+
                 if (selected) {
                     const annotation = this.annotations.get(annotationId);
                     if (annotation) {
                         annotation.kanbanColumn = selected.value;
                         await this.saveAnnotations();
                         this.emit('annotationChanged', annotation);
-                        vscode.window.showInformationMessage(localize('annotationMovedTo', 'Annotation moved to {0}', selected.label));
-                        
+                        vscode.window.showInformationMessage(
+                            localize('annotationMovedTo', 'Annotation moved to {0}', selected.label)
+                        );
+
                         // Update Kanban view if it's open
                         if (KanbanView.currentPanel) {
                             const updatedAnnotations = Array.from(this.annotations.values());
                             KanbanView.currentPanel.webview.postMessage({
                                 command: 'updateAnnotations',
-                                annotations: updatedAnnotations.map(a => ({
+                                annotations: updatedAnnotations.map((a) => ({
                                     id: a.id,
                                     message: a.message,
                                     severity: a.severity,
@@ -1090,112 +1275,24 @@ export class AnnotationManager extends EventEmitter {
                                     line: a.line,
                                     tags: a.tags || [],
                                     kanbanColumn: a.kanbanColumn || 'todo',
-                                    timestamp: a.timestamp
-                                }))
+                                    timestamp: a.timestamp,
+                                })),
                             });
                         }
                     }
                 }
             }),
 
-            // Kanban-specific commands for programmatic access
-            vscode.commands.registerCommand('annotations.kanban.moveToColumn', async (annotationId: string, columnId: string) => {
-                const annotation = this.annotations.get(annotationId);
-                if (annotation) {
-                    annotation.kanbanColumn = columnId;
-                    await this.saveAnnotations();
-                    this.emit('annotationChanged', annotation);
-                }
-            }),
+            // Lot 5 R2 transition: the Kanban commands below were previously
+            // registered here against the legacy `manager.kanbanColumns` /
+            // `manager.annotations` state. They are now owned by
+            // `extension.ts:registerKanbanCommands()` which routes through
+            // `KanbanColumnStore` + `AnnotationStore`. Re-registering them
+            // here would throw "command already exists" at activation. R3
+            // retires AnnotationManager entirely.
 
-            vscode.commands.registerCommand('annotations.kanban.refresh', () => {
-                this.emit('annotationChanged');
-            }),
-
-            vscode.commands.registerCommand('annotations.kanban.delete', async (annotationId: string) => {
-                if (annotationId) {
-                    await this.deleteAnnotation(annotationId);
-                }
-            }),
-
-            vscode.commands.registerCommand('annotations.kanban.removeFromKanban', async (annotationId: string) => {
-                if (annotationId) {
-                    const annotation = this.annotations.get(annotationId);
-                    if (annotation) {
-                        // Remove from kanban by setting column to undefined
-                        annotation.kanbanColumn = undefined;
-                        await this.saveAnnotations();
-                        this.emit('annotationChanged');
-                    }
-                }
-            }),
-
-            vscode.commands.registerCommand('annotations.kanban.updateColumns', (columns: [string, string][]) => {
-                this.kanbanColumns.clear();
-                columns.forEach(([id, name]) => {
-                    this.kanbanColumns.set(id, name);
-                });
-                this.saveKanbanColumns();
-            }),
-
-            vscode.commands.registerCommand('annotations.kanban.getColumns', () => {
-                return Array.from(this.kanbanColumns.entries());
-            }),
-
-            vscode.commands.registerCommand('annotations.kanban.addColumn', (id: string, name: string) => {
-                this.kanbanColumns.set(id, name);
-                this.saveKanbanColumns();
-                this.emit('kanbanColumnsChanged', this.kanbanColumns);
-            }),
-
-            vscode.commands.registerCommand('annotations.kanban.deleteColumn', async (id: string) => {
-                this.log(`Deleting Kanban column: ${id}`);
-                
-                const columnName = this.kanbanColumns.get(id) || id;
-                this.kanbanColumns.delete(id);
-                
-                // Move all annotations from deleted column to 'todo'
-                let movedCount = 0;
-                this.annotations.forEach(annotation => {
-                    if (annotation.kanbanColumn === id) {
-                        annotation.kanbanColumn = 'todo';
-                        movedCount++;
-                    }
-                });
-                
-                this.log(`Moved ${movedCount} annotations from column "${columnName}" to "To Do"`);
-                
-                await this.saveAnnotations();
-                await this.saveKanbanColumns();
-                this.emit('kanbanColumnsChanged', this.kanbanColumns);
-                this.emit('annotationChanged');
-                
-                this.log(`Column "${columnName}" deleted successfully`);
-                
-                // Update KanbanView if open
-                if (KanbanView.currentPanel) {
-                    KanbanView.currentPanel.webview.postMessage({
-                        command: 'updateColumns',
-                        columns: Array.from(this.kanbanColumns.entries())
-                    });
-                    
-                    const updatedAnnotations = Array.from(this.annotations.values());
-                    KanbanView.currentPanel.webview.postMessage({
-                        command: 'updateAnnotations',
-                        annotations: updatedAnnotations.map(a => ({
-                            id: a.id,
-                            message: a.message,
-                            severity: a.severity,
-                            file: a.file?.split('/').pop() || 'Unknown',
-                            filePath: a.file,
-                            line: a.line,
-                            tags: a.tags || [],
-                            kanbanColumn: a.kanbanColumn || 'todo',
-                            timestamp: a.timestamp
-                        }))
-                    });
-                }
-            }),
+            // (annotations.kanban.deleteColumn moved to extension.ts —
+            // see Lot 5 R2 transition note above.)
 
             // TemplateManager commands
             vscode.commands.registerCommand('annotations.applyTemplate', async () => {
@@ -1204,13 +1301,13 @@ export class AnnotationManager extends EventEmitter {
                     vscode.window.showErrorMessage('No active editor found.');
                     return;
                 }
-                
+
                 const templates = this.templateManager.getAllTemplates();
                 if (templates.length === 0) {
                     vscode.window.showInformationMessage('No templates available. Create one first.');
                     return;
                 }
-                
+
                 const selectedTemplate = await this.templateManager.showTemplateQuickPick();
                 if (selectedTemplate) {
                     // Get variable values from user
@@ -1219,7 +1316,7 @@ export class AnnotationManager extends EventEmitter {
                         for (const variable of selectedTemplate.variables) {
                             const value = await vscode.window.showInputBox({
                                 prompt: `Enter value for ${variable}`,
-                                placeHolder: variable
+                                placeHolder: variable,
                             });
                             if (value === undefined) {
                                 return; // User cancelled
@@ -1227,10 +1324,10 @@ export class AnnotationManager extends EventEmitter {
                             variableValues[variable] = value;
                         }
                     }
-                    
+
                     // Apply template to get final content
                     const content = await this.applyTemplate(selectedTemplate, variableValues);
-                    
+
                     // Create annotation with template content
                     const annotation: Annotation = {
                         id: this.generateId(),
@@ -1242,15 +1339,17 @@ export class AnnotationManager extends EventEmitter {
                         severity: selectedTemplate.severity || this.config.defaultSeverity,
                         tags: selectedTemplate.tags || [],
                         thread: [],
-                        resolved: false
+                        resolved: false,
                     };
                     await this.populateAnchor(annotation, editor.document, annotation.line);
                     // Add the annotation
                     this.annotations.set(annotation.id, annotation);
                     await this.saveAnnotations();
                     await this.refreshAnnotations();
-                    
-                    vscode.window.showInformationMessage(`Template "${selectedTemplate.name}" applied and annotation created.`);
+
+                    vscode.window.showInformationMessage(
+                        `Template "${selectedTemplate.name}" applied and annotation created.`
+                    );
                 }
             }),
             vscode.commands.registerCommand('annotations.createTemplate', async () => {
@@ -1268,39 +1367,39 @@ export class AnnotationManager extends EventEmitter {
                     vscode.window.showErrorMessage('No active editor found.');
                     return;
                 }
-                
+
                 // Find annotation at current line
                 const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
                 if (!annotation) {
                     vscode.window.showErrorMessage('No annotation found at current line. Create an annotation first.');
                     return;
                 }
-                
+
                 // Get code snippet from user
                 const snippet = await vscode.window.showInputBox({
                     prompt: 'Enter code snippet to attach to this annotation',
                     placeHolder: 'console.log("fix"); // Example fix',
-                    value: editor.document.getText(editor.selection) || undefined
+                    value: editor.document.getText(editor.selection) || undefined,
                 });
-                
+
                 if (!snippet) return;
-                
+
                 // Get description
                 const description = await vscode.window.showInputBox({
                     prompt: 'Enter description for this snippet',
-                    placeHolder: 'Quick fix for token validation'
+                    placeHolder: 'Quick fix for token validation',
                 });
-                
+
                 if (!description) return;
-                
+
                 const language = editor.document.languageId;
                 const result = await this.addSnippet(annotation, snippet, language);
-                
+
                 // Update the annotation in our collection
                 this.annotations.set(result.id, result);
                 await this.saveAnnotations();
                 await this.refreshAnnotations();
-                
+
                 vscode.window.showInformationMessage(`Code snippet attached to annotation: ${result.id}`);
             }),
             vscode.commands.registerCommand('annotations.applySnippet', async () => {
@@ -1309,20 +1408,20 @@ export class AnnotationManager extends EventEmitter {
                     vscode.window.showErrorMessage('No active editor found.');
                     return;
                 }
-                
+
                 // Find annotation at current line
                 const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
                 if (!annotation) {
                     vscode.window.showErrorMessage('No annotation found at current line.');
                     return;
                 }
-                
+
                 // Check if annotation has a snippet
                 if (!annotation.snippet || !annotation.snippet.code) {
                     vscode.window.showErrorMessage('This annotation does not have a code snippet attached.');
                     return;
                 }
-                
+
                 // Apply the snippet
                 try {
                     await this.applySnippet(annotation, editor);
@@ -1337,15 +1436,15 @@ export class AnnotationManager extends EventEmitter {
                     vscode.window.showInformationMessage('No snippets available');
                     return;
                 }
-                
+
                 const selectedSnippet: vscode.QuickPickItem | undefined = await vscode.window.showQuickPick(
-                    snippets.map(s => ({
+                    snippets.map((s) => ({
                         label: s.annotationId,
-                        description: `${s.file}:${s.line} - ${s.timestamp}`
+                        description: `${s.file}:${s.line} - ${s.timestamp}`,
                     })),
                     { placeHolder: 'Select a snippet to preview' }
                 );
-                
+
                 if (selectedSnippet) {
                     const annotation = this.annotations.get(selectedSnippet.label);
                     if (annotation) {
@@ -1363,10 +1462,10 @@ export class AnnotationManager extends EventEmitter {
                     vscode.window.showInformationMessage('No snippets in history');
                 } else {
                     vscode.window.showQuickPick(
-                        history.map(h => ({
+                        history.map((h) => ({
                             label: `${h.file}:${h.line}`,
                             description: `Applied at ${h.timestamp}`,
-                            detail: h.originalCode
+                            detail: h.originalCode,
                         }))
                     );
                 }
@@ -1379,7 +1478,9 @@ export class AnnotationManager extends EventEmitter {
         if (!annotation) return;
 
         if (annotation.line === 0) {
-            vscode.window.showWarningMessage(localize('cannotMoveAboveFirstLine', 'Cannot move annotation above the first line.'));
+            vscode.window.showWarningMessage(
+                localize('cannotMoveAboveFirstLine', 'Cannot move annotation above the first line.')
+            );
             return;
         }
 
@@ -1400,7 +1501,9 @@ export class AnnotationManager extends EventEmitter {
         const document = await vscode.workspace.openTextDocument(absoluteFilePath);
 
         if (annotation.line >= document.lineCount - 1) {
-            vscode.window.showWarningMessage(localize('cannotMoveBelowLastLine', 'Cannot move annotation below the last line.'));
+            vscode.window.showWarningMessage(
+                localize('cannotMoveBelowLastLine', 'Cannot move annotation below the last line.')
+            );
             return;
         }
 
@@ -1425,7 +1528,9 @@ export class AnnotationManager extends EventEmitter {
         if (resolvedCount > 0) {
             await this.saveAnnotations();
             await this.refreshAnnotations();
-            vscode.window.showInformationMessage(localize('staleResolved', '{0} stale annotations resolved automatically!', resolvedCount));
+            vscode.window.showInformationMessage(
+                localize('staleResolved', '{0} stale annotations resolved automatically!', resolvedCount)
+            );
         } else {
             vscode.window.showInformationMessage(localize('noStale', 'No stale annotations found.'));
         }
@@ -1436,13 +1541,16 @@ export class AnnotationManager extends EventEmitter {
         if (!editor) return;
         const fileAnnotations = this.getAnnotationsForFile(editor.document.fileName);
         if (fileAnnotations.length === 0) {
-            vscode.window.showInformationMessage(localize('noAnnotationsForFile', 'No annotations found for this file.'));
+            vscode.window.showInformationMessage(
+                localize('noAnnotationsForFile', 'No annotations found for this file.')
+            );
             return;
         }
 
         const newMessage = await vscode.window.showInputBox({
             prompt: localize('enterBatchMessage', 'Enter a new message for all annotations in this file'),
-            validateInput: text => text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null
+            validateInput: (text) =>
+                text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
         });
         if (!newMessage) return;
 
@@ -1452,12 +1560,14 @@ export class AnnotationManager extends EventEmitter {
         }
         await this.saveAnnotations();
         await this.refreshAnnotations();
-        vscode.window.showInformationMessage(localize('batchEdited', 'All annotations in this file have been updated!'));
+        vscode.window.showInformationMessage(
+            localize('batchEdited', 'All annotations in this file have been updated!')
+        );
     }
 
     private async filterBySeverity(): Promise<void> {
         const severity = await vscode.window.showQuickPick(['info', 'warning', 'error'], {
-            placeHolder: localize('chooseSeverity', 'Choose a severity to filter by')
+            placeHolder: localize('chooseSeverity', 'Choose a severity to filter by'),
         });
         if (!severity) return;
         this.currentFilter = `severity:${severity}`;
@@ -1507,7 +1617,7 @@ export class AnnotationManager extends EventEmitter {
 
     private async updateComment(commentId: string, newMessage: string): Promise<void> {
         for (const annotation of this.annotations.values()) {
-            const comment = annotation.thread?.find(c => c.id === commentId);
+            const comment = annotation.thread?.find((c) => c.id === commentId);
             if (comment) {
                 comment.message = newMessage;
                 comment.timestamp = new Date().toISOString();
@@ -1521,7 +1631,7 @@ export class AnnotationManager extends EventEmitter {
     private async deleteComment(annotationId: string, commentId: string): Promise<void> {
         const annotation = this.annotations.get(annotationId);
         if (annotation && annotation.thread) {
-            annotation.thread = annotation.thread.filter(c => c.id !== commentId);
+            annotation.thread = annotation.thread.filter((c) => c.id !== commentId);
             await this.saveAnnotations();
             await this.refreshAnnotations();
         }
@@ -1531,8 +1641,8 @@ export class AnnotationManager extends EventEmitter {
         const newMessage = await vscode.window.showInputBox({
             prompt: localize('editAnnotationPrompt', 'Edit annotation message'),
             value: annotation.message,
-            validateInput: text =>
-                text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null
+            validateInput: (text) =>
+                text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
         });
         if (!newMessage) return;
         annotation.message = newMessage;
@@ -1543,17 +1653,17 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async manageAnnotationCommand(annotations: Annotation[]): Promise<void> {
-        const options = annotations.flatMap(annotation => [
+        const options = annotations.flatMap((annotation) => [
             { label: `Edit: ${annotation.message}`, action: () => this.modifyAnnotation(annotation.id) },
-            { label: `Delete: ${annotation.message}`, action: () => this.deleteAnnotation(annotation.id) }
+            { label: `Delete: ${annotation.message}`, action: () => this.deleteAnnotation(annotation.id) },
         ]);
 
         const selected = await vscode.window.showQuickPick(
-            options.map(opt => opt.label),
+            options.map((opt) => opt.label),
             { placeHolder: localize('chooseAction', 'Choose an action for annotations on this line') }
         );
 
-        const selectedOption = options.find(opt => opt.label === selected);
+        const selectedOption = options.find((opt) => opt.label === selected);
         if (selectedOption) {
             await selectedOption.action();
         }
@@ -1584,7 +1694,9 @@ export class AnnotationManager extends EventEmitter {
 
         const repo = vscode.workspace.getConfiguration('annotation').get<string>('github.repository', '');
         if (!repo || !repo.includes('/')) {
-            vscode.window.showErrorMessage('GitHub repository not configured properly. Set "annotation.github.repository": "owner/repo" in settings.');
+            vscode.window.showErrorMessage(
+                'GitHub repository not configured properly. Set "annotation.github.repository": "owner/repo" in settings.'
+            );
             return;
         }
 
@@ -1592,9 +1704,12 @@ export class AnnotationManager extends EventEmitter {
         const secretStorage = this.context.secrets;
         let githubToken = await secretStorage.get('annotation.github.token');
         if (!githubToken) {
-            githubToken = await vscode.window.showInputBox({ prompt: "Enter your GitHub personal access token (with repo scope)", password: true });
+            githubToken = await vscode.window.showInputBox({
+                prompt: 'Enter your GitHub personal access token (with repo scope)',
+                password: true,
+            });
             if (!githubToken) {
-                vscode.window.showErrorMessage("GitHub token is required to create issues.");
+                vscode.window.showErrorMessage('GitHub token is required to create issues.');
                 return;
             }
             await secretStorage.store('annotation.github.token', githubToken);
@@ -1610,7 +1725,7 @@ export class AnnotationManager extends EventEmitter {
                 owner,
                 repo: repoName,
                 title,
-                body
+                body,
             });
 
             if (response && response.data && response.data.html_url) {
@@ -1625,7 +1740,7 @@ export class AnnotationManager extends EventEmitter {
             } else {
                 vscode.window.showErrorMessage('Failed to create GitHub issue.');
             }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
             vscode.window.showErrorMessage('Error creating GitHub issue: ' + error.message);
         }
@@ -1663,7 +1778,7 @@ export class AnnotationManager extends EventEmitter {
                 pinned: false,
                 priority: 0,
                 severity: this.config.defaultSeverity,
-                resolved: false
+                resolved: false,
             };
             await this.populateAnchor(annotation, editor.document, line);
 
@@ -1693,11 +1808,7 @@ export class AnnotationManager extends EventEmitter {
      * Pass doc to refresh lineHash/contextBefore/contextAfter; omit doc
      * when the document is not available (e.g. TreeView ordering).
      */
-    public setAnnotationLine(
-        annotation: Annotation,
-        newLine: number,
-        doc?: vscode.TextDocument
-    ): void {
+    public setAnnotationLine(annotation: Annotation, newLine: number, doc?: vscode.TextDocument): void {
         annotation.line = newLine;
         if (doc && newLine >= 0 && newLine < doc.lineCount) {
             // Caller has chosen newLine deliberately (e.g. after a paste-recover or
@@ -1724,12 +1835,7 @@ export class AnnotationManager extends EventEmitter {
             walkForward: 0,
             walkBackward: 0,
         });
-        this.applyAnnotationLineAnchors(
-            annotation,
-            clampedRenderLine,
-            exactAnchor,
-            trackingAnchor
-        );
+        this.applyAnnotationLineAnchors(annotation, clampedRenderLine, exactAnchor, trackingAnchor);
     }
 
     private applyAnnotationLineAnchors(
@@ -1773,7 +1879,7 @@ export class AnnotationManager extends EventEmitter {
     }
 
     public async importAnnotationsJSON(): Promise<void> {
-        const uri = await vscode.window.showOpenDialog({ filters: { 'JSON': ['json'] }, canSelectMany: false });
+        const uri = await vscode.window.showOpenDialog({ filters: { JSON: ['json'] }, canSelectMany: false });
         if (!uri || uri.length === 0) {
             vscode.window.showInformationMessage(localize('importCancelled', 'Import cancelled.'));
             return;
@@ -1798,13 +1904,19 @@ export class AnnotationManager extends EventEmitter {
             await this.refreshAnnotations();
             vscode.window.showInformationMessage(localize('importSuccessful', 'Annotations imported successfully!'));
         } catch (error) {
-            vscode.window.showErrorMessage(localize('importFailed', 'Failed to import annotations: {0}', error instanceof Error ? error.message : String(error)));
+            vscode.window.showErrorMessage(
+                localize(
+                    'importFailed',
+                    'Failed to import annotations: {0}',
+                    error instanceof Error ? error.message : String(error)
+                )
+            );
         }
         this.emit('annotationChanged');
     }
 
     public async exportAnnotationsJSON(): Promise<void> {
-        const uri = await vscode.window.showSaveDialog({ filters: { 'JSON': ['json'] } });
+        const uri = await vscode.window.showSaveDialog({ filters: { JSON: ['json'] } });
         if (!uri) {
             vscode.window.showInformationMessage(localize('exportCancelled', 'Export cancelled.'));
             return;
@@ -1816,7 +1928,13 @@ export class AnnotationManager extends EventEmitter {
             await vscode.workspace.fs.writeFile(uri, fileData);
             vscode.window.showInformationMessage(localize('exportSuccessful', 'Annotations exported successfully!'));
         } catch (error) {
-            vscode.window.showErrorMessage(localize('exportFailed', 'Failed to export annotations: {0}', error instanceof Error ? error.message : String(error)));
+            vscode.window.showErrorMessage(
+                localize(
+                    'exportFailed',
+                    'Failed to export annotations: {0}',
+                    error instanceof Error ? error.message : String(error)
+                )
+            );
         }
     }
 
@@ -1834,7 +1952,7 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private getPersistableAnnotations(): Omit<Annotation, 'resolvedAnchor'>[] {
-        return Array.from(this.annotations.values()).map(annotation => {
+        return Array.from(this.annotations.values()).map((annotation) => {
             const { resolvedAnchor: _resolvedAnchor, ...persisted } = annotation;
             return persisted;
         });
@@ -1876,14 +1994,14 @@ export class AnnotationManager extends EventEmitter {
             const rawArray = JSON.parse(content) as Annotation[];
             // Defensive sanity: drop entries with no id/message (data corruption).
             const valid = rawArray
-                .filter(a => a && typeof a.id === 'string' && typeof a.message === 'string')
-                .map(a => {
+                .filter((a) => a && typeof a.id === 'string' && typeof a.message === 'string')
+                .map((a) => {
                     delete a.resolvedAnchor;
                     return a;
                 });
             // Migrate legacy schema (assigns fileUri, marks suspicious entries as stale)
             // then collapse exact (file, timestamp, message) triplets.
-            const migrated = valid.map(a => this.migrateLegacyAnnotation(a));
+            const migrated = valid.map((a) => this.migrateLegacyAnnotation(a));
             const deduped = this.deduplicateLegacyAnnotations(migrated);
             this.annotations.clear();
             let staleCount = 0;
@@ -1899,8 +2017,10 @@ export class AnnotationManager extends EventEmitter {
             }
             this.log(
                 `Loaded ${this.annotations.size} annotations` +
-                (rawArray.length !== this.annotations.size ? ` (${rawArray.length - this.annotations.size} dropped/deduped)` : '') +
-                (staleCount > 0 ? ` -- ${staleCount} marked stale by migration` : '')
+                    (rawArray.length !== this.annotations.size
+                        ? ` (${rawArray.length - this.annotations.size} dropped/deduped)`
+                        : '') +
+                    (staleCount > 0 ? ` -- ${staleCount} marked stale by migration` : '')
             );
         } catch (error) {
             vscode.window.showErrorMessage(
@@ -1932,7 +2052,11 @@ export class AnnotationManager extends EventEmitter {
         const allAnnotations = this.getAnnotationsForFile(editor.document.fileName);
         await this.applyAnnotations(editor, allAnnotations);
         this.updateAnnotationsPanel();
-        vscode.window.showInformationMessage(annotation.pinned ? localize('annotationPinned', 'Annotation pinned!') : localize('annotationUnpinned', 'Annotation unpinned!'));
+        vscode.window.showInformationMessage(
+            annotation.pinned
+                ? localize('annotationPinned', 'Annotation pinned!')
+                : localize('annotationUnpinned', 'Annotation unpinned!')
+        );
     }
 
     private async setAnnotationSeverity(): Promise<void> {
@@ -1944,7 +2068,7 @@ export class AnnotationManager extends EventEmitter {
             return;
         }
         const severity = await vscode.window.showQuickPick(['info', 'warning', 'error'], {
-            placeHolder: localize('selectSeverity', 'Select a severity for the annotation')
+            placeHolder: localize('selectSeverity', 'Select a severity for the annotation'),
         });
         if (!severity) return;
         annotation.severity = severity;
@@ -1952,7 +2076,9 @@ export class AnnotationManager extends EventEmitter {
         await this.saveAnnotations();
         await this.refreshAnnotations();
         this.updateAnnotationsPanel();
-        vscode.window.showInformationMessage(localize('severityUpdated', 'Annotation severity updated to {0}', severity));
+        vscode.window.showInformationMessage(
+            localize('severityUpdated', 'Annotation severity updated to {0}', severity)
+        );
         this.emit('annotationChanged');
     }
 
@@ -1963,11 +2089,11 @@ export class AnnotationManager extends EventEmitter {
         const severityOptions = [
             { label: '❌ Error', value: 'error' },
             { label: '⚠️ Warning', value: 'warning' },
-            { label: 'ℹ️ Info', value: 'info' }
+            { label: 'ℹ️ Info', value: 'info' },
         ];
 
         const selectedSeverityItem = await vscode.window.showQuickPick(severityOptions, {
-            placeHolder: localize('selectSeverity', 'Select annotation severity')
+            placeHolder: localize('selectSeverity', 'Select annotation severity'),
         });
 
         if (selectedSeverityItem && selectedSeverityItem.value !== annotation.severity) {
@@ -1976,7 +2102,9 @@ export class AnnotationManager extends EventEmitter {
             await this.saveAnnotations();
             await this.refreshAnnotations();
             this.updateAnnotationsPanel();
-            vscode.window.showInformationMessage(localize('severityUpdated', 'Annotation severity updated to {0}', selectedSeverityItem.value));
+            vscode.window.showInformationMessage(
+                localize('severityUpdated', 'Annotation severity updated to {0}', selectedSeverityItem.value)
+            );
             this.emit('annotationChanged');
         }
     }
@@ -1999,11 +2127,14 @@ export class AnnotationManager extends EventEmitter {
         const currentTags = (annotation.tags || []).join(', ');
         const input = await vscode.window.showInputBox({
             prompt: localize('enterTags', 'Enter tags (comma separated)'),
-            value: currentTags
+            value: currentTags,
         });
         if (input === undefined) return;
 
-        annotation.tags = input.split(',').map(t => t.trim()).filter(t => t.length > 0);
+        annotation.tags = input
+            .split(',')
+            .map((t) => t.trim())
+            .filter((t) => t.length > 0);
         annotation.timestamp = new Date().toISOString();
         await this.saveAnnotations();
         await this.refreshAnnotations();
@@ -2025,7 +2156,7 @@ export class AnnotationManager extends EventEmitter {
             vscode.ViewColumn.Beside,
             {
                 enableScripts: true,
-                retainContextWhenHidden: true
+                retainContextWhenHidden: true,
             }
         );
 
@@ -2033,7 +2164,7 @@ export class AnnotationManager extends EventEmitter {
             this.annotationsPanel = undefined;
         });
 
-        this.annotationsPanel.webview.onDidReceiveMessage(async message => {
+        this.annotationsPanel.webview.onDidReceiveMessage(async (message) => {
             switch (message.command) {
                 case 'reply':
                     await this.replyToAnnotation(message.annotationId);
@@ -2089,11 +2220,11 @@ export class AnnotationManager extends EventEmitter {
         }
         const absoluteFilePath = this.getAbsolutePath(annotation.file);
         const uri = vscode.Uri.file(absoluteFilePath);
-        let document = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === uri.fsPath);
+        let document = vscode.workspace.textDocuments.find((doc) => doc.uri.fsPath === uri.fsPath);
         if (!document) {
             document = await vscode.workspace.openTextDocument(uri);
         }
-        let editor = vscode.window.visibleTextEditors.find(e => e.document.uri.fsPath === uri.fsPath);
+        let editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.fsPath === uri.fsPath);
         if (!editor) {
             editor = await vscode.window.showTextDocument(document);
         } else {
@@ -2115,9 +2246,9 @@ export class AnnotationManager extends EventEmitter {
      */
     public focusAnnotationInPanel(annotationId: string): void {
         if (this.annotationsPanel) {
-            this.annotationsPanel.webview.postMessage({ 
-                command: 'focusAnnotation', 
-                annotationId: annotationId 
+            this.annotationsPanel.webview.postMessage({
+                command: 'focusAnnotation',
+                annotationId: annotationId,
             });
         }
     }
@@ -2143,16 +2274,19 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private getAnnotationsPanelHtml(): string {
-        const annotations = Array.from(this.annotations.values()).filter(a => this.shouldAnnotationBeVisible(a));
+        const annotations = Array.from(this.annotations.values()).filter((a) => this.shouldAnnotationBeVisible(a));
         this.applyCurrentSorting(annotations);
 
-        const groupedAnnotations = annotations.reduce((groups, annotation) => {
-            if (!groups[annotation.file]) {
-                groups[annotation.file] = [];
-            }
-            groups[annotation.file].push(annotation);
-            return groups;
-        }, {} as Record<string, Annotation[]>);
+        const groupedAnnotations = annotations.reduce(
+            (groups, annotation) => {
+                if (!groups[annotation.file]) {
+                    groups[annotation.file] = [];
+                }
+                groups[annotation.file].push(annotation);
+                return groups;
+            },
+            {} as Record<string, Annotation[]>
+        );
 
         const allFiles = Object.keys(groupedAnnotations);
         const totalAnnotations = annotations.length;
@@ -2527,7 +2661,7 @@ export class AnnotationManager extends EventEmitter {
                         <label for="filterOptions">${loc('filterBy', 'Filter by')}:</label>
                         <select id="filterOptions">
                             <option value="all">${loc('allAnnotations', 'All annotations')}</option>
-                            ${allFiles.map(file => `<option value="${file}">${file}</option>`).join('')}
+                            ${allFiles.map((file) => `<option value="${file}">${file}</option>`).join('')}
                         </select>
                     </div>
                 </div>
@@ -2551,7 +2685,9 @@ export class AnnotationManager extends EventEmitter {
                             <span>${file}</span>
                             <span class="file-stats">${fileAnnotations.length} ${fileAnnotations.length > 1 ? loc('annotations', 'annotations') : loc('annotation', 'annotation')}</span>
                         </div>
-                        ${fileAnnotations.map(annotation => `
+                        ${fileAnnotations
+                            .map(
+                                (annotation) => `
                             <div class="annotation-card"
                                  id="${escapeHtml(annotation.id)}"
                                  data-annotation-id="${escapeHtml(annotation.id)}"
@@ -2571,11 +2707,15 @@ export class AnnotationManager extends EventEmitter {
                                 <div class="annotation-message">${escapeHtml(annotation.message)}</div>
                                 <div class="annotation-file-info">${loc('line', 'Line')}: ${annotation.line + 1} &bull; ${loc('severity', 'Severity')}: ${escapeHtml(annotation.severity || 'info')}</div>
 
-                                ${annotation.tags && annotation.tags.length ? `<div class="annotation-tags">${annotation.tags.map(t => escapeHtml(t)).join(', ')}</div>` : ''}
+                                ${annotation.tags && annotation.tags.length ? `<div class="annotation-tags">${annotation.tags.map((t) => escapeHtml(t)).join(', ')}</div>` : ''}
 
-                                ${annotation.thread?.length ? `
+                                ${
+                                    annotation.thread?.length
+                                        ? `
                                     <div class="comment-thread">
-                                        ${annotation.thread.map(comment => `
+                                        ${annotation.thread
+                                            .map(
+                                                (comment) => `
                                             <div class="comment"
                                                  data-comment-id="${escapeHtml(comment.id)}"
                                                  data-annotation-id="${escapeHtml(annotation.id)}">
@@ -2596,9 +2736,13 @@ export class AnnotationManager extends EventEmitter {
                                                     \u{1F5D1} ${loc('delete', 'Delete')}
                                                 </button>
                                             </div>
-                                        `).join('')}
+                                        `
+                                            )
+                                            .join('')}
                                     </div>
-                                ` : ''}
+                                `
+                                        : ''
+                                }
 
                                 <div class="action-buttons">
                                     <button class="action-button" data-action="reply"          data-annotation-id="${escapeHtml(annotation.id)}">\u{1F4AC} ${loc('reply', 'Reply')}</button>
@@ -2610,7 +2754,9 @@ export class AnnotationManager extends EventEmitter {
                                     <button class="action-button" data-action="moveDown"       data-annotation-id="${escapeHtml(annotation.id)}">\u{2193} ${loc('moveDown', 'Down')}</button>
                                 </div>
                             </div>
-                        `).join('')}
+                        `
+                            )
+                            .join('')}
                     </div>
                 `;
             }
@@ -2623,9 +2769,9 @@ export class AnnotationManager extends EventEmitter {
             
             // Localized strings
             const localizedStrings = {
-                foundResults: "${loc('foundResults', 'Found {0} result{1} for \'{2}\'').replace(/'/g, "\\'")}",
+                foundResults: "${loc('foundResults', "Found {0} result{1} for '{2}'").replace(/'/g, "\\'")}",
                 resultPosition: "${loc('resultPosition', 'Result {0}/{1}').replace(/'/g, "\\'")}",
-                noResultsFound: "${loc('noResultsFound', 'No results found for \'{0}\'').replace(/'/g, "\\'")}"
+                noResultsFound: "${loc('noResultsFound', "No results found for '{0}'").replace(/'/g, "\\'")}"
             };
             
             // Retrieve DOM elements
@@ -3116,10 +3262,15 @@ export class AnnotationManager extends EventEmitter {
             
             <div class="link-section">
                 <h2>➡️ Outgoing Links (${outgoingLinks.length})</h2>
-                ${outgoingLinks.length > 0 ? outgoingLinks.map(link => {
-                    const targetAnnotations = Array.from(this.annotations.values());
-                    const target = targetAnnotations.find(a => a.file === link.targetFile && a.line === link.targetLine);
-                    return `
+                ${
+                    outgoingLinks.length > 0
+                        ? outgoingLinks
+                              .map((link) => {
+                                  const targetAnnotations = Array.from(this.annotations.values());
+                                  const target = targetAnnotations.find(
+                                      (a) => a.file === link.targetFile && a.line === link.targetLine
+                                  );
+                                  return `
                         <div class="link-item"
                              data-navigate-file="${escapeHtml(link.targetFile)}"
                              data-navigate-line="${link.targetLine - 1}">
@@ -3129,16 +3280,22 @@ export class AnnotationManager extends EventEmitter {
                             ${target ? `<div class="meta">\u{1F464} ${escapeHtml(target.author || 'Unknown')} | \u{1F4C5} ${new Date(target.timestamp).toLocaleDateString()}</div>` : ''}
                         </div>
                     `;
-                }).join('') : '<p class="empty">No outgoing links</p>'}
+                              })
+                              .join('')
+                        : '<p class="empty">No outgoing links</p>'
+                }
             </div>
 
             <div class="link-section">
                 <h2>\u{2B05}\u{FE0F} Incoming Links (${incomingLinks.length})</h2>
-                ${incomingLinks.length > 0 ? incomingLinks.map(source => {
-                    const link = source.linkedAnnotations?.find(l =>
-                        l.targetFile === annotation.file && l.targetLine === annotation.line
-                    );
-                    return `
+                ${
+                    incomingLinks.length > 0
+                        ? incomingLinks
+                              .map((source) => {
+                                  const link = source.linkedAnnotations?.find(
+                                      (l) => l.targetFile === annotation.file && l.targetLine === annotation.line
+                                  );
+                                  return `
                         <div class="link-item"
                              data-navigate-file="${escapeHtml(source.file)}"
                              data-navigate-line="${source.line - 1}">
@@ -3148,7 +3305,10 @@ export class AnnotationManager extends EventEmitter {
                             <div class="meta">\u{1F464} ${escapeHtml(source.author || 'Unknown')} | \u{1F4C5} ${new Date(source.timestamp).toLocaleDateString()}</div>
                         </div>
                     `;
-                }).join('') : '<p class="empty">No incoming links</p>'}
+                              })
+                              .join('')
+                        : '<p class="empty">No incoming links</p>'
+                }
             </div>
 
             <script nonce="${linksNonce}">
@@ -3171,7 +3331,7 @@ export class AnnotationManager extends EventEmitter {
 
     public dispose(): void {
         this.log('Disposing AnnotationManager...');
-        
+
         // Clear timeouts
         if (this.contentChangeTimeout) {
             clearTimeout(this.contentChangeTimeout);
@@ -3179,22 +3339,23 @@ export class AnnotationManager extends EventEmitter {
         if (this.refreshTimeout) {
             clearTimeout(this.refreshTimeout);
         }
-        
+
         // Dispose all decorations
         this.clearAllAnnotationsFromEditors();
-        
+
         // Dispose all managers
-        this.linkedAnnotationManager.dispose();
+        this.linkedAnnotationManager?.dispose();
         // TemplateManager doesn't have disposable resources
         // this.templateManager.dispose();
-        this.reviewModeManager.dispose();
+        this.reviewModeManager?.dispose();
+        this.legacyEmptyStoreForRetiredManagers?.dispose();
         // SnippetManager is a singleton and doesn't have disposable resources
         // this.snippetManager.dispose();
-        
+
         // Output channel is in disposables array
         this.log('Extension disposed');
-        
-        this.disposables.forEach(d => d.dispose());
+
+        this.disposables.forEach((d) => d.dispose());
         this.statusBarItem.dispose();
     }
 
@@ -3212,7 +3373,7 @@ export class AnnotationManager extends EventEmitter {
                 this.documentSnapshots.set(newUriString, oldSnapshot);
             }
 
-            this.annotations.forEach(annotation => {
+            this.annotations.forEach((annotation) => {
                 // URI-strict match preferred; fall back to relative path for legacy entries.
                 const matches = annotation.fileUri
                     ? annotation.fileUri === oldUriString
@@ -3252,7 +3413,7 @@ export class AnnotationManager extends EventEmitter {
             return filePath;
         }
         const normalizedFilePath = this.normalizePath(filePath);
-        const workspaceFolder = workspaceFolders.find(folder =>
+        const workspaceFolder = workspaceFolders.find((folder) =>
             normalizedFilePath.startsWith(this.normalizePath(folder.uri.fsPath))
         );
         if (workspaceFolder) {
@@ -3335,7 +3496,9 @@ export class AnnotationManager extends EventEmitter {
         const visit = (list: vscode.DocumentSymbol[]): void => {
             for (const s of list) {
                 flat.push(s);
-                if (s.children?.length) { visit(s.children); }
+                if (s.children?.length) {
+                    visit(s.children);
+                }
             }
         };
         visit(symbols);
@@ -3352,11 +3515,7 @@ export class AnnotationManager extends EventEmitter {
      *   - Symbol via DocumentSymbolProvider (kind: 'symbol').
      *   - Otherwise the captured target line (kind: 'line').
      */
-    public async populateAnchor(
-        annotation: Annotation,
-        doc: vscode.TextDocument,
-        cursorLine: number
-    ): Promise<void> {
+    public async populateAnchor(annotation: Annotation, doc: vscode.TextDocument, cursorLine: number): Promise<void> {
         // Store two anchors:
         //   - exactAnchor is the line where the user asked to render the note.
         //   - trackingAnchor may walk from a blank line to nearby code, so a note
@@ -3401,10 +3560,7 @@ export class AnnotationManager extends EventEmitter {
         doc: vscode.TextDocument
     ): { renderLine: number; targetLine: number } | null {
         const structuredAnchor = annotation.anchor;
-        if (
-            !structuredAnchor?.anchorTextHash ||
-            structuredAnchor.anchorTextHash === EMPTY_LINE_HASH
-        ) {
+        if (!structuredAnchor?.anchorTextHash || structuredAnchor.anchorTextHash === EMPTY_LINE_HASH) {
             return null;
         }
 
@@ -3432,10 +3588,7 @@ export class AnnotationManager extends EventEmitter {
         };
     }
 
-    private resolveTrackingAnchorLine(
-        annotation: Annotation,
-        doc: vscode.TextDocument
-    ): number | null {
+    private resolveTrackingAnchorLine(annotation: Annotation, doc: vscode.TextDocument): number | null {
         return this.resolveTrackingAnchor(annotation, doc)?.renderLine ?? null;
     }
 
@@ -3444,10 +3597,7 @@ export class AnnotationManager extends EventEmitter {
      * stored annotation. Returns the runtime status to attach via
      * annotation.resolvedAnchor at refresh time.
      */
-    public computeResolvedAnchor(
-        doc: vscode.TextDocument,
-        annotation: Annotation
-    ): ResolvedAnnotationAnchor {
+    public computeResolvedAnchor(doc: vscode.TextDocument, annotation: Annotation): ResolvedAnnotationAnchor {
         // Cross-document call -- do not even try.
         if (!this.annotationMatchesDocument(annotation, doc)) {
             return {
@@ -3492,17 +3642,18 @@ export class AnnotationManager extends EventEmitter {
                 status: 'attached',
                 line: storedLine,
                 confidence: storedHash === EMPTY_LINE_HASH ? 0.5 : 1,
-                reason: storedHash === EMPTY_LINE_HASH
-                    ? 'Intentional blank-line anchor at stored line'
-                    : 'Hash match at stored line',
+                reason:
+                    storedHash === EMPTY_LINE_HASH
+                        ? 'Intentional blank-line anchor at stored line'
+                        : 'Hash match at stored line',
             };
         }
 
         // Degenerate anchor -- legacy/corrupted entries.
         if (!storedHash || storedHash === EMPTY_LINE_HASH) {
             const meaningful =
-                (annotation.contextBefore ?? []).filter(l => l !== '').length +
-                (annotation.contextAfter ?? []).filter(l => l !== '').length;
+                (annotation.contextBefore ?? []).filter((l) => l !== '').length +
+                (annotation.contextAfter ?? []).filter((l) => l !== '').length;
             if (meaningful < 2) {
                 return {
                     status: 'stale',
@@ -3541,7 +3692,12 @@ export class AnnotationManager extends EventEmitter {
                 if (found === storedLine) {
                     return { status: 'attached', line: found, confidence: 1, reason: 'Hash match at stored line' };
                 }
-                return { status: 'moved', line: found, confidence: 0.8, reason: `Relocated from line ${storedLine + 1}` };
+                return {
+                    status: 'moved',
+                    line: found,
+                    confidence: 0.8,
+                    reason: `Relocated from line ${storedLine + 1}`,
+                };
             }
         }
 
@@ -3588,8 +3744,8 @@ export class AnnotationManager extends EventEmitter {
         }
 
         const meaningful =
-            (a.contextBefore ?? []).filter(l => l !== '').length +
-            (a.contextAfter ?? []).filter(l => l !== '').length;
+            (a.contextBefore ?? []).filter((l) => l !== '').length +
+            (a.contextAfter ?? []).filter((l) => l !== '').length;
 
         // Empty-hash + no context -> cannot be re-resolved.
         if ((!a.lineHash || a.lineHash === EMPTY_LINE_HASH) && meaningful < 2) {
@@ -3661,8 +3817,10 @@ export class AnnotationManager extends EventEmitter {
                 if (keep !== existing) {
                     contentKeyed.set(key, keep);
                     // Replace in result.
-                    const idx = afterPass2.findIndex(x => x.id === existing.id);
-                    if (idx >= 0) { afterPass2[idx] = keep; }
+                    const idx = afterPass2.findIndex((x) => x.id === existing.id);
+                    if (idx >= 0) {
+                        afterPass2[idx] = keep;
+                    }
                 }
                 continue;
             }
@@ -3682,12 +3840,13 @@ export class AnnotationManager extends EventEmitter {
     }
 
     public getAnnotationsForFile(fileName: string): Annotation[] {
-        return Array.from(this.annotations.values())
-            .filter(a => this.annotationMatchesFsPath(a, fileName));
+        return Array.from(this.annotations.values()).filter((a) => this.annotationMatchesFsPath(a, fileName));
     }
 
     private async handleDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
-        if (event.contentChanges.length === 0) { return; }
+        if (event.contentChanges.length === 0) {
+            return;
+        }
 
         const document = event.document;
         const fileKey = document.uri.toString();
@@ -3695,17 +3854,13 @@ export class AnnotationManager extends EventEmitter {
         const now = Date.now();
         const preChangeLinesByAnnotationId = new Map<string, number>();
         const preChangeTrackingLinesByAnnotationId = new Map<string, number>();
-        this.annotations.forEach(annotation => {
+        this.annotations.forEach((annotation) => {
             if (this.annotationMatchesDocument(annotation, document)) {
                 preChangeLinesByAnnotationId.set(annotation.id, annotation.line);
-                preChangeTrackingLinesByAnnotationId.set(
-                    annotation.id,
-                    this.getAnnotationTrackingLine(annotation)
-                );
+                preChangeTrackingLinesByAnnotationId.set(annotation.id, this.getAnnotationTrackingLine(annotation));
             }
         });
-        const clipboardTextForCutRecovery =
-            this.recentDeletions.size > 0 ? await this.readClipboardTextSafely() : '';
+        const clipboardTextForCutRecovery = this.recentDeletions.size > 0 ? await this.readClipboardTextSafely() : '';
 
         // IDs handled by the cut/paste recovery phase below. Mutual exclusion: any
         // annotation restored from recentDeletions in this event MUST be skipped by
@@ -3746,9 +3901,13 @@ export class AnnotationManager extends EventEmitter {
                     sawMatchingPaste = true;
                     const insertedLines = change.text.split('\n');
                     const startLine = change.range.start.line;
-                    if (change.text.length === 0) { continue; }
+                    if (change.text.length === 0) {
+                        continue;
+                    }
                     const trackingOffset = deferred.trackingOffsetInBlock ?? deferred.offsetInBlock;
-                    if (trackingOffset < 0 || trackingOffset >= insertedLines.length) { continue; }
+                    if (trackingOffset < 0 || trackingOffset >= insertedLines.length) {
+                        continue;
+                    }
                     const expectedHash = hashLine(insertedLines[trackingOffset]);
                     if (expectedHash === (deferred.trackingLineHash ?? deferred.annotation.lineHash)) {
                         const trackingLine = startLine + trackingOffset;
@@ -3776,10 +3935,7 @@ export class AnnotationManager extends EventEmitter {
                         const renderOffsetFromTracking = deferred.renderOffsetFromTracking ?? 0;
                         found = {
                             renderLine: foundRenderLine,
-                            trackingLine: this.clampDocumentLine(
-                                foundRenderLine - renderOffsetFromTracking,
-                                document
-                            ),
+                            trackingLine: this.clampDocumentLine(foundRenderLine - renderOffsetFromTracking, document),
                         };
                     }
                 }
@@ -3817,11 +3973,11 @@ export class AnnotationManager extends EventEmitter {
                     restoredThisEvent.add(id);
                     this.log(
                         `recentDeletions: restored ${id} to ${relativeFilePath}:${found.renderLine} ` +
-                        `(trackingLine=${found.trackingLine}, offsetInBlock=${deferred.offsetInBlock})`
+                            `(trackingLine=${found.trackingLine}, offsetInBlock=${deferred.offsetInBlock})`
                     );
                 }
             }
-            recovered.forEach(id => this.recentDeletions.delete(id));
+            recovered.forEach((id) => this.recentDeletions.delete(id));
         }
 
         // Main pipeline: snapshot diff, move detection, arithmetic shift.
@@ -3877,14 +4033,10 @@ export class AnnotationManager extends EventEmitter {
             }
 
             const trackingLine = this.getAnnotationTrackingLine(annotation);
-            const renderOffsetFromTracking = oldLine - trackingLine;
             const erasureTouchesAnnotation = this.contentChangesEraseAnnotation(event.contentChanges, annotation);
             if (!erasureTouchesAnnotation) {
                 const resolvedTrackingAnchor = this.resolveTrackingAnchor(annotation, document);
-                if (
-                    resolvedTrackingAnchor !== null &&
-                    resolvedTrackingAnchor.renderLine !== oldLine
-                ) {
+                if (resolvedTrackingAnchor !== null && resolvedTrackingAnchor.renderLine !== oldLine) {
                     this.setAnnotationLineWithTrackingLine(
                         annotation,
                         resolvedTrackingAnchor.renderLine,
@@ -3898,23 +4050,17 @@ export class AnnotationManager extends EventEmitter {
             const trackingTargetLine = annotation.anchor?.targetLine;
             if (trackingTargetLine !== undefined) {
                 const trackingMove = moves.find(
-                    m => trackingTargetLine >= m.oldStart && trackingTargetLine <= m.oldEnd
+                    (m) => trackingTargetLine >= m.oldStart && trackingTargetLine <= m.oldEnd
                 );
                 if (trackingMove) {
-                    const newTrackingTarget =
-                        trackingMove.newStart + (trackingTargetLine - trackingMove.oldStart);
+                    const newTrackingTarget = trackingMove.newStart + (trackingTargetLine - trackingMove.oldStart);
                     const newRenderLine = newTrackingTarget + (oldLine - trackingTargetLine);
-                    this.setAnnotationLineWithTrackingLine(
-                        annotation,
-                        newRenderLine,
-                        newTrackingTarget,
-                        document
-                    );
+                    this.setAnnotationLineWithTrackingLine(annotation, newRenderLine, newTrackingTarget, document);
                     return;
                 }
             }
 
-            const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
+            const move = moves.find((m) => oldLine >= m.oldStart && oldLine <= m.oldEnd);
             if (move) {
                 this.setAnnotationLine(annotation, move.newStart + (oldLine - move.oldStart), document);
                 return;
@@ -3938,7 +4084,12 @@ export class AnnotationManager extends EventEmitter {
                         pureCutTouchedLine = true;
                     }
                 }
-                if (trackingLine !== oldLine && trackingLine >= startLine && trackingLine <= touchedEndLine && lineDelta < 0) {
+                if (
+                    trackingLine !== oldLine &&
+                    trackingLine >= startLine &&
+                    trackingLine <= touchedEndLine &&
+                    lineDelta < 0
+                ) {
                     markedDeleted = true;
                     if (change.text === '') {
                         pureCutTouchedLine = true;
@@ -3963,10 +4114,7 @@ export class AnnotationManager extends EventEmitter {
                     const erased = ch.text.replace(/\r\n/g, '').length === 0;
                     if (
                         erased &&
-                        (
-                            this.contentChangeTouchesLine(ch, oldLine) ||
-                            this.contentChangeTouchesLine(ch, trackingLine)
-                        )
+                        (this.contentChangeTouchesLine(ch, oldLine) || this.contentChangeTouchesLine(ch, trackingLine))
                     ) {
                         lineDisplaced = true;
                         break;
@@ -3979,9 +4127,7 @@ export class AnnotationManager extends EventEmitter {
             // removed by an upstream cut. Treat it as markedDeleted so we defer
             // instead of writing a stale negative/oversized line.
             const arithmeticOutOfRange =
-                !markedDeleted &&
-                !lineDisplaced &&
-                (currentLine < 0 || currentLine >= newLineCount);
+                !markedDeleted && !lineDisplaced && (currentLine < 0 || currentLine >= newLineCount);
             if (arithmeticOutOfRange) {
                 markedDeleted = true;
             }
@@ -4000,17 +4146,31 @@ export class AnnotationManager extends EventEmitter {
                     }
                 }
 
-                // Pure deletion (Ctrl+X / Backspace on the annotated line, text='')
-                // means the cut content is gone from the document. findAnchor may
-                // still produce a low-context FALSE POSITIVE at line 0 or 1 when
-                // the cut text was a common idiom (closing brace, blank line) that
-                // happens to recur near the top of the document. Skip relocation
-                // for pure cuts and defer directly to the clipboard buffer; a
-                // paste event will restore via the offsetInBlock primary path.
+                // Phase A -- reanchor rescue. Tries exact-hash match at the
+                // stored line, then full-document hash + context vote with
+                // unique-hash fallback enabled. Covers cut+paste atomic events
+                // (the regression where the original was deleted and replaced
+                // by a fresh-id duplicate at the destination) and large-block
+                // moves where detectMoves picked the inverse Myers orientation.
+                const reanchored = reanchor(annotation, document);
+                if (reanchored.status === 'matched' || reanchored.status === 'moved') {
+                    const newLine = reanchored.newLine ?? annotation.line;
+                    this.setAnnotationLine(annotation, newLine, document);
+                    this.log(
+                        `cut/displace: reanchored ${annotation.id} from ${relativeFilePath}:${oldLine} ` +
+                            `to :${newLine} (status=${reanchored.status})`
+                    );
+                    return;
+                }
+
+                // Phase B -- legacy findAnchor path. Kept as a defensive
+                // fallback even though reanchor above subsumes it for
+                // non-degenerate cases. Pure deletion (Ctrl+X / Backspace on
+                // the annotated line, text='') is gated to avoid low-context
+                // false positives at line 0 or 1 when the cut text recurs
+                // near the top of the document.
                 const allowFindAnchor =
-                    annotation.lineHash !== EMPTY_LINE_HASH &&
-                    !pureCutTouchedLine &&
-                    !arithmeticOutOfRange;
+                    annotation.lineHash !== EMPTY_LINE_HASH && !pureCutTouchedLine && !arithmeticOutOfRange;
                 if (allowFindAnchor && annotation.lineHash) {
                     const anchor: AnchorData = {
                         lineHash: annotation.lineHash,
@@ -4023,45 +4183,27 @@ export class AnnotationManager extends EventEmitter {
                         return;
                     }
                 }
-                // Defer: remove from live map, hold in clipboard buffer.
-                // A paste event within clipboardWindowMs will restore it silently.
-                let offsetInBlock = 0;
-                let trackingOffsetInBlock = 0;
-                let cutLinesForAnnotation: string[] | undefined;
-                for (const ch of event.contentChanges) {
-                    if (this.contentChangeTouchesLine(ch, trackingLine)) {
-                        trackingOffsetInBlock = Math.max(0, trackingLine - ch.range.start.line);
-                        offsetInBlock = Math.max(0, trackingOffsetInBlock + renderOffsetFromTracking);
-                        cutLinesForAnnotation = oldLines
-                            ? this.getCutLinesForChange(oldLines, ch, trackingOffsetInBlock)
-                            : undefined;
-                        break;
-                    }
-                    if (this.contentChangeTouchesLine(ch, annotation.line)) {
-                        offsetInBlock = Math.max(0, annotation.line - ch.range.start.line);
-                        trackingOffsetInBlock = offsetInBlock;
-                        cutLinesForAnnotation = oldLines
-                            ? this.getCutLinesForChange(oldLines, ch, trackingOffsetInBlock)
-                            : undefined;
-                        break;
-                    }
-                }
-                this.annotations.delete(annotation.id);
-                this.disposeDecoration(annotation.id);
-                this.recentDeletions.set(annotation.id, {
-                    annotation: { ...annotation },
-                    deletedAt: Date.now(),
-                    offsetInBlock,
-                    trackingOffsetInBlock,
-                    renderOffsetFromTracking,
-                    trackingLineHash: this.getAnnotationTrackingHash(annotation),
-                    cutText: cutLinesForAnnotation?.join('\n'),
-                    cutLineHashes: cutLinesForAnnotation?.map(line => hashLine(line)),
-                });
+
+                // Phase C -- orphan. KEEP the annotation in the live map: the
+                // user-visible contract is "follow code or stay orphaned,
+                // never silently delete". resolvedAnchor is marked so the
+                // tree can render an orphaned badge; the existing freeze
+                // guard around line 3858 protects the entry from further
+                // arithmetic mutation in subsequent events. The
+                // recentDeletions buffer is no longer populated from this
+                // site -- its read path stays operational for legacy
+                // recoveries and remains available as a future second-
+                // recourse fallback.
+                annotation.resolvedAnchor = {
+                    status: 'orphaned',
+                    line: null,
+                    confidence: 0,
+                    reason: 'cut/displace: no relocation candidate',
+                };
                 this.log(
-                    `cut/displace: deferred annotation ${annotation.id} from ${relativeFilePath}:${oldLine} ` +
-                    `(markedDeleted=${markedDeleted}, displaced=${lineDisplaced}, ` +
-                    `pureCut=${pureCutTouchedLine}, offsetInBlock=${offsetInBlock})`
+                    `cut/displace: orphaned annotation ${annotation.id} at ${relativeFilePath}:${oldLine} ` +
+                        `(markedDeleted=${markedDeleted}, displaced=${lineDisplaced}, ` +
+                        `pureCut=${pureCutTouchedLine})`
                 );
             } else if (currentLine !== oldLine) {
                 // Defensive clamp: never write a negative or oversized line to the
@@ -4103,7 +4245,9 @@ export class AnnotationManager extends EventEmitter {
         }
 
         await this.saveAnnotations();
-        setTimeout(() => { this.refreshAnnotations(); }, 300);
+        setTimeout(() => {
+            this.refreshAnnotations();
+        }, 300);
         this.updateAnnotationsPanel();
         // Tree provider listens on annotationChanged. Without this emit the tree
         // still shows the cut annotation at its old line until the next manual
@@ -4128,10 +4272,14 @@ export class AnnotationManager extends EventEmitter {
         // Primary guard: clipboard must be non-empty and match the inserted text.
         // Keystrokes, Enter, and autocomplete do NOT change the OS clipboard.
         const rawClipboard = await vscode.env.clipboard.readText();
-        if (this.normalizeClipboardText(rawClipboard).length === 0) { return; }
+        if (this.normalizeClipboardText(rawClipboard).length === 0) {
+            return;
+        }
 
         const clipboardLines = this.splitClipboardLines(rawClipboard);
-        if (clipboardLines.length === 0) { return; }
+        if (clipboardLines.length === 0) {
+            return;
+        }
 
         const sourceCandidatesByOffset = this.collectCopySourceCandidates(
             clipboardLines,
@@ -4141,13 +4289,19 @@ export class AnnotationManager extends EventEmitter {
             preChangeTrackingLinesByAnnotationId,
             restoredThisEvent
         );
-        if (sourceCandidatesByOffset.size === 0) { return; }
+        if (sourceCandidatesByOffset.size === 0) {
+            return;
+        }
 
         const createdCopies = new Set<string>();
 
         for (const change of contentChanges) {
-            if (change.text.length === 0) { continue; }
-            if (!this.clipboardTextMatches(change.text, rawClipboard)) { continue; }
+            if (change.text.length === 0) {
+                continue;
+            }
+            if (!this.clipboardTextMatches(change.text, rawClipboard)) {
+                continue;
+            }
 
             const insertedLines = this.splitClipboardLines(change.text);
             const startLine = change.range.start.line;
@@ -4158,12 +4312,11 @@ export class AnnotationManager extends EventEmitter {
 
                 for (const source of sourceCandidates) {
                     const annotation = source.annotation;
-                    const renderLine = this.clampDocumentLine(
-                        newLine + source.renderOffsetFromSource,
-                        document
-                    );
+                    const renderLine = this.clampDocumentLine(newLine + source.renderOffsetFromSource, document);
                     const copyKey = `${annotation.id}:${renderLine}`;
-                    if (createdCopies.has(copyKey)) { continue; }
+                    if (createdCopies.has(copyKey)) {
+                        continue;
+                    }
 
                     // Anti-duplicate guard: never create a second annotation at the same
                     // (file, line) carrying the same message.  Belt-and-suspenders against
@@ -4185,7 +4338,9 @@ export class AnnotationManager extends EventEmitter {
                         }
                     }
                     if (cutBufferShadowsTarget) {
-                        this.log(`anti-duplicate: cut buffer holds same message, skipped at ${relativeFilePath}:${newLine}`);
+                        this.log(
+                            `anti-duplicate: cut buffer holds same message, skipped at ${relativeFilePath}:${newLine}`
+                        );
                         continue;
                     }
 
@@ -4208,17 +4363,12 @@ export class AnnotationManager extends EventEmitter {
                         anchor: undefined, // re-anchored against the destination below
                         resolvedAnchor: undefined,
                     };
-                    this.setAnnotationLineWithTrackingLine(
-                        newAnnotation,
-                        renderLine,
-                        newLine,
-                        document
-                    );
+                    this.setAnnotationLineWithTrackingLine(newAnnotation, renderLine, newLine, document);
                     this.annotations.set(newAnnotation.id, newAnnotation);
                     createdCopies.add(copyKey);
                     this.log(
                         `copy-paste: duplicated annotation ${annotation.id} ` +
-                        `from ${source.sourceUri}:${source.sourceLine} to ${relativeFilePath}:${renderLine}`
+                            `from ${source.sourceUri}:${source.sourceLine} to ${relativeFilePath}:${renderLine}`
                     );
                 }
             }
@@ -4248,19 +4398,27 @@ export class AnnotationManager extends EventEmitter {
     private clipboardTextMatches(changeText: string, clipboardText: string): boolean {
         const normalizedChange = this.normalizeClipboardText(changeText);
         const normalizedClipboard = this.normalizeClipboardText(clipboardText);
-        return normalizedChange === normalizedClipboard ||
+        return (
+            normalizedChange === normalizedClipboard ||
             this.stripSingleTrailingLineBreak(normalizedChange) ===
-            this.stripSingleTrailingLineBreak(normalizedClipboard);
+                this.stripSingleTrailingLineBreak(normalizedClipboard)
+        );
     }
 
     private normalizedTextEquals(a: string | undefined, b: string | undefined): boolean {
-        if (a === undefined || b === undefined) { return false; }
-        return this.stripSingleTrailingLineBreak(this.normalizeClipboardText(a)) ===
-            this.stripSingleTrailingLineBreak(this.normalizeClipboardText(b));
+        if (a === undefined || b === undefined) {
+            return false;
+        }
+        return (
+            this.stripSingleTrailingLineBreak(this.normalizeClipboardText(a)) ===
+            this.stripSingleTrailingLineBreak(this.normalizeClipboardText(b))
+        );
     }
 
     private isLowSignalText(text: string | undefined): boolean {
-        if (text === undefined) { return true; }
+        if (text === undefined) {
+            return true;
+        }
         return this.stripSingleTrailingLineBreak(this.normalizeClipboardText(text)).trim().length === 0;
     }
 
@@ -4278,14 +4436,14 @@ export class AnnotationManager extends EventEmitter {
             return true;
         }
 
-        const normalizedClipboard = this.stripSingleTrailingLineBreak(
-            this.normalizeClipboardText(clipboardText)
-        );
-        return normalizedClipboard.length > 0 &&
+        const normalizedClipboard = this.stripSingleTrailingLineBreak(this.normalizeClipboardText(clipboardText));
+        return (
+            normalizedClipboard.length > 0 &&
             deferred.annotation.lineHash !== undefined &&
-            this.splitClipboardLines(normalizedClipboard).some(line =>
-                hashLine(line) === deferred.annotation.lineHash
-            );
+            this.splitClipboardLines(normalizedClipboard).some(
+                (line) => hashLine(line) === deferred.annotation.lineHash
+            )
+        );
     }
 
     private deferredPasteMatchesChange(
@@ -4296,11 +4454,15 @@ export class AnnotationManager extends EventEmitter {
         changeText: string,
         clipboardText: string
     ): boolean {
-        if (changeText.length === 0) { return false; }
+        if (changeText.length === 0) {
+            return false;
+        }
         if (deferred.cutText !== undefined) {
-            return this.normalizedTextEquals(deferred.cutText, clipboardText) &&
+            return (
+                this.normalizedTextEquals(deferred.cutText, clipboardText) &&
                 this.clipboardTextMatches(changeText, clipboardText) &&
-                this.clipboardTextMatches(changeText, deferred.cutText);
+                this.clipboardTextMatches(changeText, deferred.cutText)
+            );
         }
 
         if (
@@ -4308,7 +4470,7 @@ export class AnnotationManager extends EventEmitter {
             this.clipboardTextMatches(changeText, clipboardText) &&
             deferred.cutLineHashes?.length
         ) {
-            const insertedHashes = this.splitClipboardLines(changeText).map(line => hashLine(line));
+            const insertedHashes = this.splitClipboardLines(changeText).map((line) => hashLine(line));
             if (
                 insertedHashes.length === deferred.cutLineHashes.length &&
                 insertedHashes.every((hash, index) => hash === deferred.cutLineHashes?.[index])
@@ -4343,25 +4505,17 @@ export class AnnotationManager extends EventEmitter {
         contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
         line: number
     ): boolean {
-        return contentChanges.some(change =>
-            change.text.replace(/\r\n/g, '').length === 0 &&
-            this.contentChangeTouchesLine(change, line)
+        return contentChanges.some(
+            (change) => change.text.replace(/\r\n/g, '').length === 0 && this.contentChangeTouchesLine(change, line)
         );
     }
 
-    private contentChangeTouchesLine(
-        change: vscode.TextDocumentContentChangeEvent,
-        line: number
-    ): boolean {
+    private contentChangeTouchesLine(change: vscode.TextDocumentContentChangeEvent, line: number): boolean {
         return line >= change.range.start.line && line <= this.getTouchedEndLine(change);
     }
 
     private getTouchedEndLine(change: vscode.TextDocumentContentChangeEvent): number {
-        if (
-            change.text === '' &&
-            change.range.end.character === 0 &&
-            change.range.end.line > change.range.start.line
-        ) {
+        if (change.text === '' && change.range.end.character === 0 && change.range.end.line > change.range.start.line) {
             return change.range.end.line - 1;
         }
         return change.range.end.line;
@@ -4371,8 +4525,10 @@ export class AnnotationManager extends EventEmitter {
         contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
         annotation: Annotation
     ): boolean {
-        return this.contentChangesEraseLine(contentChanges, annotation.line) ||
-            this.contentChangesEraseLine(contentChanges, this.getAnnotationTrackingLine(annotation));
+        return (
+            this.contentChangesEraseLine(contentChanges, annotation.line) ||
+            this.contentChangesEraseLine(contentChanges, this.getAnnotationTrackingLine(annotation))
+        );
     }
 
     private getAnnotationTrackingLine(annotation: Annotation): number {
@@ -4388,12 +4544,11 @@ export class AnnotationManager extends EventEmitter {
         contentChanges: readonly vscode.TextDocumentContentChangeEvent[],
         document: vscode.TextDocument
     ): boolean {
-        const removedByUndo = contentChanges.some(change =>
-            change.text === '' &&
-            (
-                this.contentChangeTouchesLine(change, annotation.line) ||
-                this.contentChangeTouchesLine(change, this.getAnnotationTrackingLine(annotation))
-            )
+        const removedByUndo = contentChanges.some(
+            (change) =>
+                change.text === '' &&
+                (this.contentChangeTouchesLine(change, annotation.line) ||
+                    this.contentChangeTouchesLine(change, this.getAnnotationTrackingLine(annotation)))
         );
         if (!removedByUndo) {
             return false;
@@ -4415,10 +4570,7 @@ export class AnnotationManager extends EventEmitter {
         document: vscode.TextDocument
     ): boolean {
         const lineInsideRemovedRanges = (line: number): boolean =>
-            contentChanges.some(change =>
-                change.text === '' &&
-                this.contentChangeTouchesLine(change, line)
-            );
+            contentChanges.some((change) => change.text === '' && this.contentChangeTouchesLine(change, line));
 
         for (const other of this.annotations.values()) {
             if (other.id === annotation.id) {
@@ -4449,7 +4601,7 @@ export class AnnotationManager extends EventEmitter {
         preChangeTrackingLinesByAnnotationId: ReadonlyMap<string, number>,
         restoredThisEvent: ReadonlySet<string>
     ): Map<number, CopySourceCandidate[]> {
-        const clipboardHashes = clipboardLines.map(line => hashLine(line));
+        const clipboardHashes = clipboardLines.map((line) => hashLine(line));
         const snapshots = this.getCopySourceSnapshots(targetDocument, previousTargetLines);
         const byOffset = new Map<number, CopySourceCandidate[]>();
         const seenCandidateKeys = new Set<string>();
@@ -4457,7 +4609,9 @@ export class AnnotationManager extends EventEmitter {
 
         for (const snapshot of snapshots) {
             const starts = this.findMatchingClipboardBlockStarts(snapshot.lines, clipboardHashes);
-            if (starts.length === 0) { continue; }
+            if (starts.length === 0) {
+                continue;
+            }
 
             for (const annotation of this.annotations.values()) {
                 if (this.recentDeletions.has(annotation.id) || restoredThisEvent.has(annotation.id)) {
@@ -4472,10 +4626,11 @@ export class AnnotationManager extends EventEmitter {
                 }
 
                 const renderSourceLine = snapshot.usePreChangeLines
-                    ? preChangeLinesByAnnotationId.get(annotation.id) ?? annotation.line
+                    ? (preChangeLinesByAnnotationId.get(annotation.id) ?? annotation.line)
                     : annotation.line;
                 const trackingSourceLine = snapshot.usePreChangeLines
-                    ? preChangeTrackingLinesByAnnotationId.get(annotation.id) ?? this.getAnnotationTrackingLine(annotation)
+                    ? (preChangeTrackingLinesByAnnotationId.get(annotation.id) ??
+                      this.getAnnotationTrackingLine(annotation))
                     : this.getAnnotationTrackingLine(annotation);
 
                 for (const start of starts) {
@@ -4487,7 +4642,9 @@ export class AnnotationManager extends EventEmitter {
                         renderSourceLine,
                         trackingSourceLine
                     );
-                    if (!operation) { continue; }
+                    if (!operation) {
+                        continue;
+                    }
 
                     const { sourceLine, offset, renderOffsetFromSource } = operation;
 
@@ -4520,7 +4677,7 @@ export class AnnotationManager extends EventEmitter {
         if (clipboardHashes.length === 1 && singleLineSourceLocations.size > 1) {
             this.log(
                 `copy-paste: skipped single-line annotation copy; ` +
-                `${singleLineSourceLocations.size} annotated source lines match the clipboard`
+                    `${singleLineSourceLocations.size} annotated source lines match the clipboard`
             );
             return new Map();
         }
@@ -4674,36 +4831,40 @@ export class AnnotationManager extends EventEmitter {
         document: vscode.TextDocument,
         relativeFilePath: string
     ): void {
-        vscode.window.showInformationMessage(
-            localize(
-                'annotationsCutExpired',
-                '{0} annotation(s) removed (not pasted). Press Undo to restore.',
-                expiredAnnotations.length
-            ),
-            localize('undo', 'Undo')
-        ).then(answer => {
-            if (answer !== localize('undo', 'Undo')) { return; }
-            for (const annotation of expiredAnnotations) {
-                const clamped = Math.max(0, Math.min(annotation.line, document.lineCount - 1));
-                annotation.file = relativeFilePath;
-                annotation.fileUri = document.uri.toString();
-                annotation.languageId = document.languageId;
-                annotation.resolvedAnchor = undefined;
-                if (annotation.anchor) {
-                    annotation.anchor = {
-                        ...annotation.anchor,
-                        kind: 'line',
-                        symbolName: null,
-                        symbolKind: null,
-                        symbolSignature: null,
-                    };
+        vscode.window
+            .showInformationMessage(
+                localize(
+                    'annotationsCutExpired',
+                    '{0} annotation(s) removed (not pasted). Press Undo to restore.',
+                    expiredAnnotations.length
+                ),
+                localize('undo', 'Undo')
+            )
+            .then((answer) => {
+                if (answer !== localize('undo', 'Undo')) {
+                    return;
                 }
-                this.setAnnotationLine(annotation, clamped, document);
-                this.annotations.set(annotation.id, annotation);
-                this.deletedRecently.delete(annotation.id);
-            }
-            this.saveAnnotations().then(() => this.refreshAnnotations());
-        });
+                for (const annotation of expiredAnnotations) {
+                    const clamped = Math.max(0, Math.min(annotation.line, document.lineCount - 1));
+                    annotation.file = relativeFilePath;
+                    annotation.fileUri = document.uri.toString();
+                    annotation.languageId = document.languageId;
+                    annotation.resolvedAnchor = undefined;
+                    if (annotation.anchor) {
+                        annotation.anchor = {
+                            ...annotation.anchor,
+                            kind: 'line',
+                            symbolName: null,
+                            symbolKind: null,
+                            symbolSignature: null,
+                        };
+                    }
+                    this.setAnnotationLine(annotation, clamped, document);
+                    this.annotations.set(annotation.id, annotation);
+                    this.deletedRecently.delete(annotation.id);
+                }
+                this.saveAnnotations().then(() => this.refreshAnnotations());
+            });
     }
 
     /**
@@ -4728,7 +4889,9 @@ export class AnnotationManager extends EventEmitter {
                 this.deletedRecently.delete(id);
                 continue;
             }
-            if (!entry.annotation.lineHash) { continue; }
+            if (!entry.annotation.lineHash) {
+                continue;
+            }
             const anchor: AnchorData = {
                 lineHash: entry.annotation.lineHash,
                 contextBefore: entry.annotation.contextBefore ?? [],
@@ -4808,7 +4971,7 @@ export class AnnotationManager extends EventEmitter {
             await this.saveAnnotations();
         }
 
-        const editor = vscode.window.visibleTextEditors.find(e => e.document === document);
+        const editor = vscode.window.visibleTextEditors.find((e) => e.document === document);
         if (editor) {
             await this.refreshAnnotations();
         }
@@ -4912,14 +5075,16 @@ export class AnnotationManager extends EventEmitter {
     public shouldAnnotationBeVisible(annotation: Annotation): boolean {
         const disabledTags = this.config.disabledTags;
 
-        if (annotation.tags && annotation.tags.some(t => disabledTags.includes(t))) {
+        if (annotation.tags && annotation.tags.some((t) => disabledTags.includes(t))) {
             return false;
         }
 
         if (this.currentFilter.startsWith('keyword:')) {
             const keyword = this.currentFilter.replace('keyword:', '').toLowerCase();
-            return (annotation.message?.toLowerCase().includes(keyword) ?? false) ||
-                (annotation.thread?.some(c => c.message.toLowerCase().includes(keyword)) ?? false);
+            return (
+                (annotation.message?.toLowerCase().includes(keyword) ?? false) ||
+                (annotation.thread?.some((c) => c.message.toLowerCase().includes(keyword)) ?? false)
+            );
         }
 
         if (this.currentFilter.startsWith('severity:')) {
@@ -4927,9 +5092,14 @@ export class AnnotationManager extends EventEmitter {
             return annotation.severity === sev;
         }
 
-        if (this.currentFilter !== 'all' && this.currentFilter.trim() !== '' && !this.currentFilter.startsWith('keyword:') && !this.currentFilter.startsWith('severity:')) {
+        if (
+            this.currentFilter !== 'all' &&
+            this.currentFilter.trim() !== '' &&
+            !this.currentFilter.startsWith('keyword:') &&
+            !this.currentFilter.startsWith('severity:')
+        ) {
             const filterTag = this.currentFilter.toLowerCase();
-            if (!annotation.tags || !annotation.tags.map(t => t.toLowerCase()).includes(filterTag)) {
+            if (!annotation.tags || !annotation.tags.map((t) => t.toLowerCase()).includes(filterTag)) {
                 // Handle tag or file filter here
                 const fileFilter = filterTag;
                 if (annotation.file.toLowerCase().includes(fileFilter)) {
@@ -4956,13 +5126,13 @@ export class AnnotationManager extends EventEmitter {
             after: {
                 contentText: ` 💬 ${severityIcon} ${annotation.message}${annotation.pinned ? '📌' : ''}`,
                 color: colors.annotation,
-                margin: '0 0 0 1em'
+                margin: '0 0 0 1em',
             },
             borderColor: colors.commentBorder,
             borderWidth: '0 0 0 2px',
             borderStyle: 'solid',
             gutterIconPath: this.getGutterIconPath(),
-            gutterIconSize: 'contain'
+            gutterIconSize: 'contain',
         });
     }
 
@@ -5001,12 +5171,14 @@ export class AnnotationManager extends EventEmitter {
 
         const snippet = annotation.message.substring(0, 15);
         const viewInPanelLabel = localize('viewInPanelLabel', 'View in Panel →');
-        const hoverMessage = new vscode.MarkdownString(`${snippet}... [${viewInPanelLabel}](command:annotations.navigateToPanel?${encodeURIComponent(JSON.stringify(annotation.id))})`);
-        hoverMessage.isTrusted = true; 
+        const hoverMessage = new vscode.MarkdownString(
+            `${snippet}... [${viewInPanelLabel}](command:annotations.navigateToPanel?${encodeURIComponent(JSON.stringify(annotation.id))})`
+        );
+        hoverMessage.isTrusted = true;
 
         const decorationOptions: vscode.DecorationOptions = {
             range: range,
-            hoverMessage: hoverMessage
+            hoverMessage: hoverMessage,
         };
         editor.setDecorations(decorationType, [decorationOptions]);
     }
@@ -5033,8 +5205,8 @@ export class AnnotationManager extends EventEmitter {
                 for (const editor of editors) {
                     // Strict URI filter (with legacy fallback). Cross-file rendering
                     // is the data-corruption symptom -- block it at the boundary.
-                    const fileAnnotations = Array.from(this.annotations.values()).filter(
-                        a => this.annotationMatchesDocument(a, editor.document)
+                    const fileAnnotations = Array.from(this.annotations.values()).filter((a) =>
+                        this.annotationMatchesDocument(a, editor.document)
                     );
                     // Recompute resolution status (pure -- attaches transient state only).
                     for (const annotation of fileAnnotations) {
@@ -5062,17 +5234,13 @@ export class AnnotationManager extends EventEmitter {
     private findAnnotation(file: string, line: number): Annotation | undefined {
         return Array.from(this.annotations.values()).find(
             (annotation) =>
-                this.annotationMatchesFsPath(annotation, file) &&
-                this.getEffectiveAnnotationLine(annotation) === line
+                this.annotationMatchesFsPath(annotation, file) && this.getEffectiveAnnotationLine(annotation) === line
         );
     }
 
     private getEffectiveAnnotationLine(annotation: Annotation): number {
         const resolved = annotation.resolvedAnchor;
-        if (
-            (resolved?.status === 'attached' || resolved?.status === 'moved') &&
-            resolved.line !== null
-        ) {
+        if ((resolved?.status === 'attached' || resolved?.status === 'moved') && resolved.line !== null) {
             return resolved.line;
         }
         return annotation.line;
@@ -5083,11 +5251,7 @@ export class AnnotationManager extends EventEmitter {
      * (relativeFile, line) carrying the same message text.  Used as the
      * final guard before creating a duplicate via copy-paste detection.
      */
-    private sameLocationSameMessage(
-        document: vscode.TextDocument,
-        line: number,
-        message: string
-    ): boolean {
+    private sameLocationSameMessage(document: vscode.TextDocument, line: number, message: string): boolean {
         for (const a of this.annotations.values()) {
             if (
                 this.annotationMatchesDocument(a, document) &&
@@ -5136,11 +5300,7 @@ export class AnnotationManager extends EventEmitter {
             if (!workspaceFolders || workspaceFolders.length === 0) {
                 return null;
             }
-            annotationFilePath = path.join(
-                workspaceFolders[0].uri.fsPath,
-                '.out-of-code-insights',
-                'annotations.json'
-            );
+            annotationFilePath = path.join(workspaceFolders[0].uri.fsPath, '.out-of-code-insights', 'annotations.json');
         }
 
         return annotationFilePath;
@@ -5231,11 +5391,11 @@ export class AnnotationManager extends EventEmitter {
         const modifyOptions = [
             { label: localize('modifyMessage', 'Modify Message'), value: 'message' },
             { label: localize('modifySeverity', 'Modify Severity'), value: 'severity' },
-            { label: localize('modifyBoth', 'Modify Both'), value: 'both' }
+            { label: localize('modifyBoth', 'Modify Both'), value: 'both' },
         ];
 
         const selectedOption = await vscode.window.showQuickPick(modifyOptions, {
-            placeHolder: localize('selectModificationOption', 'What would you like to modify?')
+            placeHolder: localize('selectModificationOption', 'What would you like to modify?'),
         });
 
         if (!selectedOption) return;
@@ -5248,8 +5408,8 @@ export class AnnotationManager extends EventEmitter {
             const newMessage = await vscode.window.showInputBox({
                 prompt: localize('modifyAnnotation', 'Modify annotation message'),
                 value: annotation.message,
-                validateInput: text =>
-                    text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null
+                validateInput: (text) =>
+                    text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
             });
             if (newMessage && newMessage !== annotation.message) {
                 annotation.message = newMessage;
@@ -5262,11 +5422,11 @@ export class AnnotationManager extends EventEmitter {
             const severityOptions = [
                 { label: '❌ Error', value: 'error' },
                 { label: '⚠️ Warning', value: 'warning' },
-                { label: 'ℹ️ Info', value: 'info' }
+                { label: 'ℹ️ Info', value: 'info' },
             ];
 
             const selectedSeverityItem = await vscode.window.showQuickPick(severityOptions, {
-                placeHolder: localize('selectSeverity', 'Select annotation severity')
+                placeHolder: localize('selectSeverity', 'Select annotation severity'),
             });
 
             if (selectedSeverityItem && selectedSeverityItem.value !== annotation.severity) {
@@ -5312,14 +5472,14 @@ export class AnnotationManager extends EventEmitter {
             if (!annotation) return;
             const reply = await vscode.window.showInputBox({
                 prompt: localize('enterReply', 'Enter your reply'),
-                placeHolder: localize('replyPlaceholder', 'Type your comment here...')
+                placeHolder: localize('replyPlaceholder', 'Type your comment here...'),
             });
             if (!reply) return;
             const comment: Comment = {
                 id: this.generateId(),
                 message: reply,
                 author: this.currentUser,
-                timestamp: new Date().toISOString()
+                timestamp: new Date().toISOString(),
             };
             annotation.thread = annotation.thread || [];
             annotation.thread.push(comment);
@@ -5339,7 +5499,7 @@ export class AnnotationManager extends EventEmitter {
                 localize('no', 'No')
             );
             if (confirm !== localize('yes', 'Yes')) return;
-            this.decorationTypes.forEach(d => d.dispose());
+            this.decorationTypes.forEach((d) => d.dispose());
             this.decorationTypes.clear();
             this.annotations.clear();
             await this.saveAnnotations();
@@ -5364,17 +5524,15 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private getGutterIconPath(): vscode.Uri {
-        return vscode.Uri.file(
-            path.join(this.context.extensionPath, 'media', 'comment.svg')
-        );
+        return vscode.Uri.file(path.join(this.context.extensionPath, 'media', 'comment.svg'));
     }
 
     private async promptAnnotationMessage(): Promise<string | undefined> {
         return vscode.window.showInputBox({
             prompt: localize('enterAnnotation', 'Enter annotation message'),
             placeHolder: localize('annotationPlaceholder', 'Type your comment here...'),
-            validateInput: text =>
-                text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null
+            validateInput: (text) =>
+                text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
         });
     }
 
@@ -5388,9 +5546,14 @@ export class AnnotationManager extends EventEmitter {
                 return;
             }
             const fileAnnotations = Array.from(this.annotations.values())
-                .filter(a => this.annotationMatchesDocument(a, editor.document))
-                .filter(a => this.shouldAnnotationBeVisible(a));
-            this.statusBarItem.text = localize('annotationsCount', '$(comment) {0} annotation{1}', fileAnnotations.length, fileAnnotations.length !== 1 ? 's' : '');
+                .filter((a) => this.annotationMatchesDocument(a, editor.document))
+                .filter((a) => this.shouldAnnotationBeVisible(a));
+            this.statusBarItem.text = localize(
+                'annotationsCount',
+                '$(comment) {0} annotation{1}',
+                fileAnnotations.length,
+                fileAnnotations.length !== 1 ? 's' : ''
+            );
             this.statusBarItem.tooltip = localize('viewAnnotations', 'Click to view annotations');
             this.statusBarItem.command = 'annotations.show';
         }
@@ -5413,7 +5576,7 @@ export class AnnotationManager extends EventEmitter {
             for (const editor of editors) {
                 editor.setDecorations(decorationType, []);
             }
-            
+
             decorationType.dispose();
             this.decorationTypes.delete(annotationId);
         }
@@ -5422,18 +5585,18 @@ export class AnnotationManager extends EventEmitter {
     public handleError(message: string, error: unknown): void {
         const errorMessage = `${message}: ${error instanceof Error ? error.message : String(error)}`;
         const fullError = error instanceof Error ? error.stack || error.message : String(error);
-        
+
         // Log to output channel
         this.log(`ERROR: ${message}`);
         this.log(`Details: ${fullError}`);
-        
+
         // Also log to console for debugging
         console.error(`${message}:`, error);
-        
+
         // Show error message to user
         vscode.window.showErrorMessage(errorMessage);
     }
-    
+
     private log(message: string): void {
         const timestamp = new Date().toISOString();
         this.outputChannel.appendLine(`[${timestamp}] ${message}`);
@@ -5453,7 +5616,7 @@ export class AnnotationManager extends EventEmitter {
         }
 
         // Remove decorations from the map
-        decorationsToRemove.forEach(id => this.decorationTypes.delete(id));
+        decorationsToRemove.forEach((id) => this.decorationTypes.delete(id));
     }
 
     private loadConfiguration() {
@@ -5466,20 +5629,22 @@ export class AnnotationManager extends EventEmitter {
             this.annotationsEnabled = this.config.enableAnnotations === true;
             await this.refreshAnnotations();
             this.updateStatusBar();
-            vscode.window.showInformationMessage(localize('configurationUpdated', 'Annotation settings have been updated.'));
+            vscode.window.showInformationMessage(
+                localize('configurationUpdated', 'Annotation settings have been updated.')
+            );
         }
     }
 
     public toggleAnnotationsDisplay(): void {
         this.annotationsEnabled = !this.annotationsEnabled;
-        
+
         // Persist state in globalState
         this.context.globalState.update('annotationsEnabled', this.annotationsEnabled);
-        
+
         if (this.annotationsEnabled) {
             vscode.window.showInformationMessage('Annotations enabled');
             this.registerCodeLensProvider();
-            
+
             // Use setTimeout to ensure state is fully set before reading
             setTimeout(() => {
                 this.refreshAnnotations();
@@ -5498,13 +5663,13 @@ export class AnnotationManager extends EventEmitter {
         for (const editor of editors) {
             this.clearDecorations(editor);
         }
-        
+
         // Dispose all decorations restantes
         for (const decorationType of this.decorationTypes.values()) {
             decorationType.dispose();
         }
         this.decorationTypes.clear();
-        
+
         // Update the panel
         this.updateAnnotationsPanel();
         this.statusBarItem.hide();
@@ -5518,14 +5683,11 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private registerCodeLensProvider(): void {
-        if (!this.codeLensProviderDisposable) {
-            const codeLensProvider = new AnnotationCodeLensProvider(this);
-            this.codeLensProviderDisposable = vscode.languages.registerCodeLensProvider(
-                { scheme: 'file' },
-                codeLensProvider
-            );
-            this.disposables.push(this.codeLensProviderDisposable);
-        }
+        // Lot 5 R2 worktree A: legacy registration is a no-op. The new
+        // AnnotationCodeLensProvider takes (store, visibilityFilter) and is
+        // wired by extension.ts directly. Constructing it from here would
+        // subscribe to a null filter and throw — keeping the call alive
+        // serves no purpose now that the new path exists.
     }
 
     private unregisterCodeLensProvider(): void {
@@ -5543,7 +5705,9 @@ export class AnnotationManager extends EventEmitter {
                 const line = editor.selection.active.line;
                 const annotation = this.findAnnotation(editor.document.fileName, line);
                 if (!annotation) {
-                    vscode.window.showErrorMessage(localize('noAnnotationResolve', 'No annotation found on this line.'));
+                    vscode.window.showErrorMessage(
+                        localize('noAnnotationResolve', 'No annotation found on this line.')
+                    );
                     return;
                 }
                 annotationId = annotation.id;
@@ -5559,11 +5723,13 @@ export class AnnotationManager extends EventEmitter {
 
     private getSeverityIcon(severity: string): string {
         switch (severity) {
-            case 'error': return '❌';
-            case 'warning': return '⚠️';
+            case 'error':
+                return '❌';
+            case 'warning':
+                return '⚠️';
             case 'info':
-            default: return 'ℹ️';
+            default:
+                return 'ℹ️';
         }
     }
 }
-

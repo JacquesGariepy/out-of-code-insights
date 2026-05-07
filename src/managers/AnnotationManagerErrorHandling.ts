@@ -21,35 +21,39 @@ export class AnnotationManagerErrorHandling {
      */
     static checkInitialized(functionName: string): boolean {
         if (!this.isInitialized) {
-            const baseMessage = localize('extensionNotInitialized', 
-                'The annotation extension is not fully initialized.');
-            
+            const baseMessage = localize(
+                'extensionNotInitialized',
+                'The annotation extension is not fully initialized.'
+            );
+
             let detailMessage = '';
             if (this.initializationError) {
-                detailMessage = localize('initializationErrorDetails',
-                    'Initialization failed with error: {0}', 
-                    this.initializationError.message);
+                detailMessage = localize(
+                    'initializationErrorDetails',
+                    'Initialization failed with error: {0}',
+                    this.initializationError.message
+                );
             } else {
-                detailMessage = localize('stillInitializing',
-                    'The extension may still be initializing. Please wait a moment and try again.');
+                detailMessage = localize(
+                    'stillInitializing',
+                    'The extension may still be initializing. Please wait a moment and try again.'
+                );
             }
 
             const fullMessage = `${baseMessage}\n\n${detailMessage}`;
-            
+
             // Show error with retry option
-            vscode.window.showErrorMessage(
-                fullMessage,
-                localize('retry', 'Retry'),
-                localize('openSettings', 'Open Settings')
-            ).then(selection => {
-                if (selection === localize('retry', 'Retry')) {
-                    // Re-execute the command
-                    vscode.commands.executeCommand(`annotations.${functionName}`);
-                } else if (selection === localize('openSettings', 'Open Settings')) {
-                    // Open extension settings
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'annotation');
-                }
-            });
+            vscode.window
+                .showErrorMessage(fullMessage, localize('retry', 'Retry'), localize('openSettings', 'Open Settings'))
+                .then((selection) => {
+                    if (selection === localize('retry', 'Retry')) {
+                        // Re-execute the command
+                        vscode.commands.executeCommand(`annotations.${functionName}`);
+                    } else if (selection === localize('openSettings', 'Open Settings')) {
+                        // Open extension settings
+                        vscode.commands.executeCommand('workbench.action.openSettings', 'annotation');
+                    }
+                });
 
             return false;
         }
@@ -80,29 +84,37 @@ export class AnnotationManagerErrorHandling {
      */
     static createFallbackCommand(commandName: string, helpMessage?: string): () => void {
         return () => {
-            const baseMessage = localize('commandNotAvailable',
+            const baseMessage = localize(
+                'commandNotAvailable',
                 'The command "{0}" is not available because the extension failed to initialize.',
-                commandName);
-            
-            const help = helpMessage || localize('checkExtensionSettings',
-                'Please check the extension settings and ensure all required configurations are correct.');
+                commandName
+            );
+
+            const help =
+                helpMessage ||
+                localize(
+                    'checkExtensionSettings',
+                    'Please check the extension settings and ensure all required configurations are correct.'
+                );
 
             const fullMessage = `${baseMessage}\n\n${help}`;
 
-            vscode.window.showErrorMessage(
-                fullMessage,
-                localize('openSettings', 'Open Settings'),
-                localize('viewLogs', 'View Logs')
-            ).then(selection => {
-                if (selection === localize('openSettings', 'Open Settings')) {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'annotation');
-                } else if (selection === localize('viewLogs', 'View Logs')) {
-                    vscode.commands.executeCommand('workbench.action.output.show', {
-                        preserveFocus: false,
-                        viewColumn: vscode.ViewColumn.Beside
-                    });
-                }
-            });
+            vscode.window
+                .showErrorMessage(
+                    fullMessage,
+                    localize('openSettings', 'Open Settings'),
+                    localize('viewLogs', 'View Logs')
+                )
+                .then((selection) => {
+                    if (selection === localize('openSettings', 'Open Settings')) {
+                        vscode.commands.executeCommand('workbench.action.openSettings', 'annotation');
+                    } else if (selection === localize('viewLogs', 'View Logs')) {
+                        vscode.commands.executeCommand('workbench.action.output.show', {
+                            preserveFocus: false,
+                            viewColumn: vscode.ViewColumn.Beside,
+                        });
+                    }
+                });
         };
     }
 
@@ -110,15 +122,19 @@ export class AnnotationManagerErrorHandling {
      * Show a warning for reduced functionality
      */
     static showReducedFunctionalityWarning(): void {
-        vscode.window.showWarningMessage(
-            localize('reducedFunctionality',
-                'The annotation extension is running with reduced functionality. Some features may not be available.'),
-            localize('viewDetails', 'View Details')
-        ).then(selection => {
-            if (selection === localize('viewDetails', 'View Details')) {
-                this.showInitializationReport();
-            }
-        });
+        vscode.window
+            .showWarningMessage(
+                localize(
+                    'reducedFunctionality',
+                    'The annotation extension is running with reduced functionality. Some features may not be available.'
+                ),
+                localize('viewDetails', 'View Details')
+            )
+            .then((selection) => {
+                if (selection === localize('viewDetails', 'View Details')) {
+                    this.showInitializationReport();
+                }
+            });
     }
 
     /**
@@ -126,7 +142,7 @@ export class AnnotationManagerErrorHandling {
      */
     static showInitializationReport(): void {
         const report = this.generateInitializationReport();
-        
+
         // Create output channel for detailed report
         const channel = vscode.window.createOutputChannel('Annotation Extension - Initialization Report');
         channel.clear();
@@ -143,7 +159,7 @@ export class AnnotationManagerErrorHandling {
             '',
             `Status: ${this.isInitialized ? 'Initialized' : 'Failed'}`,
             `Time: ${new Date().toLocaleString()}`,
-            ''
+            '',
         ];
 
         if (this.initializationError) {

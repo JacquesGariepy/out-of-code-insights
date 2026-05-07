@@ -26,11 +26,12 @@ const DEFAULT_TEMPLATES: AnnotationTemplate[] = [
         id: 'bug',
         name: 'Bug',
         description: 'Report a bug or issue',
-        content: 'BUG: {{description}}\nSteps to reproduce:\n1. {{step1}}\n2. {{step2}}\nExpected: {{expected}}\nActual: {{actual}}',
+        content:
+            'BUG: {{description}}\nSteps to reproduce:\n1. {{step1}}\n2. {{step2}}\nExpected: {{expected}}\nActual: {{actual}}',
         tags: ['bug'],
         severity: 'error',
         variables: ['description', 'step1', 'step2', 'expected', 'actual'],
-        isBuiltIn: true
+        isBuiltIn: true,
     },
     {
         id: 'todo',
@@ -40,17 +41,18 @@ const DEFAULT_TEMPLATES: AnnotationTemplate[] = [
         tags: ['todo'],
         severity: 'info',
         variables: ['task', 'priority', 'dueDate', 'assignee'],
-        isBuiltIn: true
+        isBuiltIn: true,
     },
     {
         id: 'refactor',
         name: 'Refactor',
         description: 'Mark code that needs refactoring',
-        content: 'REFACTOR: {{reason}}\nCurrent issue: {{currentIssue}}\nProposed solution: {{proposedSolution}}\nEstimated effort: {{effort}}',
+        content:
+            'REFACTOR: {{reason}}\nCurrent issue: {{currentIssue}}\nProposed solution: {{proposedSolution}}\nEstimated effort: {{effort}}',
         tags: ['refactor', 'technical-debt'],
         severity: 'warning',
         variables: ['reason', 'currentIssue', 'proposedSolution', 'effort'],
-        isBuiltIn: true
+        isBuiltIn: true,
     },
     {
         id: 'question',
@@ -60,18 +62,19 @@ const DEFAULT_TEMPLATES: AnnotationTemplate[] = [
         tags: ['question', 'help-wanted'],
         severity: 'info',
         variables: ['question', 'context', 'option1', 'option2'],
-        isBuiltIn: true
+        isBuiltIn: true,
     },
     {
         id: 'architecture-decision',
         name: 'Architecture Decision',
         description: 'Document an architecture decision',
-        content: 'ADR: {{title}}\n\nStatus: {{status}}\n\nContext:\n{{context}}\n\nDecision:\n{{decision}}\n\nConsequences:\n{{consequences}}',
+        content:
+            'ADR: {{title}}\n\nStatus: {{status}}\n\nContext:\n{{context}}\n\nDecision:\n{{decision}}\n\nConsequences:\n{{consequences}}',
         tags: ['architecture', 'decision', 'adr'],
         severity: 'info',
         variables: ['title', 'status', 'context', 'decision', 'consequences'],
-        isBuiltIn: true
-    }
+        isBuiltIn: true,
+    },
 ];
 
 export class TemplateManager {
@@ -86,13 +89,13 @@ export class TemplateManager {
 
     private loadTemplates(): void {
         // Load built-in templates
-        DEFAULT_TEMPLATES.forEach(template => {
+        DEFAULT_TEMPLATES.forEach((template) => {
             this.templates.set(template.id, template);
         });
 
         // Load custom templates from global state
         const customTemplates = this.context.globalState.get<AnnotationTemplate[]>(TEMPLATES_STORAGE_KEY, []);
-        customTemplates.forEach(template => {
+        customTemplates.forEach((template) => {
             if (!template.isBuiltIn) {
                 this.templates.set(template.id, template);
             }
@@ -100,7 +103,7 @@ export class TemplateManager {
     }
 
     private saveCustomTemplates(): void {
-        const customTemplates = Array.from(this.templates.values()).filter(t => !t.isBuiltIn);
+        const customTemplates = Array.from(this.templates.values()).filter((t) => !t.isBuiltIn);
         this.context.globalState.update(TEMPLATES_STORAGE_KEY, customTemplates);
     }
 
@@ -118,7 +121,7 @@ export class TemplateManager {
             ...template,
             id,
             isBuiltIn: false,
-            variables: this.extractVariables(template.content)
+            variables: this.extractVariables(template.content),
         };
 
         this.templates.set(id, newTemplate);
@@ -127,7 +130,10 @@ export class TemplateManager {
         return newTemplate;
     }
 
-    public async updateTemplate(id: string, updates: Partial<AnnotationTemplate>): Promise<AnnotationTemplate | undefined> {
+    public async updateTemplate(
+        id: string,
+        updates: Partial<AnnotationTemplate>
+    ): Promise<AnnotationTemplate | undefined> {
         const template = this.templates.get(id);
         if (!template || template.isBuiltIn) {
             return undefined;
@@ -138,7 +144,7 @@ export class TemplateManager {
             ...updates,
             id, // Ensure ID doesn't change
             isBuiltIn: false,
-            variables: updates.content ? this.extractVariables(updates.content) : template.variables
+            variables: updates.content ? this.extractVariables(updates.content) : template.variables,
         };
 
         this.templates.set(id, updatedTemplate);
@@ -186,26 +192,28 @@ export class TemplateManager {
 
     public async showTemplateQuickPick(): Promise<AnnotationTemplate | undefined> {
         const templates = this.getAllTemplates();
-        
-        const items: vscode.QuickPickItem[] = templates.map(template => ({
+
+        const items: vscode.QuickPickItem[] = templates.map((template) => ({
             label: template.name,
             description: template.description,
-            detail: template.isBuiltIn ? localize('builtInTemplate', 'Built-in template') : localize('customTemplate', 'Custom template')
+            detail: template.isBuiltIn
+                ? localize('builtInTemplate', 'Built-in template')
+                : localize('customTemplate', 'Custom template'),
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: localize('selectTemplate', 'Select an annotation template')
+            placeHolder: localize('selectTemplate', 'Select an annotation template'),
         });
 
         if (!selected) {
             return undefined;
         }
 
-        return templates.find(t => t.name === selected.label);
+        return templates.find((t) => t.name === selected.label);
     }
 
     public async exportTemplates(): Promise<string> {
-        const customTemplates = Array.from(this.templates.values()).filter(t => !t.isBuiltIn);
+        const customTemplates = Array.from(this.templates.values()).filter((t) => !t.isBuiltIn);
         return JSON.stringify(customTemplates, null, 2);
     }
 
@@ -226,7 +234,7 @@ export class TemplateManager {
                         ...template,
                         id: newId,
                         isBuiltIn: false,
-                        variables: this.extractVariables(template.content)
+                        variables: this.extractVariables(template.content),
                     };
 
                     this.templates.set(newId, newTemplate);
@@ -240,7 +248,13 @@ export class TemplateManager {
 
             return importCount;
         } catch (error) {
-            throw new Error(localize('importError', 'Failed to import templates: {0}', error instanceof Error ? error.message : 'Unknown error'));
+            throw new Error(
+                localize(
+                    'importError',
+                    'Failed to import templates: {0}',
+                    error instanceof Error ? error.message : 'Unknown error'
+                )
+            );
         }
     }
 
@@ -265,7 +279,7 @@ export class TemplateManager {
                 placeHolder: variable,
                 validateInput: (value) => {
                     return value.trim() === '' ? localize('valueRequired', 'Value is required') : undefined;
-                }
+                },
             });
 
             if (value === undefined) {
@@ -279,7 +293,10 @@ export class TemplateManager {
     }
 
     private generateTemplateId(name: string): string {
-        const baseId = name.toLowerCase().replace(/\\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+        const baseId = name
+            .toLowerCase()
+            .replace(/\\s+/g, '-')
+            .replace(/[^a-z0-9-]/g, '');
         let id = baseId;
         let counter = 1;
 
@@ -298,7 +315,7 @@ export class TemplateManager {
             placeHolder: localize('templateNamePlaceholder', 'e.g., Performance Issue'),
             validateInput: (value) => {
                 return value.trim() === '' ? localize('nameRequired', 'Name is required') : undefined;
-            }
+            },
         });
 
         if (!name) {
@@ -307,7 +324,7 @@ export class TemplateManager {
 
         const description = await vscode.window.showInputBox({
             prompt: localize('templateDescription', 'Enter template description (optional)'),
-            placeHolder: localize('templateDescriptionPlaceholder', 'Brief description of the template')
+            placeHolder: localize('templateDescriptionPlaceholder', 'Brief description of the template'),
         });
 
         const content = await vscode.window.showInputBox({
@@ -315,7 +332,7 @@ export class TemplateManager {
             placeHolder: localize('templateContentPlaceholder', 'e.g., Issue: {{description}}\\nImpact: {{impact}}'),
             validateInput: (value) => {
                 return value.trim() === '' ? localize('contentRequired', 'Content is required') : undefined;
-            }
+            },
         });
 
         if (!content) {
@@ -324,43 +341,48 @@ export class TemplateManager {
 
         const tags = await vscode.window.showInputBox({
             prompt: localize('templateTags', 'Enter tags (comma-separated, optional)'),
-            placeHolder: localize('templateTagsPlaceholder', 'e.g., bug, ui, critical')
+            placeHolder: localize('templateTagsPlaceholder', 'e.g., bug, ui, critical'),
         });
 
-        const tagArray = tags ? tags.split(',').map(t => t.trim()).filter(t => t) : [];
+        const tagArray = tags
+            ? tags
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter((t) => t)
+            : [];
 
         await this.createTemplate({
             name,
             description: description || undefined,
             content,
-            tags: tagArray.length > 0 ? tagArray : undefined
+            tags: tagArray.length > 0 ? tagArray : undefined,
         });
 
         vscode.window.showInformationMessage(localize('templateCreated', 'Template "{0}" created successfully', name));
     }
 
     public async deleteTemplateFromUI(): Promise<void> {
-        const templates = Array.from(this.templates.values()).filter(t => !t.isBuiltIn);
-        
+        const templates = Array.from(this.templates.values()).filter((t) => !t.isBuiltIn);
+
         if (templates.length === 0) {
             vscode.window.showInformationMessage(localize('noCustomTemplates', 'No custom templates to delete'));
             return;
         }
 
-        const items: vscode.QuickPickItem[] = templates.map(template => ({
+        const items: vscode.QuickPickItem[] = templates.map((template) => ({
             label: template.name,
-            description: template.description
+            description: template.description,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
-            placeHolder: localize('selectTemplateToDelete', 'Select a template to delete')
+            placeHolder: localize('selectTemplateToDelete', 'Select a template to delete'),
         });
 
         if (!selected) {
             return;
         }
 
-        const template = templates.find(t => t.name === selected.label);
+        const template = templates.find((t) => t.name === selected.label);
         if (!template) {
             return;
         }
@@ -373,7 +395,9 @@ export class TemplateManager {
 
         if (confirm === localize('delete', 'Delete')) {
             await this.deleteTemplate(template.id);
-            vscode.window.showInformationMessage(localize('templateDeleted', 'Template "{0}" deleted successfully', template.name));
+            vscode.window.showInformationMessage(
+                localize('templateDeleted', 'Template "{0}" deleted successfully', template.name)
+            );
         }
     }
 }

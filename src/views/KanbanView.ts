@@ -1,25 +1,31 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
-import { Annotation } from '../common/types';
 import { localize } from '../common/localize';
+import type { AnnotationV2 } from '../transactional/types';
+import type { AnnotationStore } from '../transactional/AnnotationStore';
 
 export class KanbanView {
     public static currentPanel: vscode.WebviewPanel | undefined;
     private disposables: vscode.Disposable[] = [];
-    private annotations: Annotation[] = [];
+    private annotations: readonly AnnotationV2[] = [];
     private columns: Map<string, string> = new Map([
         ['todo', localize('kanban.column.todo', 'To Do')],
         ['in-progress', localize('kanban.column.inProgress', 'In Progress')],
         ['review', localize('kanban.column.review', 'Review')],
-        ['done', localize('kanban.column.done', 'Done')]
+        ['done', localize('kanban.column.done', 'Done')],
     ]);
 
-    constructor(private context: vscode.ExtensionContext) {}
+    constructor(
+        private context: vscode.ExtensionContext,
+        private store: AnnotationStore
+    ) {}
 
-    public static async createOrShow(context: vscode.ExtensionContext, annotations: Annotation[]) {
-        const column = vscode.window.activeTextEditor
-            ? vscode.window.activeTextEditor.viewColumn
-            : undefined;
+    public static async createOrShow(
+        context: vscode.ExtensionContext,
+        annotations: readonly AnnotationV2[],
+        store: AnnotationStore
+    ) {
+        const column = vscode.window.activeTextEditor ? vscode.window.activeTextEditor.viewColumn : undefined;
 
         if (KanbanView.currentPanel) {
             KanbanView.currentPanel.reveal(column);
@@ -33,28 +39,24 @@ export class KanbanView {
             {
                 enableScripts: true,
                 retainContextWhenHidden: true,
-                localResourceRoots: [context.extensionUri]
+                localResourceRoots: [context.extensionUri],
             }
         );
 
-        const kanbanView = new KanbanView(context);
+        const kanbanView = new KanbanView(context, store);
         kanbanView.annotations = annotations;
-        
+
         // Get current columns from AnnotationManager
         const columns = await vscode.commands.executeCommand<[string, string][]>('annotations.kanban.getColumns');
         if (columns) {
             kanbanView.columns = new Map(columns);
         }
-        
+
         KanbanView.currentPanel = panel;
 
         panel.webview.html = kanbanView.getWebviewContent(panel.webview);
 
-        panel.webview.onDidReceiveMessage(
-            message => kanbanView.handleMessage(message),
-            null,
-            kanbanView.disposables
-        );
+        panel.webview.onDidReceiveMessage((message) => kanbanView.handleMessage(message), null, kanbanView.disposables);
 
         panel.onDidDispose(
             () => {
@@ -66,12 +68,12 @@ export class KanbanView {
         );
     }
 
-    public updateAnnotations(annotations: Annotation[]) {
+    public updateAnnotations(annotations: readonly AnnotationV2[]) {
         this.annotations = annotations;
         if (KanbanView.currentPanel) {
             KanbanView.currentPanel.webview.postMessage({
                 command: 'updateAnnotations',
-                annotations: this.serializeAnnotations()
+                annotations: this.serializeAnnotations(),
             });
         }
     }
@@ -81,17 +83,17 @@ export class KanbanView {
         if (KanbanView.currentPanel) {
             KanbanView.currentPanel.webview.postMessage({
                 command: 'updateColumns',
-                columns: Array.from(columns.entries())
+                columns: Array.from(columns.entries()),
             });
         }
     }
 
-    public moveAnnotation(annotationId: string, fromColumn: string, toColumn: string) {
-        const annotation = this.annotations.find(a => a.id === annotationId);
+    public moveAnnotation(annotationId: string, _fromColumn: string, toColumn: string) {
+        const annotation = this.annotations.find((a) => a.id === annotationId);
         if (annotation) {
-            annotation.kanbanColumn = toColumn;
-            
-            // Update annotation in the main system
+            // Annotation snapshots from the store are frozen; the column
+            // mutation is applied via a command handled by extension.ts,
+            // which routes to KanbanColumnStore in worker-1's wiring.
             vscode.commands.executeCommand('annotations.kanban.moveToColumn', annotationId, toColumn);
         }
     }
@@ -108,7 +110,7 @@ export class KanbanView {
                 break;
             case 'renameColumn':
                 if (this.columns.has(message.id)) {
-                    const columnsArray = Array.from(this.columns.entries()).map(([id, name]) => 
+                    const columnsArray = Array.from(this.columns.entries()).map(([id, name]) =>
                         id === message.id ? [id, message.newName] : [id, name]
                     );
                     vscode.commands.executeCommand('annotations.kanban.updateColumns', columnsArray);
@@ -116,43 +118,81 @@ export class KanbanView {
                 }
                 break;
             case 'deleteColumn':
-                vscode.window.showWarningMessage(
-                    localize('kanban.deleteColumnConfirm', 'Are you sure you want to delete this column? Annotations will be moved to "{0}".').replace('{0}', localize('kanban.column.todo', 'To Do')),
-                    localize('delete', 'Delete'),
-                    localize('cancel', 'Cancel')
-                ).then(result => {
-                    if (result === localize('delete', 'Delete')) {
-                        vscode.commands.executeCommand('annotations.kanban.deleteColumn', message.id);
-                    }
-                });
+                vscode.window
+                    .showWarningMessage(
+                        localize(
+                            'kanban.deleteColumnConfirm',
+                            'Are you sure you want to delete this column? Annotations will be moved to "{0}".'
+                        ).replace('{0}', localize('kanban.column.todo', 'To Do')),
+                        localize('delete', 'Delete'),
+                        localize('cancel', 'Cancel')
+                    )
+                    .then((result) => {
+                        if (result === localize('delete', 'Delete')) {
+                            vscode.commands.executeCommand('annotations.kanban.deleteColumn', message.id);
+                        }
+                    });
                 break;
             case 'openFile':
                 vscode.commands.executeCommand('annotations.navigate', message.annotationId);
                 break;
             case 'deleteAnnotation':
-                vscode.window.showQuickPick([
-                    { label: localize('kanban.removeFromKanbanOnly', 'Remove from Kanban only'), value: 'removeFromKanban', description: localize('kanban.removeFromKanbanOnlyDesc', 'The annotation will remain in the system') },
-                    { label: localize('kanban.deleteCompletely', 'Delete completely'), value: 'delete', description: localize('kanban.deleteCompletelyDesc', 'Permanently delete the annotation') }
-                ], {
-                    placeHolder: localize('kanban.deleteAnnotationPrompt', 'What would you like to do with this annotation?'),
-                    canPickMany: false
-                }).then(selected => {
-                    if (selected) {
-                        if (selected.value === 'removeFromKanban') {
-                            vscode.commands.executeCommand('annotations.kanban.removeFromKanban', message.annotationId);
-                        } else if (selected.value === 'delete') {
-                            vscode.window.showWarningMessage(
-                                localize('kanban.deleteAnnotationConfirm', 'Are you sure you want to permanently delete this annotation?'),
-                                localize('delete', 'Delete'),
-                                localize('cancel', 'Cancel')
-                            ).then(result => {
-                                if (result === localize('delete', 'Delete')) {
-                                    vscode.commands.executeCommand('annotations.kanban.delete', message.annotationId);
-                                }
-                            });
+                vscode.window
+                    .showQuickPick(
+                        [
+                            {
+                                label: localize('kanban.removeFromKanbanOnly', 'Remove from Kanban only'),
+                                value: 'removeFromKanban',
+                                description: localize(
+                                    'kanban.removeFromKanbanOnlyDesc',
+                                    'The annotation will remain in the system'
+                                ),
+                            },
+                            {
+                                label: localize('kanban.deleteCompletely', 'Delete completely'),
+                                value: 'delete',
+                                description: localize(
+                                    'kanban.deleteCompletelyDesc',
+                                    'Permanently delete the annotation'
+                                ),
+                            },
+                        ],
+                        {
+                            placeHolder: localize(
+                                'kanban.deleteAnnotationPrompt',
+                                'What would you like to do with this annotation?'
+                            ),
+                            canPickMany: false,
                         }
-                    }
-                });
+                    )
+                    .then((selected) => {
+                        if (selected) {
+                            if (selected.value === 'removeFromKanban') {
+                                vscode.commands.executeCommand(
+                                    'annotations.kanban.removeFromKanban',
+                                    message.annotationId
+                                );
+                            } else if (selected.value === 'delete') {
+                                vscode.window
+                                    .showWarningMessage(
+                                        localize(
+                                            'kanban.deleteAnnotationConfirm',
+                                            'Are you sure you want to permanently delete this annotation?'
+                                        ),
+                                        localize('delete', 'Delete'),
+                                        localize('cancel', 'Cancel')
+                                    )
+                                    .then((result) => {
+                                        if (result === localize('delete', 'Delete')) {
+                                            vscode.commands.executeCommand(
+                                                'annotations.kanban.delete',
+                                                message.annotationId
+                                            );
+                                        }
+                                    });
+                            }
+                        }
+                    });
                 break;
             case 'refresh':
                 vscode.commands.executeCommand('annotations.kanban.refresh');
@@ -161,17 +201,21 @@ export class KanbanView {
     }
 
     private serializeAnnotations() {
-        return this.annotations.map(annotation => ({
-            id: annotation.id,
-            message: annotation.message,
-            severity: annotation.severity || 'info',
-            file: annotation.file?.split('/').pop() || localize('unknown', 'Unknown'),
-            filePath: annotation.file,
-            line: annotation.line,
-            tags: annotation.tags || [],
-            kanbanColumn: annotation.kanbanColumn || 'todo',
-            timestamp: annotation.timestamp
-        }));
+        const openDocs = vscode.workspace.textDocuments;
+        return this.annotations.map((annotation) => {
+            const resolvedLine = this.store.getLineForAnnotation(annotation.id, openDocs);
+            return {
+                id: annotation.id,
+                message: annotation.message,
+                severity: annotation.severity || 'info',
+                file: annotation.file?.split('/').pop() || localize('unknown', 'Unknown'),
+                filePath: annotation.file,
+                line: resolvedLine === null ? null : resolvedLine + 1,
+                tags: annotation.tags || [],
+                kanbanColumn: annotation.kanbanColumn || 'todo',
+                timestamp: annotation.timestamp,
+            };
+        });
     }
 
     private getWebviewContent(webview: vscode.Webview): string {
@@ -179,7 +223,7 @@ export class KanbanView {
         const cspSource = webview.cspSource;
         const columns = Array.from(this.columns.entries());
         const annotations = this.serializeAnnotations();
-        
+
         // Localized strings for webview
         const localizedStrings = {
             title: localize('kanban.title', 'Annotation Kanban Board'),
@@ -200,7 +244,7 @@ export class KanbanView {
             renameColumn: localize('kanban.renameColumn', 'Rename Column'),
             columnName: localize('kanban.columnName', 'Column name'),
             cancel: localize('cancel', 'Cancel'),
-            save: localize('save', 'Save')
+            save: localize('save', 'Save'),
         };
 
         return `<!DOCTYPE html>
@@ -811,7 +855,7 @@ export class KanbanView {
                             </div>
                             <div class="card-text">\${escapeHtml(annotation.message)}</div>
                             <div class="card-meta">
-                                <div class="card-file">&#128196; \${escapeHtml(annotation.file)}:\${annotation.line}</div>
+                                <div class="card-file">&#128196; \${escapeHtml(annotation.file)}:\${annotation.line === null ? '?' : annotation.line}</div>
                                 <div>&#128197; \${formattedDate}</div>
                             </div>
                             \${annotation.tags && annotation.tags.length > 0 ? \`
