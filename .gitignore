@@ -41,9 +41,7 @@ Thumbs.db
 
 # Orchestrator runtime state
 .orchestra/
-data/memory.db
-data/memory.db-shm
-data/memory.db-wal
+data/
 .claude/undo-snapshots.json
 reports/mission-*.json
 

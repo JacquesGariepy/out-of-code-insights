@@ -7,9 +7,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+(no entries yet)
+
+## [1.0.19] - 2026-05-06
+
 ### Fixed
-- Annotations now follow moved code (notably down) instead of deletion
-- fix: annotations now follow code on cut/paste, move, and refactor
+- Annotations now follow code through cut, paste, move, and refactor
+  operations instead of being deleted or left orphaned. Introduces a
+  transactional annotation store and reanchoring across edits.
 
 ## [1.0.18] - 2026-05-04
 

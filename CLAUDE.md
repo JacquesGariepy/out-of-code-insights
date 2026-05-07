@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**_ Never mention Claude or Claude Code or "co-Authored-By: Claude" or Generated with Claude Code, etc. in commit, code, doc, text, comments, etc. _**
+
 ## Project
 
 `out-of-code-insights` is a **VS Code extension** (engine `^1.95.0`, MPL-2.0) that stores annotations in a workspace JSON file (`.out-of-code-insights/annotations.json`) instead of modifying source files. It also exposes a chat participant and AI-powered annotation generation backed by multiple LLM providers.

@@ -58,3 +58,11 @@ package-lock.json
 
 # Local-only / aux files
 *.vsix
+
+# Internal AI-agent / orchestrator state and project guidance (do not publish)
+.orchestra/**
+.claude/**
+data/**
+reports/**
+CLAUDE.md
+INSTRUCTIONS_TEST_REEL.md

@@ -42,6 +42,8 @@ updates:
       # Pin Node typings to the runtime VS Code ships with
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # Pin VS Code typings to engines.vscode -- bump manually when the engine moves
+      - dependency-name: "@types/vscode"
 
   # GitHub Actions workflows -- keep pinned SHAs current
   - package-ecosystem: github-actions

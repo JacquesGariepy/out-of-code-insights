@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.0.18",
+    "version": "1.0.19",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
@@ -977,7 +977,7 @@
         "@types/lodash": "^4.17.24",
         "@types/mocha": "^10.0.10",
         "@types/node": "^16.18.126",
-        "@types/vscode": "^1.118.0",
+        "@types/vscode": "^1.95.0",
         "@typescript-eslint/eslint-plugin": "^5.30.0",
         "@typescript-eslint/parser": "^5.30.0",
         "@vscode/test-electron": "^2.5.2",
