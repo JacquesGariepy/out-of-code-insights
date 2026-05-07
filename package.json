@@ -899,7 +899,12 @@
                 },
                 "outOfCodeInsights.logLevel": {
                     "type": "string",
-                    "enum": ["debug", "info", "warn", "error"],
+                    "enum": [
+                        "debug",
+                        "info",
+                        "warn",
+                        "error"
+                    ],
                     "enumDescriptions": [
                         "All messages including verbose debug output",
                         "Informational messages and above (default)",
@@ -963,7 +968,7 @@
         "test": "node ./out/test/runTest.js",
         "coverage": "c8 --reporter=text --reporter=lcov npm test",
         "coverage:check": "c8 check-coverage --lines 15 --functions 15 --branches 10",
-        "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" --timeout 5000"
+        "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" \"out/transactional/__tests__/**/*.js\" --timeout 5000"
     },
     "devDependencies": {
         "@types/diff": "^6.0.0",
