@@ -1,0 +1,7 @@
+preserve_a
+preserve_b
+preserve_c
+preserve_d
+preserve_e
+TARGET_LINE_FOR_CUT
+preserve_g

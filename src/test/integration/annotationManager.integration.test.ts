@@ -59,11 +59,7 @@ function makeDoc(lines: string[]): TextDocumentLike {
  * Mirror of AnnotationManager.setAnnotationLine:
  * update annotation.line and recapture anchor when a document is provided.
  */
-function applySetLine(
-    annotation: MockAnnotation,
-    newLine: number,
-    doc?: TextDocumentLike
-): void {
+function applySetLine(annotation: MockAnnotation, newLine: number, doc?: TextDocumentLike): void {
     annotation.line = newLine;
     if (doc && newLine >= 0 && newLine < doc.lineCount) {
         const anchor = captureAnchor(doc, newLine);
@@ -123,14 +119,16 @@ function runChangePipeline(opts: {
     const moves: MovedBlock[] = detectMoves(oldLines, newLines);
     const pendingDeletionIds: string[] = [];
 
-    const result: MockAnnotation[] = annotations.map(a => ({ ...a }));
+    const result: MockAnnotation[] = annotations.map((a) => ({ ...a }));
 
     for (const annotation of result) {
-        if (annotation.file !== file) { continue; }
+        if (annotation.file !== file) {
+            continue;
+        }
         const oldLine = annotation.line;
 
         // Check moved blocks first
-        const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
+        const move = moves.find((m) => oldLine >= m.oldStart && oldLine <= m.oldEnd);
         if (move) {
             applySetLine(annotation, move.newStart + (oldLine - move.oldStart), newDoc);
             continue;
@@ -143,16 +141,11 @@ function runChangePipeline(opts: {
         for (const change of contentChanges) {
             const startLine = change.range.start.line;
             const endLine = change.range.end.line;
-            const lineDelta =
-                change.text.split('\n').length - (endLine - startLine + 1);
+            const lineDelta = change.text.split('\n').length - (endLine - startLine + 1);
 
             if (currentLine > endLine) {
                 currentLine += lineDelta;
-            } else if (
-                currentLine >= startLine &&
-                currentLine <= endLine &&
-                lineDelta < 0
-            ) {
+            } else if (currentLine >= startLine && currentLine <= endLine && lineDelta < 0) {
                 markedDeleted = true;
             }
         }
@@ -178,17 +171,16 @@ function runChangePipeline(opts: {
     }
 
     // Apply 3-button dialog decision
-    return result.filter(annotation => {
-        if (!pendingDeletionIds.includes(annotation.id)) { return true; }
+    return result.filter((annotation) => {
+        if (!pendingDeletionIds.includes(annotation.id)) {
+            return true;
+        }
 
         if (warningResponse === 'Delete annotation') {
             return false;
         }
         if (warningResponse === 'Keep at nearest line') {
-            const clamped = Math.max(
-                0,
-                Math.min(annotation.line, newDoc.lineCount - 1)
-            );
+            const clamped = Math.max(0, Math.min(annotation.line, newDoc.lineCount - 1));
             applySetLine(annotation, clamped, newDoc);
             return true;
         }
@@ -208,8 +200,10 @@ function runOpenPipeline(opts: {
 }): MockAnnotation[] {
     const { annotations, file, doc } = opts;
 
-    return annotations.map(a => {
-        if (a.file !== file) { return { ...a }; }
+    return annotations.map((a) => {
+        if (a.file !== file) {
+            return { ...a };
+        }
         const annotation = { ...a };
 
         // Legacy annotation without anchor: migrate silently
@@ -247,18 +241,20 @@ function runOpenPipeline(opts: {
 
 suite('integration: insert 2 lines above annotation (line 5 -> 7)', () => {
     const sourceLines = [
-        'import A;',        // 0
-        'import B;',        // 1
-        'const x = 1;',    // 2
-        'const y = 2;',    // 3
+        'import A;', // 0
+        'import B;', // 1
+        'const x = 1;', // 2
+        'const y = 2;', // 3
         'function foo() {', // 4
         'ANNOTATED_LINE;', // 5 -- annotated
-        '  return x;',     // 6
-        '}',               // 7
+        '  return x;', // 6
+        '}', // 7
     ];
     const doc = makeDoc(sourceLines);
     const annotation: MockAnnotation = {
-        id: 'a1', file: 'src/f.ts', line: 5,
+        id: 'a1',
+        file: 'src/f.ts',
+        line: 5,
     };
     const anchor = captureAnchor(doc, 5);
     annotation.lineHash = anchor.lineHash;
@@ -267,16 +263,16 @@ suite('integration: insert 2 lines above annotation (line 5 -> 7)', () => {
 
     // New doc: 2 lines inserted at lines 2-3
     const newLines = [
-        'import A;',         // 0
-        'import B;',         // 1
+        'import A;', // 0
+        'import B;', // 1
         'const NEW_1 = 0;', // 2  inserted
         'const NEW_2 = 0;', // 3  inserted
-        'const x = 1;',     // 4
-        'const y = 2;',     // 5
+        'const x = 1;', // 4
+        'const y = 2;', // 5
         'function foo() {', // 6
-        'ANNOTATED_LINE;',  // 7  was 5, now 7
-        '  return x;',      // 8
-        '}',                 // 9
+        'ANNOTATED_LINE;', // 7  was 5, now 7
+        '  return x;', // 8
+        '}', // 9
     ];
     const newDoc = makeDoc(newLines);
 
@@ -287,8 +283,10 @@ suite('integration: insert 2 lines above annotation (line 5 -> 7)', () => {
             oldLines: sourceLines,
             newDoc,
             contentChanges: [
-                { range: { start: { line: 2 }, end: { line: 2 } },
-                  text: 'const NEW_1 = 0;\nconst NEW_2 = 0;\nconst x = 1;' },
+                {
+                    range: { start: { line: 2 }, end: { line: 2 } },
+                    text: 'const NEW_1 = 0;\nconst NEW_2 = 0;\nconst x = 1;',
+                },
             ],
         });
         assert.strictEqual(result.length, 1);
@@ -302,8 +300,10 @@ suite('integration: insert 2 lines above annotation (line 5 -> 7)', () => {
             oldLines: sourceLines,
             newDoc,
             contentChanges: [
-                { range: { start: { line: 2 }, end: { line: 2 } },
-                  text: 'const NEW_1 = 0;\nconst NEW_2 = 0;\nconst x = 1;' },
+                {
+                    range: { start: { line: 2 }, end: { line: 2 } },
+                    text: 'const NEW_1 = 0;\nconst NEW_2 = 0;\nconst x = 1;',
+                },
             ],
         });
         assert.strictEqual(result[0].lineHash, hashLine('ANNOTATED_LINE;'));
@@ -315,7 +315,9 @@ suite('integration: insert below -- annotation at line 5 unaffected', () => {
     const doc = makeDoc(sourceLines);
     const anchor = captureAnchor(doc, 4);
     const annotation: MockAnnotation = {
-        id: 'a1', file: 'f.ts', line: 4,
+        id: 'a1',
+        file: 'f.ts',
+        line: 4,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -329,10 +331,7 @@ suite('integration: insert below -- annotation at line 5 unaffected', () => {
             file: 'f.ts',
             oldLines: sourceLines,
             newDoc,
-            contentChanges: [
-                { range: { start: { line: 6 }, end: { line: 6 } },
-                  text: 'INSERTED;\ng' },
-            ],
+            contentChanges: [{ range: { start: { line: 6 }, end: { line: 6 } }, text: 'INSERTED;\ng' }],
         });
         assert.strictEqual(result[0].line, 4);
     });
@@ -344,7 +343,9 @@ suite('integration: delete anchored line -- silent removal', () => {
     const anchor = captureAnchor(doc, 2);
     function makeAnnotation(): MockAnnotation {
         return {
-            id: 'a1', file: 'f.ts', line: 2,
+            id: 'a1',
+            file: 'f.ts',
+            line: 2,
             lineHash: anchor.lineHash,
             contextBefore: anchor.contextBefore,
             contextAfter: anchor.contextAfter,
@@ -355,14 +356,17 @@ suite('integration: delete anchored line -- silent removal', () => {
     const newLines = ['pre_a', 'pre_b', 'post_a', 'post_b'];
     const newDoc = makeDoc(newLines);
     const change: ContentChange = {
-        range: { start: { line: 2 }, end: { line: 3 } }, text: '',
+        range: { start: { line: 2 }, end: { line: 3 } },
+        text: '',
     };
 
     test('annotation silently removed from live map when its line is deleted', () => {
         // Silent path: immediate removal without dialog (new UX).
         const result = runChangePipeline({
-            annotations: [makeAnnotation()], file: 'f.ts',
-            oldLines: sourceLines, newDoc,
+            annotations: [makeAnnotation()],
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
             warningResponse: 'Delete annotation',
         });
@@ -373,8 +377,10 @@ suite('integration: delete anchored line -- silent removal', () => {
         // Without a resolved decision, the annotation stays at stale position --
         // mirrors the pending state before it is moved to the clipboard buffer.
         const pending = runChangePipeline({
-            annotations: [makeAnnotation()], file: 'f.ts',
-            oldLines: sourceLines, newDoc,
+            annotations: [makeAnnotation()],
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
             warningResponse: undefined,
         });
@@ -385,8 +391,10 @@ suite('integration: delete anchored line -- silent removal', () => {
     test('undo restore: annotation clamped to nearest line after deletion', () => {
         // Simulates the Undo button in the non-modal toast: restore at clamped position.
         const result = runChangePipeline({
-            annotations: [makeAnnotation()], file: 'f.ts',
-            oldLines: sourceLines, newDoc,
+            annotations: [makeAnnotation()],
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
             warningResponse: 'Keep at nearest line',
         });
@@ -396,8 +404,10 @@ suite('integration: delete anchored line -- silent removal', () => {
 
     test('undo restore: lineHash recaptured at restored position', () => {
         const result = runChangePipeline({
-            annotations: [makeAnnotation()], file: 'f.ts',
-            oldLines: sourceLines, newDoc,
+            annotations: [makeAnnotation()],
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
             warningResponse: 'Keep at nearest line',
         });
@@ -408,9 +418,9 @@ suite('integration: delete anchored line -- silent removal', () => {
 
 suite('integration: cut+paste -- block [5..7] moved to [15..17], line 6 -> 16', () => {
     const block = ['block_a', 'block_b', 'block_c'];
-    const pre   = Array.from({ length: 5 },  (_, i) => `pre_${i}`);
+    const pre = Array.from({ length: 5 }, (_, i) => `pre_${i}`);
     // 10 post lines: oldLines=18 (block at [5..7]), newLines=18 (block at [15..17])
-    const post  = Array.from({ length: 10 }, (_, i) => `post_${i}`);
+    const post = Array.from({ length: 10 }, (_, i) => `post_${i}`);
 
     const oldLines = [...pre, ...block, ...post]; // block at [5..7]
     const newLines = [...pre, ...post, ...block]; // block at [15..17]
@@ -418,7 +428,9 @@ suite('integration: cut+paste -- block [5..7] moved to [15..17], line 6 -> 16', 
     const oldDoc = makeDoc(oldLines);
     const anchor = captureAnchor(oldDoc, 6); // block_b
     const annotation: MockAnnotation = {
-        id: 'a1', file: 'f.ts', line: 6,
+        id: 'a1',
+        file: 'f.ts',
+        line: 6,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -427,9 +439,11 @@ suite('integration: cut+paste -- block [5..7] moved to [15..17], line 6 -> 16', 
 
     test('annotation follows block from line 6 to line 16', () => {
         const result = runChangePipeline({
-            annotations: [annotation], file: 'f.ts',
-            oldLines, newDoc,
-            contentChanges: [],      // detectMoves handles this, no arithmetic needed
+            annotations: [annotation],
+            file: 'f.ts',
+            oldLines,
+            newDoc,
+            contentChanges: [], // detectMoves handles this, no arithmetic needed
         });
         assert.strictEqual(result.length, 1);
         assert.strictEqual(result[0].line, 16);
@@ -437,8 +451,10 @@ suite('integration: cut+paste -- block [5..7] moved to [15..17], line 6 -> 16', 
 
     test('lineHash updated to block_b at new position', () => {
         const result = runChangePipeline({
-            annotations: [annotation], file: 'f.ts',
-            oldLines, newDoc,
+            annotations: [annotation],
+            file: 'f.ts',
+            oldLines,
+            newDoc,
             contentChanges: [],
         });
         assert.strictEqual(result[0].lineHash, hashLine('block_b'));
@@ -448,9 +464,9 @@ suite('integration: cut+paste -- block [5..7] moved to [15..17], line 6 -> 16', 
 suite('integration: copy+paste -- original annotation stays at line 6', () => {
     // Original block at [5..7], a copy inserted at [15..17], block at [5..7] untouched
     const block = ['cp_a', 'cp_b', 'cp_c'];
-    const pre   = Array.from({ length: 5 },  (_, i) => `pre_${i}`);
-    const mid   = Array.from({ length: 7 },  (_, i) => `mid_${i}`);
-    const post  = Array.from({ length: 3 },  (_, i) => `post_${i}`);
+    const pre = Array.from({ length: 5 }, (_, i) => `pre_${i}`);
+    const mid = Array.from({ length: 7 }, (_, i) => `mid_${i}`);
+    const post = Array.from({ length: 3 }, (_, i) => `post_${i}`);
 
     const oldLines = [...pre, ...block, ...mid, ...post];
     // In newLines: original block stays [5..7], copy inserted at [15..17]
@@ -459,7 +475,9 @@ suite('integration: copy+paste -- original annotation stays at line 6', () => {
     const oldDoc = makeDoc(oldLines);
     const anchor = captureAnchor(oldDoc, 6); // cp_b at position 6
     const annotation: MockAnnotation = {
-        id: 'a1', file: 'f.ts', line: 6,
+        id: 'a1',
+        file: 'f.ts',
+        line: 6,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -468,12 +486,13 @@ suite('integration: copy+paste -- original annotation stays at line 6', () => {
 
     test('annotation remains at line 6 (original, not the copy)', () => {
         const result = runChangePipeline({
-            annotations: [annotation], file: 'f.ts',
-            oldLines, newDoc,
+            annotations: [annotation],
+            file: 'f.ts',
+            oldLines,
+            newDoc,
             contentChanges: [
                 // Copy inserted at line 15 (no delete of original)
-                { range: { start: { line: 15 }, end: { line: 15 } },
-                  text: 'cp_a\ncp_b\ncp_c\npost_0' },
+                { range: { start: { line: 15 }, end: { line: 15 } }, text: 'cp_a\ncp_b\ncp_c\npost_0' },
             ],
         });
         assert.strictEqual(result.length, 1);
@@ -486,32 +505,34 @@ suite('integration: external edit -- handleDocumentOpen relocates via findAnchor
     // 5 lines were inserted at the top, so the annotated content is now at line 10.
     const annotatedContent = 'const IMPORTANT = process.env.SECRET;';
     const ctxBefore = ['function setup() {', '  const cfg = {};'];
-    const ctxAfter  = ['  return cfg;', '}'];
+    const ctxAfter = ['  return cfg;', '}'];
 
     // Build the original document (stored snapshot)
     const originalLines = [
-        ...ctxBefore,           // 0-1
-        annotatedContent,       // 2 (pretend stored as line 2)
-        ...ctxAfter,            // 3-4
+        ...ctxBefore, // 0-1
+        annotatedContent, // 2 (pretend stored as line 2)
+        ...ctxAfter, // 3-4
     ];
     const originalDoc = makeDoc(originalLines);
     const anchor = captureAnchor(originalDoc, 2, 2);
 
     // New document: 5 "import" lines inserted at top, annotated content at line 7
     const newLines = [
-        'import A from "a";',  // 0
-        'import B from "b";',  // 1
-        'import C from "c";',  // 2
-        'import D from "d";',  // 3
-        'import E from "e";',  // 4
-        ...ctxBefore,          // 5-6
-        annotatedContent,      // 7  -- new position
-        ...ctxAfter,           // 8-9
+        'import A from "a";', // 0
+        'import B from "b";', // 1
+        'import C from "c";', // 2
+        'import D from "d";', // 3
+        'import E from "e";', // 4
+        ...ctxBefore, // 5-6
+        annotatedContent, // 7  -- new position
+        ...ctxAfter, // 8-9
     ];
     const newDoc = makeDoc(newLines);
 
     const annotation: MockAnnotation = {
-        id: 'a1', file: 'f.ts', line: 2,   // stale stored line
+        id: 'a1',
+        file: 'f.ts',
+        line: 2, // stale stored line
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -519,14 +540,18 @@ suite('integration: external edit -- handleDocumentOpen relocates via findAnchor
 
     test('handleDocumentOpen relocates annotation to new line 7', () => {
         const result = runOpenPipeline({
-            annotations: [annotation], file: 'f.ts', doc: newDoc,
+            annotations: [annotation],
+            file: 'f.ts',
+            doc: newDoc,
         });
         assert.strictEqual(result[0].line, 7);
     });
 
     test('lineHash is updated to reflect new position after relocation', () => {
         const result = runOpenPipeline({
-            annotations: [annotation], file: 'f.ts', doc: newDoc,
+            annotations: [annotation],
+            file: 'f.ts',
+            doc: newDoc,
         });
         assert.strictEqual(result[0].lineHash, hashLine(annotatedContent));
     });
@@ -537,9 +562,17 @@ suite('integration: multiple annotations same file, insertion in middle', () => 
     // Insert 3 lines at line 4 (between a1 and a2).
     // Expected: a1 stays at 2, a2 moves to 8, a3 moves to 12.
     const sourceLines = [
-        'l0', 'l1', 'ANNO_A;', 'l3',   // 0-3
-        'l4', 'ANNO_B;', 'l6', 'l7',   // 4-7
-        'l8', 'ANNO_C;', 'l10',         // 8-10
+        'l0',
+        'l1',
+        'ANNO_A;',
+        'l3', // 0-3
+        'l4',
+        'ANNO_B;',
+        'l6',
+        'l7', // 4-7
+        'l8',
+        'ANNO_C;',
+        'l10', // 8-10
     ];
     const oldDoc = makeDoc(sourceLines);
 
@@ -551,10 +584,20 @@ suite('integration: multiple annotations same file, insertion in middle', () => 
     const annotations = [makeAnno('a1', 2), makeAnno('a2', 5), makeAnno('a3', 9)];
 
     const newLines = [
-        'l0', 'l1', 'ANNO_A;', 'l3',           // 0-3
-        'INS_0;', 'INS_1;', 'INS_2;',           // 4-6  inserted
-        'l4', 'ANNO_B;', 'l6', 'l7',            // 7-10
-        'l8', 'ANNO_C;', 'l10',                  // 11-13
+        'l0',
+        'l1',
+        'ANNO_A;',
+        'l3', // 0-3
+        'INS_0;',
+        'INS_1;',
+        'INS_2;', // 4-6  inserted
+        'l4',
+        'ANNO_B;',
+        'l6',
+        'l7', // 7-10
+        'l8',
+        'ANNO_C;',
+        'l10', // 11-13
     ];
     const newDoc = makeDoc(newLines);
 
@@ -565,30 +608,39 @@ suite('integration: multiple annotations same file, insertion in middle', () => 
 
     test('a1 at line 2 is unaffected by insertion below', () => {
         const result = runChangePipeline({
-            annotations, file: 'f.ts', oldLines: sourceLines, newDoc,
+            annotations,
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
         });
-        const a1 = result.find(a => a.id === 'a1');
+        const a1 = result.find((a) => a.id === 'a1');
         assert.ok(a1, 'a1 should still exist');
         assert.strictEqual(a1.line, 2);
     });
 
     test('a2 at line 5 shifts to line 8 (delta +3)', () => {
         const result = runChangePipeline({
-            annotations, file: 'f.ts', oldLines: sourceLines, newDoc,
+            annotations,
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
         });
-        const a2 = result.find(a => a.id === 'a2');
+        const a2 = result.find((a) => a.id === 'a2');
         assert.ok(a2, 'a2 should still exist');
         assert.strictEqual(a2.line, 8);
     });
 
     test('a3 at line 9 shifts to line 12 (delta +3)', () => {
         const result = runChangePipeline({
-            annotations, file: 'f.ts', oldLines: sourceLines, newDoc,
+            annotations,
+            file: 'f.ts',
+            oldLines: sourceLines,
+            newDoc,
             contentChanges: [change],
         });
-        const a3 = result.find(a => a.id === 'a3');
+        const a3 = result.find((a) => a.id === 'a3');
         assert.ok(a3, 'a3 should still exist');
         assert.strictEqual(a3.line, 12);
     });
@@ -655,7 +707,9 @@ class ClipboardBuffer {
     tryRecover(doc: TextDocumentLike, relativeFile: string): MockAnnotation[] {
         const restored: MockAnnotation[] = [];
         for (const [id, deferred] of this.entries) {
-            if (!deferred.annotation.lineHash) { continue; }
+            if (!deferred.annotation.lineHash) {
+                continue;
+            }
             const anchor: AnchorData = {
                 lineHash: deferred.annotation.lineHash,
                 contextBefore: deferred.annotation.contextBefore ?? [],
@@ -710,7 +764,9 @@ class DeletedRecentlyBuffer {
                 this.entries.delete(id);
                 continue;
             }
-            if (!entry.annotation.lineHash) { continue; }
+            if (!entry.annotation.lineHash) {
+                continue;
+            }
             const anchor: AnchorData = {
                 lineHash: entry.annotation.lineHash,
                 contextBefore: entry.annotation.contextBefore ?? [],
@@ -746,41 +802,51 @@ class DeletedRecentlyBuffer {
 
 suite('clipboard: cut+paste intra-file via 2 separate events (line 6 -> 16)', () => {
     const block = ['block_a', 'block_b', 'block_c'];
-    const pre   = Array.from({ length: 5 },  (_, i) => `pre_${i}`);
-    const post  = Array.from({ length: 10 }, (_, i) => `post_${i}`);
+    const pre = Array.from({ length: 5 }, (_, i) => `pre_${i}`);
+    const post = Array.from({ length: 10 }, (_, i) => `post_${i}`);
 
     // State before Ctrl+X: block at [5..7], annotation at line 6 (block_b)
     const originalLines = [...pre, ...block, ...post];
-    const originalDoc   = makeDoc(originalLines);
-    const anchor        = captureAnchor(originalDoc, 6);
+    const originalDoc = makeDoc(originalLines);
+    const anchor = captureAnchor(originalDoc, 6);
 
-    let liveAnnotations: MockAnnotation[] = [{
-        id: 'a1', file: 'src/f.ts', line: 6,
-        lineHash: anchor.lineHash,
-        contextBefore: anchor.contextBefore,
-        contextAfter: anchor.contextAfter,
-    }];
+    let liveAnnotations: MockAnnotation[] = [
+        {
+            id: 'a1',
+            file: 'src/f.ts',
+            line: 6,
+            lineHash: anchor.lineHash,
+            contextBefore: anchor.contextBefore,
+            contextAfter: anchor.contextAfter,
+        },
+    ];
     const buffer = new ClipboardBuffer();
 
     // EVENT 1: Ctrl+X -- delete lines 5-7 (range [5..8], covering the newline)
     // After delete: 15 lines, block content is absent.
     const afterDeleteLines = [...pre, ...post];
-    const afterDeleteDoc   = makeDoc(afterDeleteLines);
+    const afterDeleteDoc = makeDoc(afterDeleteLines);
     const deleteChange: ContentChange = {
-        range: { start: { line: 5 }, end: { line: 8 } }, text: '',
+        range: { start: { line: 5 }, end: { line: 8 } },
+        text: '',
     };
 
     // Simulate delete event: annotation in deleted range [5..8], findAnchor fails.
-    const inDeletedRange = liveAnnotations[0].line >= deleteChange.range.start.line &&
-                           liveAnnotations[0].line <= deleteChange.range.end.line;
+    const inDeletedRange =
+        liveAnnotations[0].line >= deleteChange.range.start.line &&
+        liveAnnotations[0].line <= deleteChange.range.end.line;
     if (inDeletedRange) {
         const a = liveAnnotations[0];
         assert.ok(a.lineHash, 'annotation lineHash should be populated');
-        const found = findAnchor(afterDeleteDoc, {
-            lineHash: a.lineHash,
-            contextBefore: a.contextBefore ?? [],
-            contextAfter: a.contextAfter ?? [],
-        }, -1);
+        const found = findAnchor(
+            afterDeleteDoc,
+            {
+                lineHash: a.lineHash,
+                contextBefore: a.contextBefore ?? [],
+                contextAfter: a.contextAfter ?? [],
+            },
+            -1
+        );
         if (found === null) {
             buffer.defer(a);
             liveAnnotations = [];
@@ -789,12 +855,12 @@ suite('clipboard: cut+paste intra-file via 2 separate events (line 6 -> 16)', ()
 
     // Capture intermediate state BEFORE event 2 runs (Mocha runs all suite body
     // code before any test() callback, so we snapshot here to test event-1 state).
-    const afterEvent1LiveCount  = liveAnnotations.length;
+    const afterEvent1LiveCount = liveAnnotations.length;
     const afterEvent1BufferSize = buffer.entries.size;
 
     // EVENT 2: Ctrl+V -- paste block at end (lines 15-17 in 18-line doc)
     const afterPasteLines = [...pre, ...post, ...block];
-    const afterPasteDoc   = makeDoc(afterPasteLines);
+    const afterPasteDoc = makeDoc(afterPasteLines);
 
     const recovered = buffer.tryRecover(afterPasteDoc, 'src/f.ts');
     liveAnnotations = [...liveAnnotations, ...recovered];
@@ -821,10 +887,12 @@ suite('clipboard: cut+paste intra-file via 2 separate events (line 6 -> 16)', ()
 
 suite('clipboard: cut without paste -- entry expires, expiry returns the annotation', () => {
     const lines = ['l0', 'l1', 'ANNO;', 'l3', 'l4'];
-    const doc   = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 2);
     const annotation: MockAnnotation = {
-        id: 'b1', file: 'f.ts', line: 2,
+        id: 'b1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -854,25 +922,29 @@ suite('clipboard: copy+paste (no delete) -- annotation stays on original line', 
     // No delete event: buffer is empty. An insert arrives with the same block content.
     // tryRecover must return nothing (buffer is empty).
     const block = ['cp_a', 'cp_b', 'cp_c'];
-    const pre   = Array.from({ length: 5 }, (_, i) => `pre_${i}`);
-    const mid   = Array.from({ length: 7 }, (_, i) => `mid_${i}`);
+    const pre = Array.from({ length: 5 }, (_, i) => `pre_${i}`);
+    const mid = Array.from({ length: 7 }, (_, i) => `mid_${i}`);
 
     const originalLines = [...pre, ...block, ...mid];
-    const originalDoc   = makeDoc(originalLines);
-    const anchor        = captureAnchor(originalDoc, 6);
+    const originalDoc = makeDoc(originalLines);
+    const anchor = captureAnchor(originalDoc, 6);
 
     // Annotation at line 6 (cp_b), buffer is empty (copy, no cut)
-    const liveAnnotations: MockAnnotation[] = [{
-        id: 'c1', file: 'f.ts', line: 6,
-        lineHash: anchor.lineHash,
-        contextBefore: anchor.contextBefore,
-        contextAfter: anchor.contextAfter,
-    }];
+    const liveAnnotations: MockAnnotation[] = [
+        {
+            id: 'c1',
+            file: 'f.ts',
+            line: 6,
+            lineHash: anchor.lineHash,
+            contextBefore: anchor.contextBefore,
+            contextAfter: anchor.contextAfter,
+        },
+    ];
     const emptyBuffer = new ClipboardBuffer();
 
     // Paste: duplicate block appears at end of document
     const afterPasteLines = [...pre, ...block, ...mid, ...block];
-    const afterPasteDoc   = makeDoc(afterPasteLines);
+    const afterPasteDoc = makeDoc(afterPasteLines);
 
     const recovered = emptyBuffer.tryRecover(afterPasteDoc, 'f.ts');
 
@@ -891,32 +963,40 @@ suite('clipboard: copy+paste (no delete) -- annotation stays on original line', 
 
 suite('clipboard: cut in file A, paste in file B -- inter-file recovery', () => {
     const block = ['fn_a() {', '  return 1;', '}'];
-    const preA  = ['import A;', 'import B;', 'const X = 0;', 'const Y = 0;', 'const Z = 0;'];
+    const preA = ['import A;', 'import B;', 'const X = 0;', 'const Y = 0;', 'const Z = 0;'];
     const postA = Array.from({ length: 8 }, (_, i) => `export_${i};`);
 
     // File A: block at [5..7], annotation at line 6
-    const fileALines  = [...preA, ...block, ...postA];
-    const fileADoc    = makeDoc(fileALines);
-    const anchor      = captureAnchor(fileADoc, 6);
+    const fileALines = [...preA, ...block, ...postA];
+    const fileADoc = makeDoc(fileALines);
+    const anchor = captureAnchor(fileADoc, 6);
 
-    let liveAnnotations: MockAnnotation[] = [{
-        id: 'd1', file: 'a.ts', line: 6,
-        lineHash: anchor.lineHash,
-        contextBefore: anchor.contextBefore,
-        contextAfter: anchor.contextAfter,
-    }];
+    let liveAnnotations: MockAnnotation[] = [
+        {
+            id: 'd1',
+            file: 'a.ts',
+            line: 6,
+            lineHash: anchor.lineHash,
+            contextBefore: anchor.contextBefore,
+            contextAfter: anchor.contextAfter,
+        },
+    ];
     const buffer = new ClipboardBuffer();
 
     // EVENT 1: cut from file A
     const afterDeleteALines = [...preA, ...postA];
-    const afterDeleteADoc   = makeDoc(afterDeleteALines);
+    const afterDeleteADoc = makeDoc(afterDeleteALines);
     const a = liveAnnotations[0];
     assert.ok(a.lineHash, 'annotation lineHash should be populated');
-    const found = findAnchor(afterDeleteADoc, {
-        lineHash: a.lineHash,
-        contextBefore: a.contextBefore ?? [],
-        contextAfter: a.contextAfter ?? [],
-    }, -1);
+    const found = findAnchor(
+        afterDeleteADoc,
+        {
+            lineHash: a.lineHash,
+            contextBefore: a.contextBefore ?? [],
+            contextAfter: a.contextAfter ?? [],
+        },
+        -1
+    );
     if (found === null) {
         buffer.defer(a);
         liveAnnotations = [];
@@ -927,7 +1007,7 @@ suite('clipboard: cut in file A, paste in file B -- inter-file recovery', () => 
     const preambleB = ['// file B', 'const B1 = 1;', 'const B2 = 2;'];
     const postambleB = Array.from({ length: 5 }, (_, i) => `bpost_${i};`);
     const fileBLines = [...preambleB, ...block, ...postambleB];
-    const fileBDoc   = makeDoc(fileBLines);
+    const fileBDoc = makeDoc(fileBLines);
 
     const recovered = buffer.tryRecover(fileBDoc, 'b.ts');
     liveAnnotations = [...liveAnnotations, ...recovered];
@@ -957,25 +1037,25 @@ suite('bug1: findAnchor with empty-line context uses adaptive threshold', () => 
     // With old threshold=4, score=2 (only one non-empty line matches) -> null.
     // With adaptive threshold=2, score=2 >= 2 -> found.
     const lines = [
-        'pre_code;',      // 0 -- non-empty, will match
-        '',               // 1 -- empty line above annotation
-        'ANNOTATED;',     // 2 -- the annotation line
-        'post_code;',     // 3
-        'unrelated_A;',   // 4
+        'pre_code;', // 0 -- non-empty, will match
+        '', // 1 -- empty line above annotation
+        'ANNOTATED;', // 2 -- the annotation line
+        'post_code;', // 3
+        'unrelated_A;', // 4
     ];
-    const doc  = makeDoc(lines);
-    const anchor = captureAnchor(doc, 2, 2);  // contextBefore=['pre_code;',''], contextAfter=['post_code;','unrelated_A;']
+    const doc = makeDoc(lines);
+    const anchor = captureAnchor(doc, 2, 2); // contextBefore=['pre_code;',''], contextAfter=['post_code;','unrelated_A;']
 
     // Build a new doc where block was pasted at a different position.
     // Only 'pre_code;' is present before the annotation (not the original leading context).
     const newLines = [
-        'header_a;',      // 0 -- not in original context
-        'header_b;',      // 1 -- not in original context
-        'pre_code;',      // 2 -- matches contextBefore[0]
-        '',               // 3 -- matches contextBefore[1] (empty, skipped in scoring)
-        'ANNOTATED;',     // 4 -- hash match
-        'post_code;',     // 5 -- matches contextAfter[0]
-        'footer;',        // 6
+        'header_a;', // 0 -- not in original context
+        'header_b;', // 1 -- not in original context
+        'pre_code;', // 2 -- matches contextBefore[0]
+        '', // 3 -- matches contextBefore[1] (empty, skipped in scoring)
+        'ANNOTATED;', // 4 -- hash match
+        'post_code;', // 5 -- matches contextAfter[0]
+        'footer;', // 6
     ];
     const newDoc = makeDoc(newLines);
 
@@ -988,41 +1068,51 @@ suite('bug1: findAnchor with empty-line context uses adaptive threshold', () => 
 suite('bug1: cut+paste with leading empty line in block -- offset-based recovery', () => {
     // Block: lines 4-7 = ['', 'ANNO_LINE;', 'ctx_after_a;', 'ctx_after_b;']
     // Annotation at line 5 (ANNO_LINE;), offset 1 within block.
-    const pre  = Array.from({ length: 4 }, (_, i) => `pre_${i}`);  // lines 0-3
-    const block = ['', 'ANNO_LINE;', 'ctx_after_a;', 'ctx_after_b;'];            // lines 4-7
-    const post = Array.from({ length: 12 }, (_, i) => `post_${i}`);              // lines 8-19
+    const pre = Array.from({ length: 4 }, (_, i) => `pre_${i}`); // lines 0-3
+    const block = ['', 'ANNO_LINE;', 'ctx_after_a;', 'ctx_after_b;']; // lines 4-7
+    const post = Array.from({ length: 12 }, (_, i) => `post_${i}`); // lines 8-19
 
     const originalLines = [...pre, ...block, ...post];
-    const originalDoc   = makeDoc(originalLines);
-    const anchor        = captureAnchor(originalDoc, 5);  // ANNO_LINE; with '' in contextBefore
+    const originalDoc = makeDoc(originalLines);
+    const anchor = captureAnchor(originalDoc, 5); // ANNO_LINE; with '' in contextBefore
 
-    let liveAnnotations: MockAnnotation[] = [{
-        id: 'e1', file: 'f.ts', line: 5,
-        lineHash: anchor.lineHash,
-        contextBefore: anchor.contextBefore,
-        contextAfter: anchor.contextAfter,
-    }];
+    let liveAnnotations: MockAnnotation[] = [
+        {
+            id: 'e1',
+            file: 'f.ts',
+            line: 5,
+            lineHash: anchor.lineHash,
+            contextBefore: anchor.contextBefore,
+            contextAfter: anchor.contextAfter,
+        },
+    ];
 
     // EVENT 1: cut lines 4-7 (range [4..8], covering newline at end)
     const afterDeleteLines = [...pre, ...post];
-    const afterDeleteDoc   = makeDoc(afterDeleteLines);
+    const afterDeleteDoc = makeDoc(afterDeleteLines);
 
     const buffer = new ClipboardBuffer();
 
     // Deferral: annotation in deleted range, findAnchor may fail in after-delete doc
     const deleteChange: ContentChange = {
-        range: { start: { line: 4 }, end: { line: 8 } }, text: '',
+        range: { start: { line: 4 }, end: { line: 8 } },
+        text: '',
     };
-    const inRange = liveAnnotations[0].line >= deleteChange.range.start.line &&
-                    liveAnnotations[0].line <= deleteChange.range.end.line;
+    const inRange =
+        liveAnnotations[0].line >= deleteChange.range.start.line &&
+        liveAnnotations[0].line <= deleteChange.range.end.line;
     if (inRange) {
         const a = liveAnnotations[0];
         assert.ok(a.lineHash, 'annotation lineHash should be populated');
-        const found = findAnchor(afterDeleteDoc, {
-            lineHash: a.lineHash,
-            contextBefore: a.contextBefore ?? [],
-            contextAfter: a.contextAfter ?? [],
-        }, -1);
+        const found = findAnchor(
+            afterDeleteDoc,
+            {
+                lineHash: a.lineHash,
+                contextBefore: a.contextBefore ?? [],
+                contextAfter: a.contextAfter ?? [],
+            },
+            -1
+        );
         if (found === null) {
             // Store with offsetInBlock = annotation.line - deleteStart = 5 - 4 = 1
             buffer.entries.set(a.id, {
@@ -1038,18 +1128,17 @@ suite('bug1: cut+paste with leading empty line in block -- offset-based recovery
     const afterEvent1Buffer = buffer.entries.size;
 
     // EVENT 2: paste block at line 16 (into doc that is now afterDeleteLines + block appended)
-    const afterPasteLines = [...pre, ...post, ...block];  // block at lines [16..19]
-    const afterPasteDoc   = makeDoc(afterPasteLines);
+    const afterPasteLines = [...pre, ...post, ...block]; // block at lines [16..19]
+    const afterPasteDoc = makeDoc(afterPasteLines);
 
     // Simulate offset-based recovery (mirrors AnnotationManager clipboard recovery)
-    const insertedLines = block;  // change.text.split('\n') for the paste
-    const pasteStart    = 16;     // change.range.start.line
+    const insertedLines = block; // change.text.split('\n') for the paste
+    const pasteStart = 16; // change.range.start.line
 
     const recovered2: MockAnnotation[] = [];
     for (const [id, deferred] of buffer.entries) {
         const offset = deferred.offsetInBlock;
-        if (offset < insertedLines.length &&
-            hashLine(insertedLines[offset]) === deferred.annotation.lineHash) {
+        if (offset < insertedLines.length && hashLine(insertedLines[offset]) === deferred.annotation.lineHash) {
             const newLine = pasteStart + offset;
             const a2 = { ...deferred.annotation };
             applySetLine(a2, newLine, afterPasteDoc);
@@ -1088,19 +1177,25 @@ function findCopyPasteCandidates(
     insertedLines: string[],
     insertStart: number,
     annotations: MockAnnotation[],
-    filePath: string,           // paste-destination file
+    filePath: string, // paste-destination file
     recentDeletionIds: Set<string>,
     clipboardContent = ''
 ): Array<{ annotationId: string; newLine: number }> {
     // Guard 1 (clipboard): empty clipboard or mismatch with inserted text means not a paste.
     const normalizedClipboard = clipboardContent.replace(/\r\n/g, '\n').trim();
-    if (!normalizedClipboard) { return []; }
+    if (!normalizedClipboard) {
+        return [];
+    }
     const normalizedInserted = insertedLines.join('\n').replace(/\r\n/g, '\n').trim();
-    if (normalizedInserted !== normalizedClipboard) { return []; }
+    if (normalizedInserted !== normalizedClipboard) {
+        return [];
+    }
 
     // Guard 2 (multi-line): require >= 2 non-empty inserted lines.
-    const nonEmpty = insertedLines.filter(l => l.trim() !== '').length;
-    if (nonEmpty < 2) { return []; }
+    const nonEmpty = insertedLines.filter((l) => l.trim() !== '').length;
+    if (nonEmpty < 2) {
+        return [];
+    }
 
     const candidates: Array<{ annotationId: string; newLine: number }> = [];
     // Bug 1 fix: dedup by TARGET line position (not source annotation id).
@@ -1111,14 +1206,22 @@ function findCopyPasteCandidates(
     for (let k = 0; k < insertedLines.length; k++) {
         const insertedHash = hashLine(insertedLines[k]);
         const newLine = insertStart + k;
-        if (seenTargets.has(newLine)) { continue; }
+        if (seenTargets.has(newLine)) {
+            continue;
+        }
 
         for (const annotation of annotations) {
             // Bug 2 fix: no file filter -- search all annotations regardless of source file.
-            if (!annotation.lineHash || annotation.lineHash !== insertedHash) { continue; }
-            if (recentDeletionIds.has(annotation.id)) { continue; }
+            if (!annotation.lineHash || annotation.lineHash !== insertedHash) {
+                continue;
+            }
+            if (recentDeletionIds.has(annotation.id)) {
+                continue;
+            }
             // Self-paste guard: only meaningful when source and target share the same file.
-            if (annotation.file === filePath && Math.abs(newLine - annotation.line) < 2) { continue; }
+            if (annotation.file === filePath && Math.abs(newLine - annotation.line) < 2) {
+                continue;
+            }
 
             seenTargets.add(newLine);
             candidates.push({ annotationId: annotation.id, newLine });
@@ -1131,19 +1234,21 @@ function findCopyPasteCandidates(
 suite('bug2: copy+paste -- prompt Yes duplicates annotation at new location', () => {
     // Use a 3-line block (>= 2 non-empty lines required by guard 2).
     const lines = [
-        'preamble_a;',    // 0
-        'preamble_b;',    // 1
-        'ANNO_LINE;',     // 2 -- annotated
-        'post_a;',        // 3
-        'post_b;',        // 4
-        'filler_0;',      // 5
-        'filler_1;',      // 6
-        'filler_2;',      // 7
+        'preamble_a;', // 0
+        'preamble_b;', // 1
+        'ANNO_LINE;', // 2 -- annotated
+        'post_a;', // 3
+        'post_b;', // 4
+        'filler_0;', // 5
+        'filler_1;', // 6
+        'filler_2;', // 7
     ];
-    const doc    = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 2);
     const annotation: MockAnnotation = {
-        id: 'f1', file: 'f.ts', line: 2,
+        id: 'f1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -1152,13 +1257,11 @@ suite('bug2: copy+paste -- prompt Yes duplicates annotation at new location', ()
 
     // Ctrl+C copies 3 lines: 'ANNO_LINE;', 'post_a;', 'post_b;'
     // Clipboard contains the exact copied text.
-    const copiedBlock   = ['ANNO_LINE;', 'post_a;', 'post_b;'];
+    const copiedBlock = ['ANNO_LINE;', 'post_a;', 'post_b;'];
     const clipboardText = copiedBlock.join('\n');
-    const insertStart   = 5;
+    const insertStart = 5;
 
-    const candidates = findCopyPasteCandidates(
-        copiedBlock, insertStart, annotations, 'f.ts', new Set(), clipboardText
-    );
+    const candidates = findCopyPasteCandidates(copiedBlock, insertStart, annotations, 'f.ts', new Set(), clipboardText);
 
     test('candidate detected: one copy+paste candidate (multi-line block, clipboard matches)', () => {
         assert.strictEqual(candidates.length, 1);
@@ -1181,13 +1284,13 @@ suite('bug2: copy+paste -- prompt Yes duplicates annotation at new location', ()
     }
 
     test('Yes: original annotation stays at line 2', () => {
-        const original = allAnnotations.find(a => a.id === 'f1');
+        const original = allAnnotations.find((a) => a.id === 'f1');
         assert.ok(original, 'original annotation should exist');
         assert.strictEqual(original.line, 2);
     });
 
     test('Yes: new annotation created at correct line with correct hash', () => {
-        const copy = allAnnotations.find(a => a.id === 'f1-copy');
+        const copy = allAnnotations.find((a) => a.id === 'f1-copy');
         assert.ok(copy, 'copy annotation was created');
         assert.strictEqual(copy.line, 5);
         assert.strictEqual(copy.lineHash, hashLine('ANNO_LINE;'));
@@ -1196,10 +1299,12 @@ suite('bug2: copy+paste -- prompt Yes duplicates annotation at new location', ()
 
 suite('bug2: copy+paste -- auto-duplicate always fires, no user prompt', () => {
     const lines = ['A;', 'ANNO;', 'B;', 'C;', 'D;', 'E;', 'F;'];
-    const doc    = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 1);
     const annotation: MockAnnotation = {
-        id: 'g1', file: 'f.ts', line: 1,
+        id: 'g1',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -1207,11 +1312,9 @@ suite('bug2: copy+paste -- auto-duplicate always fires, no user prompt', () => {
     const annotations = [annotation];
 
     // Multi-line clipboard block containing the annotated line
-    const copiedBlock   = ['ANNO;', 'B;', 'C;'];
+    const copiedBlock = ['ANNO;', 'B;', 'C;'];
     const clipboardText = copiedBlock.join('\n');
-    const candidates = findCopyPasteCandidates(
-        copiedBlock, 4, annotations, 'f.ts', new Set(), clipboardText
-    );
+    const candidates = findCopyPasteCandidates(copiedBlock, 4, annotations, 'f.ts', new Set(), clipboardText);
 
     // Auto-duplicate: always create the copy without a user prompt.
     const newDoc = makeDoc([...lines.slice(0, 4), ...copiedBlock, ...lines.slice(4)]);
@@ -1229,14 +1332,14 @@ suite('bug2: copy+paste -- auto-duplicate always fires, no user prompt', () => {
     });
 
     test('auto-duplicate: new annotation created at pasted location without prompt', () => {
-        const copy = allAnnotations.find(a => a.id === 'g1-copy');
+        const copy = allAnnotations.find((a) => a.id === 'g1-copy');
         assert.ok(copy, 'duplicate annotation was auto-created');
         assert.strictEqual(copy.line, 4);
         assert.strictEqual(copy.lineHash, hashLine('ANNO;'));
     });
 
     test('auto-duplicate: original annotation preserved at line 1', () => {
-        const original = allAnnotations.find(a => a.id === 'g1');
+        const original = allAnnotations.find((a) => a.id === 'g1');
         assert.ok(original, 'original annotation should exist');
         assert.strictEqual(original.line, 1);
     });
@@ -1252,10 +1355,12 @@ suite('bug2: copy+paste -- auto-duplicate always fires, no user prompt', () => {
 
 suite('regression: Enter above annotation shifts line, no copy+paste prompt', () => {
     const lines = ['A;', 'B;', 'ANNO;', 'C;', 'D;'];
-    const doc    = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 2);
     const annotation: MockAnnotation = {
-        id: 'r1', file: 'f.ts', line: 2,
+        id: 'r1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -1264,12 +1369,10 @@ suite('regression: Enter above annotation shifts line, no copy+paste prompt', ()
 
     // Simulate Enter at line 0 (insert '\n' -- change.text = '\n')
     // insertedLines = ['', ''] -- two empty strings, 0 non-empty lines
-    const enterInsertedLines = ['', ''];     // change.text.split('\n') for '\n'
-    const enterClipboard     = '';          // clipboard unchanged by pressing Enter
+    const enterInsertedLines = ['', '']; // change.text.split('\n') for '\n'
+    const enterClipboard = ''; // clipboard unchanged by pressing Enter
 
-    const candidates = findCopyPasteCandidates(
-        enterInsertedLines, 0, annotations, 'f.ts', new Set(), enterClipboard
-    );
+    const candidates = findCopyPasteCandidates(enterInsertedLines, 0, annotations, 'f.ts', new Set(), enterClipboard);
 
     test('Enter: empty clipboard -> no copy+paste candidates', () => {
         assert.strictEqual(candidates.length, 0);
@@ -1278,7 +1381,7 @@ suite('regression: Enter above annotation shifts line, no copy+paste prompt', ()
     // Arithmetic shift: Enter at the end of line 0 inserts '\n' (single-point range).
     // range [0..0], text '\n' -> lineDelta = 2-1 = +1 -> annotation at 2 shifts to 3.
     const afterEnterLines = ['A;', '', 'B;', 'ANNO;', 'C;', 'D;'];
-    const afterEnterDoc   = makeDoc(afterEnterLines);
+    const afterEnterDoc = makeDoc(afterEnterLines);
     const shiftResult = runChangePipeline({
         annotations,
         file: 'f.ts',
@@ -1295,21 +1398,21 @@ suite('regression: Enter above annotation shifts line, no copy+paste prompt', ()
 
 suite('regression: typing a matching line never triggers prompt', () => {
     const lines = ['const x = 1;', 'ANNO;', 'const y = 2;'];
-    const doc    = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 1);
     const annotation: MockAnnotation = {
-        id: 'r2', file: 'f.ts', line: 1,
+        id: 'r2',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
     };
     // User types 'ANNO;' at line 0 -- single-line insert, clipboard unchanged (still 'const x')
-    const typedLines  = ['ANNO;'];
-    const clipboard   = 'const x = 1;'; // clipboard holds whatever was copied before
+    const typedLines = ['ANNO;'];
+    const clipboard = 'const x = 1;'; // clipboard holds whatever was copied before
 
-    const candidates = findCopyPasteCandidates(
-        typedLines, 0, [annotation], 'f.ts', new Set(), clipboard
-    );
+    const candidates = findCopyPasteCandidates(typedLines, 0, [annotation], 'f.ts', new Set(), clipboard);
 
     test('typing: clipboard mismatch -> no candidates (Guard 1)', () => {
         assert.strictEqual(candidates.length, 0, 'clipboard does not match typed text');
@@ -1319,20 +1422,20 @@ suite('regression: typing a matching line never triggers prompt', () => {
 suite('regression: auto-indent Enter never triggers prompt', () => {
     // Auto-indent: change.text = '\n  ' -> insertedLines = ['', '  '] -- 0 non-empty
     const lines = ['function foo() {', '  ANNO;', '}'];
-    const doc    = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 1);
     const annotation: MockAnnotation = {
-        id: 'r3', file: 'f.ts', line: 1,
+        id: 'r3',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
     };
 
-    const autoIndentLines = ['', '  '];  // split of '\n  '
+    const autoIndentLines = ['', '  ']; // split of '\n  '
     // Even if clipboard happens to contain '\n  ', nonEmpty < 2
-    const candidates = findCopyPasteCandidates(
-        autoIndentLines, 1, [annotation], 'f.ts', new Set(), '\n  '
-    );
+    const candidates = findCopyPasteCandidates(autoIndentLines, 1, [annotation], 'f.ts', new Set(), '\n  ');
 
     test('auto-indent Enter: < 2 non-empty lines -> no candidates (Guard 2)', () => {
         assert.strictEqual(candidates.length, 0);
@@ -1342,22 +1445,22 @@ suite('regression: auto-indent Enter never triggers prompt', () => {
 suite('regression: true copy+paste of multi-line block triggers prompt', () => {
     // Positive case: clipboard matches inserted text, >= 2 non-empty lines
     const lines = ['setup();', 'ANNO;', 'teardown();', 'filler_0;', 'filler_1;', 'filler_2;'];
-    const doc    = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 1);
     const annotation: MockAnnotation = {
-        id: 'r4', file: 'f.ts', line: 1,
+        id: 'r4',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
     };
 
     // User copied 3 lines into clipboard, now pasting at line 3
-    const copiedBlock   = ['ANNO;', 'teardown();', 'filler_0;'];
+    const copiedBlock = ['ANNO;', 'teardown();', 'filler_0;'];
     const clipboardText = copiedBlock.join('\n');
 
-    const candidates = findCopyPasteCandidates(
-        copiedBlock, 3, [annotation], 'f.ts', new Set(), clipboardText
-    );
+    const candidates = findCopyPasteCandidates(copiedBlock, 3, [annotation], 'f.ts', new Set(), clipboardText);
 
     test('real copy+paste: clipboard matches + 3 non-empty lines -> 1 candidate', () => {
         assert.strictEqual(candidates.length, 1);
@@ -1367,8 +1470,11 @@ suite('regression: true copy+paste of multi-line block triggers prompt', () => {
 
     test('cut+paste via recentDeletions does NOT trigger copy prompt', () => {
         const candidatesWithCut = findCopyPasteCandidates(
-            copiedBlock, 3, [annotation], 'f.ts',
-            new Set(['r4']),  // annotation is in recentDeletions (was cut)
+            copiedBlock,
+            3,
+            [annotation],
+            'f.ts',
+            new Set(['r4']), // annotation is in recentDeletions (was cut)
             clipboardText
         );
         assert.strictEqual(candidatesWithCut.length, 0, 'cut is handled by clipboard buffer, not copy prompt');
@@ -1384,7 +1490,9 @@ suite('deletedRecently buffer: tryRestore finds annotation at original position'
     const doc = makeDoc(sourceLines);
     const anchor = captureAnchor(doc, 2);
     const annotation: MockAnnotation = {
-        id: 'dr1', file: 'f.ts', line: 2,
+        id: 'dr1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -1412,7 +1520,9 @@ suite('deletedRecently buffer: entry ignored after 30s TTL', () => {
     const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 1);
     const annotation: MockAnnotation = {
-        id: 'dr2', file: 'f.ts', line: 1,
+        id: 'dr2',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -1443,7 +1553,9 @@ suite('deletedRecently buffer: restore after VS Code Undo reverts deletion', () 
     const originalDoc = makeDoc(sourceLines);
     const anchor = captureAnchor(originalDoc, 2);
     const annotation: MockAnnotation = {
-        id: 'dr3', file: 'f.ts', line: 2,
+        id: 'dr3',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -1475,34 +1587,38 @@ suite('bug1 fix: copy A->B then reuse block B->C produces exactly 1 annotation a
     // target position, regardless of how many sources match.
 
     const baseLines = [
-        'pre_0;',   // 0
-        'ANNO;',    // 1 -- original annotated line
-        'post_0;',  // 2
-        'filler;',  // 3
-        'filler;',  // 4  (unused)
+        'pre_0;', // 0
+        'ANNO;', // 1 -- original annotated line
+        'post_0;', // 2
+        'filler;', // 3
+        'filler;', // 4  (unused)
     ];
-    const docBase  = makeDoc(baseLines);
+    const docBase = makeDoc(baseLines);
     const anchorBase = captureAnchor(docBase, 1);
 
     // Simulate state after the A->B copy: two annotations share identical lineHash.
     const docAfterAB = makeDoc([
-        'pre_0;',   // 0
-        'ANNO;',    // 1 -- original
-        'post_0;',  // 2
-        'filler;',  // 3
-        'ANNO;',    // 4 -- copy from A->B paste
-        'post_0;',  // 5
-        'filler;',  // 6
+        'pre_0;', // 0
+        'ANNO;', // 1 -- original
+        'post_0;', // 2
+        'filler;', // 3
+        'ANNO;', // 4 -- copy from A->B paste
+        'post_0;', // 5
+        'filler;', // 6
     ]);
     const anchorAtLine4 = captureAnchor(docAfterAB, 4);
     const annoAtLine1: MockAnnotation = {
-        id: 'orig', file: 'f.ts', line: 1,
+        id: 'orig',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchorBase.lineHash,
         contextBefore: anchorBase.contextBefore,
         contextAfter: anchorBase.contextAfter,
     };
     const annoAtLine4: MockAnnotation = {
-        id: 'copy1', file: 'f.ts', line: 4,
+        id: 'copy1',
+        file: 'f.ts',
+        line: 4,
         lineHash: anchorAtLine4.lineHash,
         contextBefore: anchorAtLine4.contextBefore,
         contextAfter: anchorAtLine4.contextAfter,
@@ -1513,9 +1629,7 @@ suite('bug1 fix: copy A->B then reuse block B->C produces exactly 1 annotation a
     // Now paste ['ANNO;', 'post_0;', 'filler;'] at insertStart=8 (B->C paste).
     const block = ['ANNO;', 'post_0;', 'filler;'];
     const clipboard = block.join('\n');
-    const candidates = findCopyPasteCandidates(
-        block, 8, twoAnnotations, 'f.ts', new Set(), clipboard
-    );
+    const candidates = findCopyPasteCandidates(block, 8, twoAnnotations, 'f.ts', new Set(), clipboard);
 
     test('exactly 1 candidate for B->C paste despite 2 sources with matching hash', () => {
         assert.strictEqual(candidates.length, 1);
@@ -1546,7 +1660,7 @@ suite('bug1 fix: chain A->B->C->D creates exactly 1 new annotation per paste ste
         return Array.from({ length: n }, (_, i) => ({
             id: `a${i}`,
             file: 'f.ts',
-            line: i * 4,        // spaced apart so self-paste guard never fires
+            line: i * 4, // spaced apart so self-paste guard never fires
             lineHash: hashLine(content),
             contextBefore: [] as string[],
             contextAfter: [] as string[],
@@ -1563,9 +1677,15 @@ suite('bug1 fix: chain A->B->C->D creates exactly 1 new annotation per paste ste
     // Step 3: pool has 4 annotations -> paste -> still exactly 1 candidate
     const step3 = findCopyPasteCandidates(block, 100, makePool(4), 'f.ts', new Set(), clipboard);
 
-    test('step 1 (1 source): exactly 1 candidate', () => { assert.strictEqual(step1.length, 1); });
-    test('step 2 (2 sources): exactly 1 candidate', () => { assert.strictEqual(step2.length, 1); });
-    test('step 3 (4 sources): exactly 1 candidate', () => { assert.strictEqual(step3.length, 1); });
+    test('step 1 (1 source): exactly 1 candidate', () => {
+        assert.strictEqual(step1.length, 1);
+    });
+    test('step 2 (2 sources): exactly 1 candidate', () => {
+        assert.strictEqual(step2.length, 1);
+    });
+    test('step 3 (4 sources): exactly 1 candidate', () => {
+        assert.strictEqual(step3.length, 1);
+    });
     test('all three steps target the same newLine=100', () => {
         assert.strictEqual(step1[0].newLine, 100);
         assert.strictEqual(step2[0].newLine, 100);
@@ -1584,14 +1704,16 @@ suite('bug2 fix: copy from file A, paste into file B -- annotation duplicated in
     // The fix removes this filter: the new annotation gets file = b.ts.
 
     const linesA = [
-        'header_a;',   // 0
-        'SHARED;',     // 1 -- annotated in a.ts
-        'footer_a;',   // 2
+        'header_a;', // 0
+        'SHARED;', // 1 -- annotated in a.ts
+        'footer_a;', // 2
     ];
-    const docA   = makeDoc(linesA);
+    const docA = makeDoc(linesA);
     const anchorA = captureAnchor(docA, 1);
     const annoInA: MockAnnotation = {
-        id: 'a1', file: 'a.ts', line: 1,
+        id: 'a1',
+        file: 'a.ts',
+        line: 1,
         lineHash: anchorA.lineHash,
         contextBefore: anchorA.contextBefore,
         contextAfter: anchorA.contextAfter,
@@ -1599,14 +1721,12 @@ suite('bug2 fix: copy from file A, paste into file B -- annotation duplicated in
 
     // User copies ['SHARED;', 'footer_a;', 'extra;'] from a.ts and pastes into b.ts.
     const pastedBlock = ['SHARED;', 'footer_a;', 'extra;'];
-    const clipboard   = pastedBlock.join('\n');
-    const pasteStart  = 5;
-    const pasteFile   = 'b.ts';
+    const clipboard = pastedBlock.join('\n');
+    const pasteStart = 5;
+    const pasteFile = 'b.ts';
 
     // Pass all annotations (including a.ts ones) -- new behavior after Bug 2 fix.
-    const candidates = findCopyPasteCandidates(
-        pastedBlock, pasteStart, [annoInA], pasteFile, new Set(), clipboard
-    );
+    const candidates = findCopyPasteCandidates(pastedBlock, pasteStart, [annoInA], pasteFile, new Set(), clipboard);
 
     test('candidate found: cross-file source in a.ts detected for paste in b.ts', () => {
         assert.strictEqual(candidates.length, 1);
@@ -1638,12 +1758,14 @@ suite('bug2 fix: cut from file A, paste into file B -- annotation migrates to B'
     const sharedCtx3 = 'shared_ctx_after_2;';
 
     const linesA = [sharedCtx1, 'CUT_LINE;', sharedCtx2, sharedCtx3];
-    const docA   = makeDoc(linesA);
+    const docA = makeDoc(linesA);
     // anchor at line 1: contextBefore=['shared_ctx_before;'],
     //                   contextAfter=['shared_ctx_after_1;', 'shared_ctx_after_2;']
     const anchorA = captureAnchor(docA, 1, 3);
     const annoInA: MockAnnotation = {
-        id: 'cut1', file: 'a.ts', line: 1,
+        id: 'cut1',
+        file: 'a.ts',
+        line: 1,
         lineHash: anchorA.lineHash,
         contextBefore: anchorA.contextBefore,
         contextAfter: anchorA.contextAfter,
@@ -1656,12 +1778,12 @@ suite('bug2 fix: cut from file A, paste into file B -- annotation migrates to B'
     // docB contains the pasted block with matching surrounding context lines
     // so findAnchor can score >= 4.
     const linesB = [
-        'b_preamble;',  // 0
-        sharedCtx1,     // 1 -- matches contextBefore[0] (+2)
-        'CUT_LINE;',    // 2 -- matches lineHash
-        sharedCtx2,     // 3 -- matches contextAfter[0] (+2)
-        sharedCtx3,     // 4 -- matches contextAfter[1] (+2)
-        'b_footer;',    // 5
+        'b_preamble;', // 0
+        sharedCtx1, // 1 -- matches contextBefore[0] (+2)
+        'CUT_LINE;', // 2 -- matches lineHash
+        sharedCtx2, // 3 -- matches contextAfter[0] (+2)
+        sharedCtx3, // 4 -- matches contextAfter[1] (+2)
+        'b_footer;', // 5
     ];
     const docB = makeDoc(linesB);
 
@@ -1700,13 +1822,10 @@ interface PipelineV2Result {
     duplicatesCreated: number;
 }
 
-function sameLocationSameMessage(
-    pool: MockAnnotation[],
-    file: string,
-    line: number,
-    message: string
-): boolean {
-    return pool.some(a => a.file === file && a.line === line && (a as MockAnnotation & { message?: string }).message === message);
+function sameLocationSameMessage(pool: MockAnnotation[], file: string, line: number, message: string): boolean {
+    return pool.some(
+        (a) => a.file === file && a.line === line && (a as MockAnnotation & { message?: string }).message === message
+    );
 }
 
 /**
@@ -1730,28 +1849,34 @@ function runChangePipelineV2(opts: {
     const { annotations, file, oldLines, newDoc, contentChanges, isUndoRedo, clipboardText } = opts;
 
     const newLines: string[] = [];
-    for (let i = 0; i < newDoc.lineCount; i++) { newLines.push(newDoc.lineAt(i).text); }
+    for (let i = 0; i < newDoc.lineCount; i++) {
+        newLines.push(newDoc.lineAt(i).text);
+    }
 
     const moves: MovedBlock[] = detectMoves(oldLines, newLines);
-    const result: (MockAnnotation & { message?: string })[] = annotations.map(a => ({ ...a }));
+    const result: (MockAnnotation & { message?: string })[] = annotations.map((a) => ({ ...a }));
     const deferredIds: string[] = [];
     const removedIds: string[] = [];
 
     for (let i = result.length - 1; i >= 0; i--) {
         const annotation = result[i];
-        if (annotation.file !== file) { continue; }
+        if (annotation.file !== file) {
+            continue;
+        }
         const oldLine = annotation.line;
         if (
             isUndoRedo &&
             annotation.origin?.kind === 'copy-paste' &&
-            contentChanges.some(ch => ch.text === '' && oldLine >= ch.range.start.line && oldLine <= ch.range.end.line)
+            contentChanges.some(
+                (ch) => ch.text === '' && oldLine >= ch.range.start.line && oldLine <= ch.range.end.line
+            )
         ) {
             removedIds.push(annotation.id);
             result.splice(i, 1);
             continue;
         }
 
-        const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
+        const move = moves.find((m) => oldLine >= m.oldStart && oldLine <= m.oldEnd);
         if (move) {
             applySetLine(annotation, move.newStart + (oldLine - move.oldStart), newDoc);
             continue;
@@ -1763,8 +1888,11 @@ function runChangePipelineV2(opts: {
             const startLine = change.range.start.line;
             const endLine = change.range.end.line;
             const lineDelta = change.text.split('\n').length - (endLine - startLine + 1);
-            if (currentLine > endLine) { currentLine += lineDelta; }
-            else if (currentLine >= startLine && currentLine <= endLine && lineDelta < 0) { markedDeleted = true; }
+            if (currentLine > endLine) {
+                currentLine += lineDelta;
+            } else if (currentLine >= startLine && currentLine <= endLine && lineDelta < 0) {
+                markedDeleted = true;
+            }
         }
 
         const predictedInRange = currentLine >= 0 && currentLine < newDoc.lineCount;
@@ -1776,11 +1904,7 @@ function runChangePipelineV2(opts: {
         if (!markedDeleted && annotation.lineHash !== undefined && !predictedHashMatches) {
             for (const ch of contentChanges) {
                 const erased = ch.text.replace(/\r\n/g, '').length === 0;
-                if (
-                    erased &&
-                    oldLine >= ch.range.start.line &&
-                    oldLine <= ch.range.end.line
-                ) {
+                if (erased && oldLine >= ch.range.start.line && oldLine <= ch.range.end.line) {
                     lineDisplaced = true;
                     break;
                 }
@@ -1817,19 +1941,31 @@ function runChangePipelineV2(opts: {
                 const startLine = change.range.start.line;
                 const endLine = change.range.end.line;
                 const lineDelta = insertedLines.length - (endLine - startLine + 1);
-                if (lineDelta <= 0) { continue; }
+                if (lineDelta <= 0) {
+                    continue;
+                }
                 const normalizedInserted = change.text.replace(/\r\n/g, '\n').trim();
-                if (normalizedInserted !== normalizedClipboard) { continue; }
-                const nonEmpty = insertedLines.filter(l => l.trim() !== '').length;
-                if (nonEmpty < 2) { continue; }
+                if (normalizedInserted !== normalizedClipboard) {
+                    continue;
+                }
+                const nonEmpty = insertedLines.filter((l) => l.trim() !== '').length;
+                if (nonEmpty < 2) {
+                    continue;
+                }
 
                 for (let k = 0; k < insertedLines.length; k++) {
                     const insertedHash = hashLine(insertedLines[k]);
                     const newLine = startLine + k;
-                    if (seenTargets.has(newLine)) { continue; }
+                    if (seenTargets.has(newLine)) {
+                        continue;
+                    }
                     for (const annotation of result) {
-                        if (!annotation.lineHash || annotation.lineHash !== insertedHash) { continue; }
-                        if (annotation.file === file && Math.abs(newLine - annotation.line) < 2) { continue; }
+                        if (!annotation.lineHash || annotation.lineHash !== insertedHash) {
+                            continue;
+                        }
+                        if (annotation.file === file && Math.abs(newLine - annotation.line) < 2) {
+                            continue;
+                        }
                         seenTargets.add(newLine);
                         if (sameLocationSameMessage(result, file, newLine, annotation.message ?? '')) {
                             break;
@@ -1867,23 +2003,29 @@ suite('regression fix: cut without lineDelta change is detected via hash mismatc
     // The new lineDisplaced check (hashLine(newDoc.lineAt(2).text) !== annotation.lineHash)
     // catches the displacement and defers the annotation to the clipboard buffer.
     const oldLines = ['alpha;', 'beta;', 'ANNOTATED;', 'delta;', 'epsilon;'];
-    const newLines = ['alpha;', 'beta;', '',           'delta;', 'epsilon;'];
+    const newLines = ['alpha;', 'beta;', '', 'delta;', 'epsilon;'];
     const oldDoc = makeDoc(oldLines);
     const newDoc = makeDoc(newLines);
     const anchor = captureAnchor(oldDoc, 2);
     const annotation = {
-        id: 'displaced1', file: 'f.ts', line: 2,
+        id: 'displaced1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
         message: 'check this',
     };
     const change: ContentChange = {
-        range: { start: { line: 2 }, end: { line: 2 } }, text: '',
+        range: { start: { line: 2 }, end: { line: 2 } },
+        text: '',
     };
     const out = runChangePipelineV2({
-        annotations: [annotation], file: 'f.ts',
-        oldLines, newDoc, contentChanges: [change],
+        annotations: [annotation],
+        file: 'f.ts',
+        oldLines,
+        newDoc,
+        contentChanges: [change],
     });
 
     test('annotation deferred even though arithmetic lineDelta == 0', () => {
@@ -1903,20 +2045,26 @@ suite('regression fix: typing on the annotated line does NOT defer the annotatio
     const newDoc = makeDoc(newLines);
     const anchor = captureAnchor(oldDoc, 2);
     const annotation = {
-        id: 'edit1', file: 'f.ts', line: 2,
+        id: 'edit1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
         message: 'do not defer me',
     };
     const change: ContentChange = {
-        range: { start: { line: 2 }, end: { line: 2 } }, text: 'X',
+        range: { start: { line: 2 }, end: { line: 2 } },
+        text: 'X',
     };
 
     test('routine typing leaves the annotation in place (not deferred)', () => {
         const out = runChangePipelineV2({
-            annotations: [annotation], file: 'f.ts',
-            oldLines, newDoc, contentChanges: [change],
+            annotations: [annotation],
+            file: 'f.ts',
+            oldLines,
+            newDoc,
+            contentChanges: [change],
         });
         assert.strictEqual(out.deferredIds.length, 0, 'no deferral on plain edit');
         assert.strictEqual(out.annotations.length, 1, 'annotation still in live map');
@@ -1930,15 +2078,17 @@ suite('regression fix: redo of cut+paste does NOT create a duplicate', () => {
     // still holds the cut text, so without the isUndoRedo skip the duplication step
     // would re-fire and produce a ghost annotation.
     const blockBefore = ['header;', 'pre_a;'];
-    const blockAfter  = ['post_a;', 'footer;'];
-    const cutBlock    = ['ANNO_LINE;', 'ctx1;', 'ctx2;'];
+    const blockAfter = ['post_a;', 'footer;'];
+    const cutBlock = ['ANNO_LINE;', 'ctx1;', 'ctx2;'];
 
     // Doc before redo: cut block already inserted at line 2 (3 lines back).
     const beforeRedoLines = [...blockBefore, ...cutBlock, ...blockAfter];
-    const beforeRedoDoc   = makeDoc(beforeRedoLines);
-    const anchorAtLine2   = captureAnchor(beforeRedoDoc, 2);
-    const liveAnnotation  = {
-        id: 'redo1', file: 'f.ts', line: 2,
+    const beforeRedoDoc = makeDoc(beforeRedoLines);
+    const anchorAtLine2 = captureAnchor(beforeRedoDoc, 2);
+    const liveAnnotation = {
+        id: 'redo1',
+        file: 'f.ts',
+        line: 2,
         lineHash: anchorAtLine2.lineHash,
         contextBefore: anchorAtLine2.contextBefore,
         contextAfter: anchorAtLine2.contextAfter,
@@ -1954,8 +2104,10 @@ suite('regression fix: redo of cut+paste does NOT create a duplicate', () => {
 
     test('with isUndoRedo=true: zero duplicates created (annotation stays at line 2)', () => {
         const out = runChangePipelineV2({
-            annotations: [liveAnnotation], file: 'f.ts',
-            oldLines: beforeRedoLines, newDoc: beforeRedoDoc,
+            annotations: [liveAnnotation],
+            file: 'f.ts',
+            oldLines: beforeRedoLines,
+            newDoc: beforeRedoDoc,
             contentChanges: [redoChange],
             isUndoRedo: true,
             clipboardText,
@@ -1972,15 +2124,13 @@ suite('regression fix: redo of cut+paste does NOT create a duplicate', () => {
         };
         const newLinesLong = [...beforeRedoLines, ...Array.from({ length: 10 }, (_, i) => `tail_${i}`)];
         // After the paste, cutBlock appears at line 10..12 inside an enlarged doc.
-        const afterPasteLines = [
-            ...newLinesLong.slice(0, 10),
-            ...cutBlock,
-            ...newLinesLong.slice(10),
-        ];
+        const afterPasteLines = [...newLinesLong.slice(0, 10), ...cutBlock, ...newLinesLong.slice(10)];
         const afterPasteDoc = makeDoc(afterPasteLines);
         const out = runChangePipelineV2({
-            annotations: [liveAnnotation], file: 'f.ts',
-            oldLines: newLinesLong, newDoc: afterPasteDoc,
+            annotations: [liveAnnotation],
+            file: 'f.ts',
+            oldLines: newLinesLong,
+            newDoc: afterPasteDoc,
             contentChanges: [farPasteChange],
             isUndoRedo: false,
             clipboardText,
@@ -1995,10 +2145,12 @@ suite('regression fix: anti-duplicate guard blocks creation when same (file, lin
     // We pre-populate a phantom annotation at the expected paste-target line and
     // assert that the duplicator skips creation.
     const lines = ['a;', 'ANNO;', 'b;', 'c;', 'd;', 'e;', 'f;'];
-    const doc   = makeDoc(lines);
+    const doc = makeDoc(lines);
     const anchor = captureAnchor(doc, 1);
     const original = {
-        id: 'orig', file: 'f.ts', line: 1,
+        id: 'orig',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -2006,7 +2158,9 @@ suite('regression fix: anti-duplicate guard blocks creation when same (file, lin
     };
     // Phantom already at the paste-target position with the same message.
     const phantom = {
-        id: 'phantom', file: 'f.ts', line: 4,
+        id: 'phantom',
+        file: 'f.ts',
+        line: 4,
         lineHash: anchor.lineHash,
         contextBefore: [],
         contextAfter: [],
@@ -2022,8 +2176,10 @@ suite('regression fix: anti-duplicate guard blocks creation when same (file, lin
     const afterPasteDoc = makeDoc(afterPasteLines);
 
     const out = runChangePipelineV2({
-        annotations: [original, phantom], file: 'f.ts',
-        oldLines: lines, newDoc: afterPasteDoc,
+        annotations: [original, phantom],
+        file: 'f.ts',
+        oldLines: lines,
+        newDoc: afterPasteDoc,
         contentChanges: [pasteChange],
         isUndoRedo: false,
         clipboardText,
@@ -2035,8 +2191,8 @@ suite('regression fix: anti-duplicate guard blocks creation when same (file, lin
 
     test('live map remains exactly the two pre-existing annotations', () => {
         assert.strictEqual(out.annotations.length, 2);
-        assert.ok(out.annotations.some(a => a.id === 'orig'));
-        assert.ok(out.annotations.some(a => a.id === 'phantom'));
+        assert.ok(out.annotations.some((a) => a.id === 'orig'));
+        assert.ok(out.annotations.some((a) => a.id === 'phantom'));
     });
 });
 
@@ -2056,9 +2212,12 @@ suite('regression fix: undo of a paste removes the duplicate path entirely', () 
     // Undo removes lines 4..6 and brings the doc back to baseLines.  We pretend
     // the duplicate was at line 4 with content 'ANNO;' (which is now gone in newDoc).
     const dup = {
-        id: 'dup1', file: 'f.ts', line: 4,
+        id: 'dup1',
+        file: 'f.ts',
+        line: 4,
         lineHash: hashLine('ANNO;'),
-        contextBefore: [], contextAfter: [],
+        contextBefore: [],
+        contextAfter: [],
         message: 'undo me',
         origin: {
             kind: 'copy-paste' as const,
@@ -2069,25 +2228,25 @@ suite('regression fix: undo of a paste removes the duplicate path entirely', () 
         },
     };
     const original = {
-        id: 'orig1', file: 'f.ts', line: 1,
+        id: 'orig1',
+        file: 'f.ts',
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
         message: 'undo me',
     };
     // The "old lines" before undo had the paste in place: baseLines + the paste block.
-    const oldWithPasteLines = [
-        ...baseLines.slice(0, 4),
-        'ANNO;', 'y;', 'z;',
-        ...baseLines.slice(4),
-    ];
+    const oldWithPasteLines = [...baseLines.slice(0, 4), 'ANNO;', 'y;', 'z;', ...baseLines.slice(4)];
     const undoChange: ContentChange = {
         range: { start: { line: 4 }, end: { line: 7 } },
         text: '',
     };
     const out = runChangePipelineV2({
-        annotations: [original, dup], file: 'f.ts',
-        oldLines: oldWithPasteLines, newDoc,
+        annotations: [original, dup],
+        file: 'f.ts',
+        oldLines: oldWithPasteLines,
+        newDoc,
         contentChanges: [undoChange],
         isUndoRedo: true,
         clipboardText: 'ANNO;\ny;\nz;',
@@ -2098,7 +2257,7 @@ suite('regression fix: undo of a paste removes the duplicate path entirely', () 
     });
 
     test('original annotation is preserved at line 1', () => {
-        const o = out.annotations.find(a => a.id === 'orig1');
+        const o = out.annotations.find((a) => a.id === 'orig1');
         assert.ok(o, 'original is still present');
         assert.strictEqual(o.line, 1);
     });
@@ -2136,7 +2295,9 @@ function makeState(): PipelineState {
 
 function snapshotDoc(state: PipelineState, fileKey: string, doc: TextDocumentLike): void {
     const lines: string[] = [];
-    for (let i = 0; i < doc.lineCount; i++) { lines.push(doc.lineAt(i).text); }
+    for (let i = 0; i < doc.lineCount; i++) {
+        lines.push(doc.lineAt(i).text);
+    }
     state.snapshots.set(fileKey, lines);
 }
 
@@ -2171,39 +2332,46 @@ function splitClipboardLines(text: string): string[] {
 function clipboardTextMatches(changeText: string, clipboardText: string): boolean {
     const normalizedChange = normalizeClipboardText(changeText);
     const normalizedClipboard = normalizeClipboardText(clipboardText);
-    return normalizedChange === normalizedClipboard ||
-        stripSingleTrailingLineBreak(normalizedChange) ===
-        stripSingleTrailingLineBreak(normalizedClipboard);
+    return (
+        normalizedChange === normalizedClipboard ||
+        stripSingleTrailingLineBreak(normalizedChange) === stripSingleTrailingLineBreak(normalizedClipboard)
+    );
 }
 
 function normalizedTextEquals(a: string | undefined, b: string | undefined): boolean {
-    if (a === undefined || b === undefined) { return false; }
-    return stripSingleTrailingLineBreak(normalizeClipboardText(a)) ===
-        stripSingleTrailingLineBreak(normalizeClipboardText(b));
+    if (a === undefined || b === undefined) {
+        return false;
+    }
+    return (
+        stripSingleTrailingLineBreak(normalizeClipboardText(a)) ===
+        stripSingleTrailingLineBreak(normalizeClipboardText(b))
+    );
 }
 
 function isLowSignalText(text: string | undefined): boolean {
-    if (text === undefined) { return true; }
+    if (text === undefined) {
+        return true;
+    }
     return stripSingleTrailingLineBreak(normalizeClipboardText(text)).trim().length === 0;
 }
 
-function deferredPasteMatchesChange(
-    deferred: DeferredEntry,
-    changeText: string,
-    clipboardText: string
-): boolean {
-    if (changeText.length === 0) { return false; }
+function deferredPasteMatchesChange(deferred: DeferredEntry, changeText: string, clipboardText: string): boolean {
+    if (changeText.length === 0) {
+        return false;
+    }
     if (deferred.cutText !== undefined) {
-        return normalizedTextEquals(deferred.cutText, clipboardText) &&
+        return (
+            normalizedTextEquals(deferred.cutText, clipboardText) &&
             clipboardTextMatches(changeText, clipboardText) &&
-            clipboardTextMatches(changeText, deferred.cutText);
+            clipboardTextMatches(changeText, deferred.cutText)
+        );
     }
     if (
         !isLowSignalText(clipboardText) &&
         clipboardTextMatches(changeText, clipboardText) &&
         deferred.cutLineHashes?.length
     ) {
-        const insertedHashes = splitClipboardLines(changeText).map(line => hashLine(line));
+        const insertedHashes = splitClipboardLines(changeText).map((line) => hashLine(line));
         if (
             insertedHashes.length === deferred.cutLineHashes.length &&
             insertedHashes.every((hash, index) => hash === deferred.cutLineHashes?.[index])
@@ -2214,11 +2382,7 @@ function deferredPasteMatchesChange(
     return false;
 }
 
-function getCutLinesForChange(
-    oldLines: readonly string[],
-    change: ContentChange,
-    offsetInBlock: number
-): string[] {
+function getCutLinesForChange(oldLines: readonly string[], change: ContentChange, offsetInBlock: number): string[] {
     const start = Math.max(0, change.range.start.line);
     const end = Math.max(start + 1, change.range.end.line);
     const exclusive = oldLines.slice(start, end);
@@ -2235,9 +2399,8 @@ function getCutLinesForChange(
 }
 
 function contentChangesEraseLine(contentChanges: readonly ContentChange[], line: number): boolean {
-    return contentChanges.some(change =>
-        change.text.replace(/\r\n/g, '').length === 0 &&
-        contentChangeTouchesLine(change, line)
+    return contentChanges.some(
+        (change) => change.text.replace(/\r\n/g, '').length === 0 && contentChangeTouchesLine(change, line)
     );
 }
 
@@ -2246,11 +2409,7 @@ function contentChangeTouchesLine(change: ContentChange, line: number): boolean 
 }
 
 function getTouchedEndLine(change: ContentChange): number {
-    if (
-        change.text === '' &&
-        change.range.end.character === 0 &&
-        change.range.end.line > change.range.start.line
-    ) {
+    if (change.text === '' && change.range.end.character === 0 && change.range.end.line > change.range.start.line) {
         return change.range.end.line - 1;
     }
     return change.range.end.line;
@@ -2265,8 +2424,10 @@ function getAnnotationTrackingHash(annotation: MockAnnotation): string | undefin
 }
 
 function contentChangesEraseAnnotation(contentChanges: readonly ContentChange[], annotation: MockAnnotation): boolean {
-    return contentChangesEraseLine(contentChanges, annotation.line) ||
-        contentChangesEraseLine(contentChanges, getAnnotationTrackingLine(annotation));
+    return (
+        contentChangesEraseLine(contentChanges, annotation.line) ||
+        contentChangesEraseLine(contentChanges, getAnnotationTrackingLine(annotation))
+    );
 }
 
 function resolveTrackingAnchor(
@@ -2318,17 +2479,18 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 sawMatchingPaste = true;
                 const insertedLines = change.text.split('\n');
                 const startLine = change.range.start.line;
-                if (change.text.length === 0) { continue; }
+                if (change.text.length === 0) {
+                    continue;
+                }
                 const trackingOffset = def.trackingOffsetInBlock ?? def.offsetInBlock;
-                if (trackingOffset < 0 || trackingOffset >= insertedLines.length) { continue; }
+                if (trackingOffset < 0 || trackingOffset >= insertedLines.length) {
+                    continue;
+                }
                 const expected = hashLine(insertedLines[trackingOffset]);
                 if (expected === (def.trackingLineHash ?? def.annotation.lineHash)) {
                     const trackingLine = startLine + trackingOffset;
                     found = {
-                        renderLine: clampDocLine(
-                            trackingLine + (def.renderOffsetFromTracking ?? 0),
-                            ev.doc
-                        ),
+                        renderLine: clampDocLine(trackingLine + (def.renderOffsetFromTracking ?? 0), ev.doc),
                         trackingLine: clampDocLine(trackingLine, ev.doc),
                     };
                     break;
@@ -2358,11 +2520,13 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 restored.push(id);
             }
         }
-        recovered.forEach(id => state.recentDeletions.delete(id));
+        recovered.forEach((id) => state.recentDeletions.delete(id));
     }
 
     const newLines: string[] = [];
-    for (let i = 0; i < ev.doc.lineCount; i++) { newLines.push(ev.doc.lineAt(i).text); }
+    for (let i = 0; i < ev.doc.lineCount; i++) {
+        newLines.push(ev.doc.lineAt(i).text);
+    }
     const oldLines = state.snapshots.get(ev.fileKey) ?? [];
     const moves: MovedBlock[] = oldLines.length ? detectMoves(oldLines, newLines) : [];
 
@@ -2370,9 +2534,15 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
     const idsSnapshot = Array.from(state.annotations.keys());
     for (const id of idsSnapshot) {
         const annotation = state.annotations.get(id);
-        if (!annotation) { continue; }
-        if (annotation.file !== ev.file) { continue; }
-        if (restoredThisEvent.has(id)) { continue; }
+        if (!annotation) {
+            continue;
+        }
+        if (annotation.file !== ev.file) {
+            continue;
+        }
+        if (restoredThisEvent.has(id)) {
+            continue;
+        }
 
         const oldLine = annotation.line;
         const trackingLine = getAnnotationTrackingLine(annotation);
@@ -2381,12 +2551,10 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         const undoRemovesCopiedAnnotation =
             ev.isUndoRedo &&
             annotation.origin?.kind === 'copy-paste' &&
-            ev.contentChanges.some(ch =>
-                ch.text === '' &&
-                (
-                    contentChangeTouchesLine(ch, oldLine) ||
-                    contentChangeTouchesLine(ch, trackingLine)
-                )
+            ev.contentChanges.some(
+                (ch) =>
+                    ch.text === '' &&
+                    (contentChangeTouchesLine(ch, oldLine) || contentChangeTouchesLine(ch, trackingLine))
             );
         if (undoRemovesCopiedAnnotation) {
             state.annotations.delete(id);
@@ -2407,7 +2575,7 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
             }
         }
 
-        const move = moves.find(m => oldLine >= m.oldStart && oldLine <= m.oldEnd);
+        const move = moves.find((m) => oldLine >= m.oldStart && oldLine <= m.oldEnd);
         if (move) {
             applySetLine(annotation, move.newStart + (oldLine - move.oldStart), ev.doc);
             continue;
@@ -2426,11 +2594,20 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 currentLine += lineDelta;
             } else if (currentLine >= startLine && currentLine <= touchedEndLine && lineDelta < 0) {
                 markedDeleted = true;
-                if (change.text === '') { pureCutTouchedLine = true; }
+                if (change.text === '') {
+                    pureCutTouchedLine = true;
+                }
             }
-            if (trackingLine !== oldLine && trackingLine >= startLine && trackingLine <= touchedEndLine && lineDelta < 0) {
+            if (
+                trackingLine !== oldLine &&
+                trackingLine >= startLine &&
+                trackingLine <= touchedEndLine &&
+                lineDelta < 0
+            ) {
                 markedDeleted = true;
-                if (change.text === '') { pureCutTouchedLine = true; }
+                if (change.text === '') {
+                    pureCutTouchedLine = true;
+                }
             }
         }
 
@@ -2444,10 +2621,7 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         if (!markedDeleted && annotation.lineHash !== undefined && !predictedHashMatches) {
             for (const ch of ev.contentChanges) {
                 const erased = ch.text.replace(/\r\n/g, '').length === 0;
-                if (
-                    erased &&
-                    (contentChangeTouchesLine(ch, oldLine) || contentChangeTouchesLine(ch, trackingLine))
-                ) {
+                if (erased && (contentChangeTouchesLine(ch, oldLine) || contentChangeTouchesLine(ch, trackingLine))) {
                     lineDisplaced = true;
                     break;
                 }
@@ -2455,10 +2629,10 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
         }
 
         const arithmeticOutOfRange =
-            !markedDeleted &&
-            !lineDisplaced &&
-            (currentLine < 0 || currentLine >= newLineCount);
-        if (arithmeticOutOfRange) { markedDeleted = true; }
+            !markedDeleted && !lineDisplaced && (currentLine < 0 || currentLine >= newLineCount);
+        if (arithmeticOutOfRange) {
+            markedDeleted = true;
+        }
 
         if (markedDeleted || lineDisplaced) {
             if (!erasureTouchesAnnotation && annotation.trackingAnchor) {
@@ -2513,11 +2687,13 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 renderOffsetFromTracking,
                 trackingLineHash: getAnnotationTrackingHash(annotation),
                 cutText: cutLinesForAnnotation?.join('\n'),
-                cutLineHashes: cutLinesForAnnotation?.map(line => hashLine(line)),
+                cutLineHashes: cutLinesForAnnotation?.map((line) => hashLine(line)),
             });
             deferred.push(id);
         } else if (currentLine !== oldLine) {
-            if (currentLine < 0 || currentLine >= newLineCount) { continue; }
+            if (currentLine < 0 || currentLine >= newLineCount) {
+                continue;
+            }
             applySetLine(annotation, currentLine, ev.doc);
         }
     }
@@ -2535,32 +2711,49 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
                 const startLine = change.range.start.line;
                 const endLine = change.range.end.line;
                 const lineDelta = insertedLines.length - (endLine - startLine + 1);
-                if (lineDelta <= 0) { continue; }
+                if (lineDelta <= 0) {
+                    continue;
+                }
                 const normalizedInserted = change.text.replace(/\r\n/g, '\n').trim();
-                if (normalizedInserted !== normalizedClipboard) { continue; }
+                if (normalizedInserted !== normalizedClipboard) {
+                    continue;
+                }
                 for (let k = 0; k < insertedLines.length; k++) {
                     const insertedHash = hashLine(insertedLines[k]);
                     const newLine = startLine + k;
-                    if (seenTargets.has(newLine)) { continue; }
+                    if (seenTargets.has(newLine)) {
+                        continue;
+                    }
                     for (const annotation of state.annotations.values()) {
                         const sourceLine = getAnnotationTrackingLine(annotation);
                         const renderOffsetFromSource = annotation.line - sourceLine;
                         const sourceHash = getAnnotationTrackingHash(annotation);
-                        if (!sourceHash || sourceHash !== insertedHash) { continue; }
-                        if (state.recentDeletions.has(annotation.id)) { continue; }
-                        if (restoredThisEvent.has(annotation.id)) { continue; }
+                        if (!sourceHash || sourceHash !== insertedHash) {
+                            continue;
+                        }
+                        if (state.recentDeletions.has(annotation.id)) {
+                            continue;
+                        }
+                        if (restoredThisEvent.has(annotation.id)) {
+                            continue;
+                        }
                         const renderLine = clampDocLine(newLine + renderOffsetFromSource, ev.doc);
-                        if (annotation.file === ev.file && Math.abs(renderLine - annotation.line) < 2) { continue; }
+                        if (annotation.file === ev.file && Math.abs(renderLine - annotation.line) < 2) {
+                            continue;
+                        }
                         seenTargets.add(newLine);
                         // shadow guard: cut buffer holding same message
                         let shadowed = false;
                         for (const def of state.recentDeletions.values()) {
                             const bufMsg = (def.annotation as MockAnnotation & { message?: string }).message;
                             if (bufMsg === annotation.message) {
-                                shadowed = true; break;
+                                shadowed = true;
+                                break;
                             }
                         }
-                        if (shadowed) { break; }
+                        if (shadowed) {
+                            break;
+                        }
                         const dup: MockAnnotation & { message?: string } = {
                             id: `${annotation.id}-dup-${newLine}`,
                             file: ev.file,
@@ -2588,9 +2781,15 @@ function runFullPipeline(state: PipelineState, ev: FullPipelineEvent): FullPipel
 }
 
 function liveCount(state: PipelineState, file?: string): number {
-    if (!file) { return state.annotations.size; }
+    if (!file) {
+        return state.annotations.size;
+    }
     let n = 0;
-    for (const a of state.annotations.values()) { if (a.file === file) { n++; } }
+    for (const a of state.annotations.values()) {
+        if (a.file === file) {
+            n++;
+        }
+    }
     return n;
 }
 
@@ -2603,15 +2802,15 @@ suite('F5 regression: cut single line then paste elsewhere -- count stays at 1, 
     const baseLines = [
         'function early() {', // 0
         '    return result;', // 1  <-- DUPLICATE content, would have caught findAnchor
-        '}',                  // 2
-        '',                   // 3
-        'function target() {',// 4
+        '}', // 2
+        '', // 3
+        'function target() {', // 4
         '    return result;', // 5  <-- annotated line
-        '}',                  // 6
-        '',                   // 7
-        'function tail() {',  // 8
-        '    return tail;',   // 9
-        '}',                  // 10
+        '}', // 6
+        '', // 7
+        'function tail() {', // 8
+        '    return tail;', // 9
+        '}', // 10
     ];
     const baseDoc = makeDoc(baseLines);
     const anchorAt5 = captureAnchor(baseDoc, 5);
@@ -2619,7 +2818,9 @@ suite('F5 regression: cut single line then paste elsewhere -- count stays at 1, 
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('a1', {
-        id: 'a1', file, line: 5,
+        id: 'a1',
+        file,
+        line: 5,
         lineHash: anchorAt5.lineHash,
         contextBefore: anchorAt5.contextBefore,
         contextAfter: anchorAt5.contextAfter,
@@ -2630,7 +2831,9 @@ suite('F5 regression: cut single line then paste elsewhere -- count stays at 1, 
     const afterCutLines = [...baseLines.slice(0, 5), ...baseLines.slice(6)];
     const afterCutDoc = makeDoc(afterCutLines);
     const cutOut = runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 5 }, end: { line: 6 } }, text: '' }],
     });
 
@@ -2641,14 +2844,12 @@ suite('F5 regression: cut single line then paste elsewhere -- count stays at 1, 
     const deferredAfterCut = cutOut.deferred.length;
 
     // EVENT 2: Ctrl+V at line 8 (paste 'return result;\n' into the doc).
-    const afterPasteLines = [
-        ...afterCutLines.slice(0, 8),
-        '    return result;',
-        ...afterCutLines.slice(8),
-    ];
+    const afterPasteLines = [...afterCutLines.slice(0, 8), '    return result;', ...afterCutLines.slice(8)];
     const afterPasteDoc = makeDoc(afterPasteLines);
     const pasteOut = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 8 }, end: { line: 8 } }, text: '    return result;\n' }],
         clipboardText: '    return result;',
     });
@@ -2685,19 +2886,19 @@ suite('F5 regression: cut multi-line block then paste -- count stays at 1, lands
     const file = 'app.ts';
     const fileKey = 'file://app.ts';
     const baseLines = [
-        'header_a;',                         // 0
-        'header_b;',                         // 1
-        'header_c;',                         // 2
-        '    function foo() {',              // 3
-        '        const block_a = 1;',        // 4
-        '        const block_b = 2;',        // 5  <-- annotated (offsetInBlock=1)
-        '        const block_c = 3;',        // 6
-        '    }',                             // 7
-        'footer_a;',                         // 8
-        'footer_b;',                         // 9
-        'footer_c;',                         // 10
-        'footer_d;',                         // 11
-        'footer_e;',                         // 12
+        'header_a;', // 0
+        'header_b;', // 1
+        'header_c;', // 2
+        '    function foo() {', // 3
+        '        const block_a = 1;', // 4
+        '        const block_b = 2;', // 5  <-- annotated (offsetInBlock=1)
+        '        const block_c = 3;', // 6
+        '    }', // 7
+        'footer_a;', // 8
+        'footer_b;', // 9
+        'footer_c;', // 10
+        'footer_d;', // 11
+        'footer_e;', // 12
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 5);
@@ -2705,7 +2906,9 @@ suite('F5 regression: cut multi-line block then paste -- count stays at 1, lands
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('m1', {
-        id: 'm1', file, line: 5,
+        id: 'm1',
+        file,
+        line: 5,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -2716,7 +2919,9 @@ suite('F5 regression: cut multi-line block then paste -- count stays at 1, lands
     const afterCutLines = [...baseLines.slice(0, 4), ...baseLines.slice(7)];
     const afterCutDoc = makeDoc(afterCutLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 4 }, end: { line: 7 } }, text: '' }],
     });
 
@@ -2729,7 +2934,9 @@ suite('F5 regression: cut multi-line block then paste -- count stays at 1, lands
     const afterPasteLines = [...afterCutLines.slice(0, 9), ...block.split('\n').slice(0, 3), ...afterCutLines.slice(9)];
     const afterPasteDoc = makeDoc(afterPasteLines);
     const pasteOut = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 9 }, end: { line: 9 } }, text: block }],
         clipboardText: block,
     });
@@ -2763,24 +2970,24 @@ suite('F5 regression: cut multi-line block then edit before paste -- annotation 
     const file = 'src/sample.ts';
     const fileKey = 'file://sample.ts';
     const baseLines = [
-        'const start = 1;',                  // 0
-        'function setup() {',                // 1
-        '    return start;',                 // 2
-        '}',                                 // 3
-        '',                                  // 4
-        'async function run() {',            // 5
-        '    try {',                         // 6
-        '        await work();',             // 7
-        '    } catch (error) {',             // 8
-        '        report(error);',            // 9
-        '    }',                             // 10
-        '}',                                 // 11
-        '',                                  // 12
-        'function target() {',               // 13
-        '',                                  // 14 <-- annotation above console.error
-        '    console.error(error);',         // 15
-        '}',                                 // 16
-        'export { run, target };',           // 17
+        'const start = 1;', // 0
+        'function setup() {', // 1
+        '    return start;', // 2
+        '}', // 3
+        '', // 4
+        'async function run() {', // 5
+        '    try {', // 6
+        '        await work();', // 7
+        '    } catch (error) {', // 8
+        '        report(error);', // 9
+        '    }', // 10
+        '}', // 11
+        '', // 12
+        'function target() {', // 13
+        '', // 14 <-- annotation above console.error
+        '    console.error(error);', // 15
+        '}', // 16
+        'export { run, target };', // 17
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 14, { walkForward: 0, walkBackward: 0 });
@@ -2790,7 +2997,9 @@ suite('F5 regression: cut multi-line block then edit before paste -- annotation 
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('anno1', {
-        id: 'anno1', file, line: 14,
+        id: 'anno1',
+        file,
+        line: 14,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -2802,7 +3011,9 @@ suite('F5 regression: cut multi-line block then edit before paste -- annotation 
     const afterCutLines = [...baseLines.slice(0, 14), ...baseLines.slice(16)];
     const afterCutDoc = makeDoc(afterCutLines);
     const cutOut = runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 14 }, end: { line: 16 } }, text: '' }],
         clipboardText: `${cutBlockText}\n`,
     });
@@ -2814,7 +3025,9 @@ suite('F5 regression: cut multi-line block then edit before paste -- annotation 
     const afterLocalEditLines = [...afterCutLines.slice(0, 10), '', ...afterCutLines.slice(10)];
     const afterLocalEditDoc = makeDoc(afterLocalEditLines);
     const editOut = runFullPipeline(state, {
-        fileKey, file, doc: afterLocalEditDoc,
+        fileKey,
+        file,
+        doc: afterLocalEditDoc,
         contentChanges: [{ range: { start: { line: 10 }, end: { line: 10 } }, text: '\n' }],
         clipboardText: `${cutBlockText}\n`,
     });
@@ -2823,14 +3036,12 @@ suite('F5 regression: cut multi-line block then edit before paste -- annotation 
 
     // EVENT 3: actual paste of the cut block at line 10 restores the annotation
     // block-relative to the pasted content.
-    const afterPasteLines = [
-        ...afterLocalEditLines.slice(0, 10),
-        ...cutBlockLines,
-        ...afterLocalEditLines.slice(10),
-    ];
+    const afterPasteLines = [...afterLocalEditLines.slice(0, 10), ...cutBlockLines, ...afterLocalEditLines.slice(10)];
     const afterPasteDoc = makeDoc(afterPasteLines);
     const pasteOut = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 10 }, end: { line: 10 } }, text: `${cutBlockText}\n` }],
         clipboardText: `${cutBlockText}\n`,
     });
@@ -2860,11 +3071,11 @@ suite('F5 regression: cut blank line then type space -- annotation stays suspend
     const file = 'src/blank.ts';
     const fileKey = 'file://src/blank.ts';
     const baseLines = [
-        'const a = 1;',      // 0
-        'const b = 2;',      // 1
-        '',                  // 2 <-- annotated blank line
-        'const c = 3;',      // 3
-        'const d = 4;',      // 4
+        'const a = 1;', // 0
+        'const b = 2;', // 1
+        '', // 2 <-- annotated blank line
+        'const c = 3;', // 3
+        'const d = 4;', // 4
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 2, { walkForward: 0, walkBackward: 0 });
@@ -2872,7 +3083,9 @@ suite('F5 regression: cut blank line then type space -- annotation stays suspend
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('blank1', {
-        id: 'blank1', file, line: 2,
+        id: 'blank1',
+        file,
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -2882,7 +3095,9 @@ suite('F5 regression: cut blank line then type space -- annotation stays suspend
     const afterCutLines = [...baseLines.slice(0, 2), ...baseLines.slice(3)];
     const afterCutDoc = makeDoc(afterCutLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 2 }, end: { line: 3 } }, text: '' }],
         clipboardText: '\n',
     });
@@ -2891,7 +3106,9 @@ suite('F5 regression: cut blank line then type space -- annotation stays suspend
     afterSpaceLines[0] = `${afterSpaceLines[0]} `;
     const afterSpaceDoc = makeDoc(afterSpaceLines);
     const editOut = runFullPipeline(state, {
-        fileKey, file, doc: afterSpaceDoc,
+        fileKey,
+        file,
+        doc: afterSpaceDoc,
         contentChanges: [{ range: { start: { line: 0 }, end: { line: 0 } }, text: ' ' }],
         clipboardText: '\n',
     });
@@ -2901,7 +3118,9 @@ suite('F5 regression: cut blank line then type space -- annotation stays suspend
     const afterPasteLines = [...afterSpaceLines.slice(0, 1), '', ...afterSpaceLines.slice(1)];
     const afterPasteDoc = makeDoc(afterPasteLines);
     const pasteOut = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 1 }, end: { line: 1 } }, text: '\n' }],
         clipboardText: '\n',
     });
@@ -2925,12 +3144,12 @@ suite('F5 regression: cut without paste -- count = 0 immediately, never line 1 p
     const file = 'snippet.ts';
     const fileKey = 'file://snippet.ts';
     const baseLines = [
-        '}',           // 0  -- common idiom: triggers findAnchor false positive in legacy code
-        'middle_a;',   // 1
-        'middle_b;',   // 2
-        '}',           // 3  -- annotated (was a closing brace cut)
-        'tail_a;',     // 4
-        'tail_b;',     // 5
+        '}', // 0  -- common idiom: triggers findAnchor false positive in legacy code
+        'middle_a;', // 1
+        'middle_b;', // 2
+        '}', // 3  -- annotated (was a closing brace cut)
+        'tail_a;', // 4
+        'tail_b;', // 5
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 3);
@@ -2938,7 +3157,9 @@ suite('F5 regression: cut without paste -- count = 0 immediately, never line 1 p
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('p1', {
-        id: 'p1', file, line: 3,
+        id: 'p1',
+        file,
+        line: 3,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -2950,7 +3171,9 @@ suite('F5 regression: cut without paste -- count = 0 immediately, never line 1 p
     const afterCutLines = [...baseLines.slice(0, 3), ...baseLines.slice(4)];
     const afterCutDoc = makeDoc(afterCutLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 3 }, end: { line: 4 } }, text: '' }],
     });
 
@@ -2976,21 +3199,23 @@ suite('F5 regression: copy + paste -- count goes 1 -> 2 with original untouched'
     const file = 'lib.ts';
     const fileKey = 'file://lib.ts';
     const baseLines = [
-        'a;',         // 0
-        'b;',         // 1
-        'KEY_LINE;',  // 2  <-- annotated
-        'c;',         // 3
-        'd;',         // 4
-        'e;',         // 5
-        'f;',         // 6
-        'g;',         // 7
+        'a;', // 0
+        'b;', // 1
+        'KEY_LINE;', // 2  <-- annotated
+        'c;', // 3
+        'd;', // 4
+        'e;', // 5
+        'f;', // 6
+        'g;', // 7
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 2);
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('orig', {
-        id: 'orig', file, line: 2,
+        id: 'orig',
+        file,
+        line: 2,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -3002,7 +3227,9 @@ suite('F5 regression: copy + paste -- count goes 1 -> 2 with original untouched'
     const afterPasteLines = [...baseLines.slice(0, 6), ...block.split('\n').slice(0, 3), ...baseLines.slice(6)];
     const afterPasteDoc = makeDoc(afterPasteLines);
     const out = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 6 }, end: { line: 6 } }, text: block }],
         clipboardText: block.trim(),
     });
@@ -3022,7 +3249,7 @@ suite('F5 regression: copy + paste -- count goes 1 -> 2 with original untouched'
     });
 
     test('duplicate lands at the first line of the pasted block', () => {
-        const dup = Array.from(state.annotations.values()).find(a => a.id !== 'orig');
+        const dup = Array.from(state.annotations.values()).find((a) => a.id !== 'orig');
         assert.ok(dup, 'duplicate annotation should exist');
         assert.strictEqual(dup.line, 6);
     });
@@ -3032,11 +3259,11 @@ suite('F5 regression: blank-line annotation follows copy/cut of tracked code onl
     const file = 'blankTracked.ts';
     const fileKey = 'file://blankTracked.ts';
     const baseLines = [
-        'header();',       // 0
-        '',                // 1 <-- annotation render line
-        'tracked();',      // 2 <-- tracked code line
-        'after();',        // 3
-        'tail();',         // 4
+        'header();', // 0
+        '', // 1 <-- annotation render line
+        'tracked();', // 2 <-- tracked code line
+        'after();', // 3
+        'tail();', // 4
     ];
     const baseDoc = makeDoc(baseLines);
     const exact = captureAnchor(baseDoc, 1, { walkForward: 0, walkBackward: 0 });
@@ -3053,7 +3280,9 @@ suite('F5 regression: blank-line annotation follows copy/cut of tracked code onl
     function addBlankAnnotation(state: PipelineState, id: string): void {
         snapshotDoc(state, fileKey, baseDoc);
         state.annotations.set(id, {
-            id, file, line: 1,
+            id,
+            file,
+            line: 1,
             lineHash: exact.lineHash,
             contextBefore: exact.contextBefore,
             contextAfter: exact.contextAfter,
@@ -3064,7 +3293,9 @@ suite('F5 regression: blank-line annotation follows copy/cut of tracked code onl
 
     function cutTrackedLine(state: PipelineState): FullPipelineOutcome {
         return runFullPipeline(state, {
-            fileKey, file, doc: afterCutDoc,
+            fileKey,
+            file,
+            doc: afterCutDoc,
             contentChanges: [{ range: { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } }, text: '' }],
             clipboardText: copiedText,
         });
@@ -3074,11 +3305,13 @@ suite('F5 regression: blank-line annotation follows copy/cut of tracked code onl
         const copyState = makeState();
         addBlankAnnotation(copyState, 'blank-copy');
         const copyOut = runFullPipeline(copyState, {
-            fileKey, file, doc: afterCopyPasteDoc,
+            fileKey,
+            file,
+            doc: afterCopyPasteDoc,
             contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: copiedText }],
             clipboardText: copiedText,
         });
-        const copiedAnnotation = Array.from(copyState.annotations.values()).find(a => a.id !== 'blank-copy');
+        const copiedAnnotation = Array.from(copyState.annotations.values()).find((a) => a.id !== 'blank-copy');
         assert.strictEqual(copyOut.duplicatesCreated, 1);
         assert.ok(copiedAnnotation, 'copy should create annotation');
         assert.strictEqual(copiedAnnotation?.line, 3);
@@ -3098,7 +3331,9 @@ suite('F5 regression: blank-line annotation follows copy/cut of tracked code onl
         addBlankAnnotation(cutState, 'blank-cut');
         cutTrackedLine(cutState);
         const pasteOut = runFullPipeline(cutState, {
-            fileKey, file, doc: afterPasteDoc,
+            fileKey,
+            file,
+            doc: afterPasteDoc,
             contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: copiedText }],
             clipboardText: copiedText,
         });
@@ -3114,10 +3349,10 @@ suite('F5 regression: undo after copy+paste removes the copied annotation', () =
     const file = 'copyUndo.ts';
     const fileKey = 'file://copyUndo.ts';
     const baseLines = [
-        'pre();',          // 0
-        'console.error();',// 1 <-- annotated
-        'after();',        // 2
-        'tail();',         // 3
+        'pre();', // 0
+        'console.error();', // 1 <-- annotated
+        'after();', // 2
+        'tail();', // 3
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 1);
@@ -3125,7 +3360,9 @@ suite('F5 regression: undo after copy+paste removes the copied annotation', () =
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('anno1', {
-        id: 'anno1', file, line: 1,
+        id: 'anno1',
+        file,
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -3136,15 +3373,19 @@ suite('F5 regression: undo after copy+paste removes the copied annotation', () =
     const afterPasteLines = [...baseLines, 'console.error();', 'after();'];
     const afterPasteDoc = makeDoc(afterPasteLines);
     const pasteOut = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: block }],
         clipboardText: block,
     });
-    const duplicate = Array.from(state.annotations.values()).find(a => a.id !== 'anno1');
+    const duplicate = Array.from(state.annotations.values()).find((a) => a.id !== 'anno1');
 
     const undoDoc = makeDoc(baseLines);
     const undoOut = runFullPipeline(state, {
-        fileKey, file, doc: undoDoc,
+        fileKey,
+        file,
+        doc: undoDoc,
         contentChanges: [{ range: { start: { line: 4 }, end: { line: 6 } }, text: '' }],
         isUndoRedo: true,
         clipboardText: block,
@@ -3174,10 +3415,10 @@ suite('F5 regression: copied annotation can be cut and pasted again', () => {
     const file = 'copyCut.ts';
     const fileKey = 'file://copyCut.ts';
     const baseLines = [
-        'start();',       // 0
-        'tracked();',     // 1 <-- original annotation
-        'next();',        // 2
-        'end();',         // 3
+        'start();', // 0
+        'tracked();', // 1 <-- original annotation
+        'next();', // 2
+        'end();', // 3
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 1);
@@ -3185,7 +3426,9 @@ suite('F5 regression: copied annotation can be cut and pasted again', () => {
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('orig', {
-        id: 'orig', file, line: 1,
+        id: 'orig',
+        file,
+        line: 1,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -3196,11 +3439,13 @@ suite('F5 regression: copied annotation can be cut and pasted again', () => {
     const afterCopyPasteLines = [...baseLines, 'tracked();', 'next();'];
     const afterCopyPasteDoc = makeDoc(afterCopyPasteLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterCopyPasteDoc,
+        fileKey,
+        file,
+        doc: afterCopyPasteDoc,
         contentChanges: [{ range: { start: { line: 4 }, end: { line: 4 } }, text: block }],
         clipboardText: block,
     });
-    const duplicate = Array.from(state.annotations.values()).find(a => a.id !== 'orig');
+    const duplicate = Array.from(state.annotations.values()).find((a) => a.id !== 'orig');
     assert.ok(duplicate, 'copy-paste should create duplicate before the cut scenario');
     duplicate.trackingAnchor = {
         lineHash: hashLine('tracked();'),
@@ -3213,17 +3458,26 @@ suite('F5 regression: copied annotation can be cut and pasted again', () => {
     const afterCutCopiedLines = [...afterCopyPasteLines.slice(0, 4)];
     const afterCutCopiedDoc = makeDoc(afterCutCopiedLines);
     const cutOut = runFullPipeline(state, {
-        fileKey, file, doc: afterCutCopiedDoc,
+        fileKey,
+        file,
+        doc: afterCutCopiedDoc,
         contentChanges: [{ range: { start: { line: 4 }, end: { line: 6 } }, text: '' }],
         clipboardText: block,
     });
     const liveAfterCut = liveCount(state, file);
     const bufferAfterCut = state.recentDeletions.size;
 
-    const afterPasteCopiedLines = [...afterCutCopiedLines.slice(0, 2), 'tracked();', 'next();', ...afterCutCopiedLines.slice(2)];
+    const afterPasteCopiedLines = [
+        ...afterCutCopiedLines.slice(0, 2),
+        'tracked();',
+        'next();',
+        ...afterCutCopiedLines.slice(2),
+    ];
     const afterPasteCopiedDoc = makeDoc(afterPasteCopiedLines);
     const pasteOut = runFullPipeline(state, {
-        fileKey, file, doc: afterPasteCopiedDoc,
+        fileKey,
+        file,
+        doc: afterPasteCopiedDoc,
         contentChanges: [{ range: { start: { line: 2 }, end: { line: 2 } }, text: block }],
         clipboardText: block,
     });
@@ -3248,16 +3502,25 @@ suite('F5 regression: cut + paste + redo -- count never exceeds 1', () => {
     const file = 'ops.ts';
     const fileKey = 'file://ops.ts';
     const baseLines = [
-        'pre_0;', 'pre_1;', 'pre_2;',
-        'CUT_LINE;', 'CUT_TAIL_A;', 'CUT_TAIL_B;',
-        'post_0;', 'post_1;', 'post_2;', 'post_3;',
+        'pre_0;',
+        'pre_1;',
+        'pre_2;',
+        'CUT_LINE;',
+        'CUT_TAIL_A;',
+        'CUT_TAIL_B;',
+        'post_0;',
+        'post_1;',
+        'post_2;',
+        'post_3;',
     ];
     const baseDoc = makeDoc(baseLines);
     const anchor = captureAnchor(baseDoc, 3);
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('s1', {
-        id: 's1', file, line: 3,
+        id: 's1',
+        file,
+        line: 3,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -3268,7 +3531,9 @@ suite('F5 regression: cut + paste + redo -- count never exceeds 1', () => {
     const afterCutLines = [...baseLines.slice(0, 3), ...baseLines.slice(6)];
     const afterCutDoc = makeDoc(afterCutLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 3 }, end: { line: 6 } }, text: '' }],
     });
 
@@ -3277,14 +3542,18 @@ suite('F5 regression: cut + paste + redo -- count never exceeds 1', () => {
     const afterPasteLines = [...afterCutLines.slice(0, 6), ...block.split('\n').slice(0, 3), ...afterCutLines.slice(6)];
     const afterPasteDoc = makeDoc(afterPasteLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 6 }, end: { line: 6 } }, text: block }],
         clipboardText: block.trim(),
     });
 
     // T2: simulate redo of the paste (replay).
     runFullPipeline(state, {
-        fileKey, file, doc: afterPasteDoc,
+        fileKey,
+        file,
+        doc: afterPasteDoc,
         contentChanges: [{ range: { start: { line: 6 }, end: { line: 6 } }, text: block }],
         clipboardText: block.trim(),
         isUndoRedo: true,
@@ -3309,7 +3578,9 @@ suite('F5 regression: arithmetic out-of-range cut clamps without writing line < 
     const state = makeState();
     snapshotDoc(state, fileKey, baseDoc);
     state.annotations.set('z1', {
-        id: 'z1', file, line: 3,
+        id: 'z1',
+        file,
+        line: 3,
         lineHash: anchor.lineHash,
         contextBefore: anchor.contextBefore,
         contextAfter: anchor.contextAfter,
@@ -3323,7 +3594,9 @@ suite('F5 regression: arithmetic out-of-range cut clamps without writing line < 
     const afterCutLines: string[] = [];
     const afterCutDoc = makeDoc(afterCutLines);
     runFullPipeline(state, {
-        fileKey, file, doc: afterCutDoc,
+        fileKey,
+        file,
+        doc: afterCutDoc,
         contentChanges: [{ range: { start: { line: 0 }, end: { line: 4 } }, text: '' }],
     });
 

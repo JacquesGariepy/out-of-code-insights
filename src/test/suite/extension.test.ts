@@ -94,11 +94,7 @@ suite('Extension activation', () => {
             'stack.forward',
         ];
 
-        const missing = allExpected.filter(cmd => !commands.includes(cmd));
-        assert.strictEqual(
-            missing.length,
-            0,
-            `The following commands are not registered: ${missing.join(', ')}`
-        );
+        const missing = allExpected.filter((cmd) => !commands.includes(cmd));
+        assert.strictEqual(missing.length, 0, `The following commands are not registered: ${missing.join(', ')}`);
     });
 });

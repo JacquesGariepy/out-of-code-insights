@@ -16,6 +16,7 @@ import {
     captureAnchor,
     findAnchor,
     detectMoves,
+    reanchor,
     TextDocumentLike,
     AnchorData,
 } from '../../../anchoring/anchor';
@@ -92,7 +93,7 @@ function applyDeletionDecision(
     response: 'Yes' | 'No' | undefined
 ): AnnotationSlice[] {
     if (response === 'Yes') {
-        return kept.filter(a => !markedForDeletion.includes(a.id));
+        return kept.filter((a) => !markedForDeletion.includes(a.id));
     }
     return kept;
 }
@@ -101,10 +102,7 @@ function applyDeletionDecision(
  * Simulate silent migration: for an annotation without lineHash, capture
  * the anchor from the current document state and populate the fields.
  */
-function migrateAnnotation(
-    annotation: AnnotationSlice,
-    doc: TextDocumentLike
-): AnnotationSlice {
+function migrateAnnotation(annotation: AnnotationSlice, doc: TextDocumentLike): AnnotationSlice {
     if (annotation.lineHash !== undefined) {
         return annotation;
     }
@@ -118,9 +116,7 @@ function migrateAnnotation(
 
 suite('annotation tracking: insert above', () => {
     test('annotation at line 10 shifts to line 13 after inserting 3 lines at line 2', () => {
-        const annotations: AnnotationSlice[] = [
-            { id: 'a1', file: 'src/foo.ts', line: 10 },
-        ];
+        const annotations: AnnotationSlice[] = [{ id: 'a1', file: 'src/foo.ts', line: 10 }];
         const { kept } = applyDocumentChange(annotations, 'src/foo.ts', {
             startLine: 2,
             endLine: 2,
@@ -133,9 +129,7 @@ suite('annotation tracking: insert above', () => {
 
 suite('annotation tracking: insert below', () => {
     test('annotation at line 5 is unaffected by an insertion at line 7', () => {
-        const annotations: AnnotationSlice[] = [
-            { id: 'a1', file: 'src/foo.ts', line: 5 },
-        ];
+        const annotations: AnnotationSlice[] = [{ id: 'a1', file: 'src/foo.ts', line: 5 }];
         const { kept } = applyDocumentChange(annotations, 'src/foo.ts', {
             startLine: 7,
             endLine: 7,
@@ -149,15 +143,13 @@ suite('annotation tracking: insert below', () => {
 suite('annotation tracking: delete anchored line -- silent removal', () => {
     // New UX: no modal dialog. Annotation is silently removed from the live map and
     // moved to the clipboard buffer (recentDeletions 5s) then to deletedRecently (30s Undo).
-    const annotations: AnnotationSlice[] = [
-        { id: 'a1', file: 'src/foo.ts', line: 5 },
-    ];
+    const annotations: AnnotationSlice[] = [{ id: 'a1', file: 'src/foo.ts', line: 5 }];
     // Delete lines 4-6 (lineDelta < 0 => annotation is marked for silent removal)
-    const { kept, markedForDeletion } = applyDocumentChange(
-        annotations,
-        'src/foo.ts',
-        { startLine: 4, endLine: 6, newText: '' }
-    );
+    const { kept, markedForDeletion } = applyDocumentChange(annotations, 'src/foo.ts', {
+        startLine: 4,
+        endLine: 6,
+        newText: '',
+    });
 
     test('annotation is silently removed from live map when its line is deleted', () => {
         // Silent path: remove immediately (no dialog, no warningResponse needed).
@@ -171,7 +163,7 @@ suite('annotation tracking: delete anchored line -- silent removal', () => {
 
     test('annotation retained in kept[] with lineHash for undo restoration', () => {
         // kept[] holds the annotation even while markedForDeletion so Undo can restore it
-        const buffered = kept.find(a => a.id === 'a1');
+        const buffered = kept.find((a) => a.id === 'a1');
         assert.ok(buffered, 'annotation is available in kept for Undo');
     });
 });
@@ -179,8 +171,8 @@ suite('annotation tracking: delete anchored line -- silent removal', () => {
 suite('annotation tracking: cut+paste intra-file', () => {
     test('detectMoves finds the block and annotation follows to new position', () => {
         const block = ['function foo() {', '  return 42;', '}'];
-        const pre   = Array.from({ length: 5 }, (_, i) => `line_${i}`);
-        const post  = Array.from({ length: 8 }, (_, i) => `post_${i}`);
+        const pre = Array.from({ length: 5 }, (_, i) => `line_${i}`);
+        const post = Array.from({ length: 8 }, (_, i) => `post_${i}`);
 
         // Block was at oldStart=5 (lines 5-7), moved to newStart=13 (lines 13-15)
         const oldLines = [...pre, ...block, ...post];
@@ -255,11 +247,7 @@ suite('annotation tracking: blank-line annotation follows nearby moved code', ()
         ];
     }
 
-    function resolveRenderLineAfterMove(
-        moveStart: number,
-        moveCount: number,
-        insertAt: number
-    ): number {
+    function resolveRenderLineAfterMove(moveStart: number, moveCount: number, insertAt: number): number {
         const beforeLines = makeSampleLines();
         const beforeDoc = makeDoc(beforeLines);
         const renderLine = 20;
@@ -275,13 +263,11 @@ suite('annotation tracking: blank-line annotation follows nearby moved code', ()
         afterLines.splice(insertAt, 0, ...moved);
         const moves = detectMoves(beforeLines, afterLines);
         const trackingMove = moves.find(
-            move => trackingTargetLine >= move.oldStart && trackingTargetLine <= move.oldEnd
+            (move) => trackingTargetLine >= move.oldStart && trackingTargetLine <= move.oldEnd
         );
         assert.ok(trackingMove, 'the tracking target should be detected inside the moved block');
         const movedRenderLine =
-            trackingMove.newStart +
-            (trackingTargetLine - trackingMove.oldStart) +
-            (renderLine - trackingTargetLine);
+            trackingMove.newStart + (trackingTargetLine - trackingMove.oldStart) + (renderLine - trackingTargetLine);
         const afterDoc = makeDoc(afterLines);
 
         const foundTarget = findAnchor(
@@ -327,9 +313,7 @@ suite('annotation tracking: drag-and-drop via two sequential ContentChange event
         // Simulate drag: user moves line 3 to line 0.
         // Step 1: delete line 3.
         // Step 2: insert it back at line 0.
-        let annotations: AnnotationSlice[] = [
-            { id: 'a1', file: 'src/foo.ts', line: 3 },
-        ];
+        let annotations: AnnotationSlice[] = [{ id: 'a1', file: 'src/foo.ts', line: 3 }];
 
         // Step 1: delete line 3 (the dragged line). lineDelta = -1.
         // Annotation is in the deleted range, so it is marked for deletion.
@@ -345,9 +329,7 @@ suite('annotation tracking: drag-and-drop via two sequential ContentChange event
         // In a real AnnotationManager, the new anchor is placed by the UI, not
         // by handleDocumentChange.  Here we verify that existing annotations
         // below the insertion point shift down by 1 as expected.
-        const bystander: AnnotationSlice[] = [
-            { id: 'b1', file: 'src/foo.ts', line: 2 },
-        ];
+        const bystander: AnnotationSlice[] = [{ id: 'b1', file: 'src/foo.ts', line: 2 }];
         const step2 = applyDocumentChange(bystander, 'src/foo.ts', {
             startLine: 0,
             endLine: 0,
@@ -362,9 +344,7 @@ suite('annotation tracking: drag-and-drop via two sequential ContentChange event
 
 suite('annotation tracking: undo/redo', () => {
     test('position reverts after an undo reverses a prior insertion', () => {
-        let annotations: AnnotationSlice[] = [
-            { id: 'a1', file: 'src/foo.ts', line: 5 },
-        ];
+        let annotations: AnnotationSlice[] = [{ id: 'a1', file: 'src/foo.ts', line: 5 }];
 
         // Forward edit: insert 2 lines at line 3 -> annotation shifts to 7.
         const forward = applyDocumentChange(annotations, 'src/foo.ts', {
@@ -398,17 +378,17 @@ suite('annotation tracking: external edit (lineHash mismatch on open)', () => {
         const annotatedContent = 'const IMPORTANT = true;';
 
         const doc = makeDoc([
-            ...linesBefore,                          // 0..4
+            ...linesBefore, // 0..4
             ...Array.from({ length: 10 }, (_, i) => `inserted_${i}`), // 5..14
-            ...linesBefore,                          // 15..19 (same before-context)
-            annotatedContent,                        // 20 -- real location
-            ...linesAfter,                           // 21..25
+            ...linesBefore, // 15..19 (same before-context)
+            annotatedContent, // 20 -- real location
+            ...linesAfter, // 21..25
         ]);
 
         const anchor: AnchorData = {
             lineHash: hashLine(annotatedContent),
-            contextBefore: linesBefore.map(l => l),   // normalized equals original here
-            contextAfter: linesAfter.slice(0, 3).map(l => l),
+            contextBefore: linesBefore.map((l) => l), // normalized equals original here
+            contextAfter: linesAfter.slice(0, 3).map((l) => l),
         };
 
         // storedLine=5 no longer holds annotatedContent -> fast path fails.
@@ -427,12 +407,10 @@ suite('annotation tracking: file rename', () => {
         // Simulate handleFileRename: replace file path for renamed file.
         const oldPath = 'src/old.ts';
         const newPath = 'src/renamed.ts';
-        const updated = annotations.map(a =>
-            a.file === oldPath ? { ...a, file: newPath } : a
-        );
+        const updated = annotations.map((a) => (a.file === oldPath ? { ...a, file: newPath } : a));
 
-        const a1 = updated.find(a => a.id === 'a1');
-        const a2 = updated.find(a => a.id === 'a2');
+        const a1 = updated.find((a) => a.id === 'a1');
+        const a2 = updated.find((a) => a.id === 'a2');
         assert.ok(a1, 'renamed annotation should exist');
         assert.ok(a2, 'unrelated annotation should exist');
         assert.strictEqual(a1.file, newPath);
@@ -456,11 +434,11 @@ suite('annotation tracking: retrocompatibility -- legacy annotation without line
 
     test('silently migrates a legacy annotation by capturing anchor from current document', () => {
         const lines = [
-            'import React from "react";',   // 0
+            'import React from "react";', // 0
             'import { useState } from "react";', // 1
-            'export function App() {',       // 2
-            '  return <div />;',             // 3
-            '}',                             // 4
+            'export function App() {', // 2
+            '  return <div />;', // 3
+            '}', // 4
         ];
         const doc = makeDoc(lines);
 
@@ -486,5 +464,126 @@ suite('annotation tracking: retrocompatibility -- legacy annotation without line
         const result = migrateAnnotation(alreadyMigrated, doc);
         assert.strictEqual(result.lineHash, alreadyMigrated.lineHash);
         assert.deepStrictEqual(result.contextAfter, alreadyMigrated.contextAfter);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Regression suite: handleDocumentChange must NEVER delete an annotation when
+// reanchor() can match or mark it as orphan. AnnotationManager itself cannot
+// be instantiated at the unit-test layer (it imports vscode at module load
+// and this suite runs in plain Node via `npm run test:unit`). The existing
+// strategy declared at the top of this file is to mirror handleDocumentChange
+// behavior with a small simulator that exercises the real algorithms; the
+// regression below extends that pattern to the reanchor call-site contract.
+//
+// The simulator is the *only* substitute that lets us assert preservation of
+// the live Map without the VS Code host. The integration test (`npm test`)
+// remains the authoritative check against the real handleDocumentChange.
+// ---------------------------------------------------------------------------
+
+suite('regression: handleDocumentChange must not delete annotations that reanchor can resolve', () => {
+    interface MapBackedAnnotation extends AnnotationSlice {
+        orphaned?: boolean;
+    }
+
+    /**
+     * Mirror of the contract the production handleDocumentChange MUST honor
+     * once worker-1 routes the displaced/cut branch through reanchor:
+     *   - 'matched' / 'moved' -> update line + anchor fields, KEEP in map.
+     *   - 'orphan'            -> set orphaned flag, KEEP in map (NO delete).
+     *
+     * This simulator never calls store.delete(). If the production handler
+     * calls this.annotations.delete() in the same scenario, the integration
+     * test will catch it; this unit test catches contract violations in the
+     * reanchor wiring itself.
+     */
+    function dispatchReanchor(store: Map<string, MapBackedAnnotation>, id: string, doc: TextDocumentLike): void {
+        const annotation = store.get(id);
+        if (!annotation) {
+            return;
+        }
+        const result = reanchor(annotation, doc);
+        if (result.status === 'orphan' || result.newLine === undefined) {
+            annotation.orphaned = true;
+            return;
+        }
+        annotation.line = result.newLine;
+        annotation.lineHash = result.newHash;
+        annotation.contextBefore = result.newContextBefore;
+        annotation.contextAfter = result.newContextAfter;
+        annotation.orphaned = false;
+    }
+
+    test('handleDocumentChange must not delete annotation when reanchor can match it (line moved downward)', () => {
+        const beforeLines = ['pre_a', 'pre_b', 'const ANCHORED_TARGET = true;', 'post_a', 'post_b'];
+        const beforeDoc = makeDoc(beforeLines);
+        const initial = captureAnchor(beforeDoc, 2, { walkForward: 0, walkBackward: 0 });
+
+        const store = new Map<string, MapBackedAnnotation>();
+        store.set('a1', {
+            id: 'a1',
+            file: 'src/foo.ts',
+            line: 2,
+            lineHash: initial.lineHash,
+            contextBefore: initial.contextBefore,
+            contextAfter: initial.contextAfter,
+        });
+
+        // Cut+paste downward / Alt+Down cumulative: the anchored line lands at
+        // index 4 with reshuffled neighbours so contextBefore / contextAfter no
+        // longer align. Hash is still unique in the document; reanchor must
+        // resolve via the unique-hash fallback inside findAnchor.
+        const afterLines = ['pre_a', 'pre_b', 'post_a', 'post_b', 'const ANCHORED_TARGET = true;'];
+        const afterDoc = makeDoc(afterLines);
+
+        dispatchReanchor(store, 'a1', afterDoc);
+
+        const survived = store.get('a1');
+        assert.strictEqual(store.has('a1'), true, 'annotation must remain in the live map -- no deletion');
+        assert.ok(survived, 'annotation entry must still be retrievable');
+        assert.strictEqual(survived.line, 4, 'line was updated to follow the moved code');
+        assert.strictEqual(
+            survived.lineHash,
+            hashLine('const ANCHORED_TARGET = true;'),
+            'lineHash refreshed at the new position'
+        );
+        assert.strictEqual(survived.orphaned, false, 'not orphaned: reanchor matched');
+    });
+
+    test('handleDocumentChange must mark orphan but not delete when content disappeared', () => {
+        const beforeLines = ['pre_a', 'pre_b', 'const ANCHORED_GONE = true;', 'post_a', 'post_b'];
+        const beforeDoc = makeDoc(beforeLines);
+        const initial = captureAnchor(beforeDoc, 2, { walkForward: 0, walkBackward: 0 });
+
+        const store = new Map<string, MapBackedAnnotation>();
+        store.set('a1', {
+            id: 'a1',
+            file: 'src/foo.ts',
+            line: 2,
+            lineHash: initial.lineHash,
+            contextBefore: initial.contextBefore,
+            contextAfter: initial.contextAfter,
+        });
+
+        // Anchored content is wiped: no hash match anywhere, no recoverable
+        // context. reanchor must return 'orphan'; the call-site MUST flag the
+        // annotation but MUST NOT remove it from the live map (so the user can
+        // re-attach it manually instead of seeing it vanish from the panel).
+        const afterLines = [
+            'totally_unrelated_a',
+            'totally_unrelated_b',
+            'totally_unrelated_c',
+            'totally_unrelated_d',
+            'totally_unrelated_e',
+        ];
+        const afterDoc = makeDoc(afterLines);
+
+        dispatchReanchor(store, 'a1', afterDoc);
+
+        const survived = store.get('a1');
+        assert.strictEqual(store.has('a1'), true, 'annotation must remain in the live map -- no deletion on orphan');
+        assert.ok(survived, 'annotation entry must still be retrievable');
+        assert.strictEqual(survived.orphaned, true, 'orphan flag set so the UI can render an orphaned badge');
+        assert.strictEqual(survived.line, 2, 'stored line is preserved on orphan (no destructive mutation)');
     });
 });

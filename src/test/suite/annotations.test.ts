@@ -75,7 +75,7 @@ suite('JSON schema validation on annotation import', () => {
 
     test('rejects non-object entry in annotation array', () => {
         const parsed = JSON.parse('[1, 2, 3]') as unknown[];
-        const valid = parsed.every(item => isValidAnnotation(item));
+        const valid = parsed.every((item) => isValidAnnotation(item));
         assert.strictEqual(valid, false);
     });
 });

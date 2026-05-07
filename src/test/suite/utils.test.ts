@@ -49,8 +49,7 @@ suite('Path traversal rejection', () => {
     // Mirrors the logic used in AnnotationManager.getProjectAnnotationsPath
     function isPathSafe(workspaceRoot: string, customPath: string): boolean {
         const resolved = path.resolve(workspaceRoot, customPath);
-        return resolved.startsWith(path.resolve(workspaceRoot) + path.sep) ||
-               resolved === path.resolve(workspaceRoot);
+        return resolved.startsWith(path.resolve(workspaceRoot) + path.sep) || resolved === path.resolve(workspaceRoot);
     }
 
     test('path within workspace is accepted', () => {

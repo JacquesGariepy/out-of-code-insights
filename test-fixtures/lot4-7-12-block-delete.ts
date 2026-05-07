@@ -1,0 +1,9 @@
+a
+b
+c
+d
+e
+BLOCK_DELETE_LINE_1
+BLOCK_DELETE_LINE_2
+h
+i
