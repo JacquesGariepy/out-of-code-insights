@@ -97,6 +97,27 @@ function isBlankAt(doc: TextDocumentLike, i: number): boolean {
 }
 
 /**
+ * Count how many lines in `doc` hash to `hash`, with an early exit once the
+ * count reaches `earlyExitAt`. Used to gate fast-path returns: when the same
+ * hash appears at multiple lines (CSV duplicates, identical HTML siblings,
+ * repeated separators), trusting the stored index can silently anchor to the
+ * wrong row -- callers must fall through to the context-scored scan instead.
+ */
+function countHashHits(doc: TextDocumentLike, hash: string, earlyExitAt = 2): number {
+    let count = 0;
+    const n = doc.lineCount;
+    for (let i = 0; i < n; i++) {
+        if (hashLine(doc.lineAt(i).text) === hash) {
+            count++;
+            if (count >= earlyExitAt) {
+                return count;
+            }
+        }
+    }
+    return count;
+}
+
+/**
  * Capture an anchor snapshot for the given line in a document.
  *
  * If the requested line is blank, the function walks forward (then backward)
@@ -251,13 +272,19 @@ export function findAnchor(
     // so demand the strict threshold to avoid false positives at every blank line.
     const scoreThreshold = anchor.lineHash === EMPTY_LINE_HASH ? 4 : meaningfulCtx >= 2 ? 4 : 2;
 
-    // Fast path: stored position still valid
+    // Fast path: stored position still valid. Gated on hash uniqueness so an
+    // identical-but-unrelated line at storedLine (CSV duplicates, identical
+    // HTML siblings, repeated separators) does not silently anchor to the
+    // wrong row -- when collisions exist we fall through to the context-scored
+    // scan below.
     if (storedLine >= 0 && storedLine < lineCount) {
         if (hashLine(doc.lineAt(storedLine).text) === anchor.lineHash) {
             if (anchor.lineHash !== EMPTY_LINE_HASH) {
-                return storedLine;
-            }
-            if (scoreAnchorContextAtLine(doc, anchor, storedLine) >= scoreThreshold) {
+                if (countHashHits(doc, anchor.lineHash) === 1) {
+                    return storedLine;
+                }
+                // hash ambiguous -> fall through to context-scored scan
+            } else if (scoreAnchorContextAtLine(doc, anchor, storedLine) >= scoreThreshold) {
                 return storedLine;
             }
         }
@@ -286,6 +313,25 @@ export function findAnchor(
     }
 
     if (bestScore >= scoreThreshold) {
+        // Stickiness: when storedLine still holds the hash, its context score
+        // is non-trivial, and bestLine is BELOW storedLine within 2 points,
+        // prefer storedLine. Direction matters: a lower bestLine means rows
+        // above were deleted and the anchor truly slid up (CSV duplicate
+        // removal), so trust bestLine. A higher bestLine means rows or
+        // boundary markers shifted down below the anchor (appending a 6th
+        // identical item) -- the user's row index didn't actually move.
+        if (
+            bestLine !== storedLine &&
+            bestLine > storedLine &&
+            storedLine >= 0 &&
+            storedLine < lineCount &&
+            hashLine(doc.lineAt(storedLine).text) === anchor.lineHash
+        ) {
+            const storedScore = scoreAnchorContextAtLine(doc, anchor, storedLine);
+            if (storedScore >= 2 && storedScore + 2 >= bestScore) {
+                return storedLine;
+            }
+        }
         return bestLine;
     }
 
@@ -440,8 +486,16 @@ export function reanchor(annotation: ReanchorInput, document: TextDocumentLike):
 
     const lineCount = document.lineCount;
 
-    // Phase 1 -- exact match at the stored line.
-    if (storedLine >= 0 && storedLine < lineCount && hashLine(document.lineAt(storedLine).text) === storedHash) {
+    // Phase 1 -- exact match at the stored line. Gated on hash uniqueness for
+    // the same reason as findAnchor's fast path: when an identical line at
+    // storedLine could be a different logical row (CSV duplicates, identical
+    // HTML siblings), let Phase 2's context-scored scan decide instead.
+    if (
+        storedLine >= 0 &&
+        storedLine < lineCount &&
+        hashLine(document.lineAt(storedLine).text) === storedHash &&
+        countHashHits(document, storedHash) === 1
+    ) {
         const refreshed = captureAnchor(document, storedLine, {
             walkForward: 0,
             walkBackward: 0,
@@ -472,8 +526,12 @@ export function reanchor(annotation: ReanchorInput, document: TextDocumentLike):
             walkForward: 0,
             walkBackward: 0,
         });
+        // When the resolver lands on the same index the caller stored, the
+        // line did not actually move (Phase 1 was gated by hash collisions
+        // and findAnchor's stickiness brought us back). Report 'matched' so
+        // callers can distinguish a true relocation from a stay-in-place.
         return {
-            status: 'moved',
+            status: found === storedLine ? 'matched' : 'moved',
             newLine: found,
             newHash: refreshed.lineHash,
             newContextBefore: refreshed.contextBefore,

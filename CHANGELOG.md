@@ -7,7 +7,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-(no entries yet)
+### Fixed
+- Annotation anchoring is now robust on non-code files (Markdown, JSON,
+  YAML, CSV, HTML, plain text). When the anchored line's hash collides
+  with other lines in the document, the algorithm now requires context
+  validation rather than blindly trusting the stored line position.
+  Adds position stickiness so anchors don't drift downward when content
+  is appended below them.
 
 ## [1.0.19] - 2026-05-06
 
