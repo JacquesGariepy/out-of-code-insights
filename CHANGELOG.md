@@ -24,7 +24,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   exact line-hash lookup misses (e.g. content drift between cut and
   paste), gated to avoid hijacking copy+paste sequences.
 - Note: a JSON-specific edge case for cut+paste is still under
-  investigation (#TBD).
+  investigation (#37).
 
 ## [1.0.19] - 2026-05-06
 
