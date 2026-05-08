@@ -1,0 +1,9 @@
+database:
+  host: localhost
+  port: 5432
+redis:
+  host: localhost
+  port: 6379
+logging:
+  user: admin
+  level: info

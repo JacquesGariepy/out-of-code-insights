@@ -14,6 +14,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   validation rather than blindly trusting the stored line position.
   Adds position stickiness so anchors don't drift downward when content
   is appended below them.
+- Annotation now correctly follows a cut+paste round-trip on Markdown,
+  TypeScript, JavaScript, and most file types. Whole-line cut now
+  suspends the annotation (previously slipped into Cas C and stayed
+  active with collapsed offsets, surfacing as a duplicate). Single-line
+  edits inside an annotated line refresh the stored line hash so a
+  later cut+paste resumes correctly. A defensive fallback in the paste
+  detector resumes a unique recently-suspended annotation when the
+  exact line-hash lookup misses (e.g. content drift between cut and
+  paste), gated to avoid hijacking copy+paste sequences.
+- Note: a JSON-specific edge case for cut+paste is still under
+  investigation (#TBD).
 
 ## [1.0.19] - 2026-05-06
 

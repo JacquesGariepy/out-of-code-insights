@@ -466,6 +466,20 @@ export class AnnotationStore {
                 const a0 = ann.startOffset;
                 const a1 = ann.endOffset;
 
+                // Pre-classification guard: a pure deletion that fully covers
+                // the annotation must SUSPEND, not shift. Without this guard,
+                // Ctrl+X on the last line of a file with no trailing newline
+                // produces a range whose r1 == a1 (no '\n' to extend past),
+                // which slips into Cas C (`r0 >= a0 && r1 <= a1`) and only
+                // shifts endOffset -- leaving the annotation active in the
+                // map with collapsed offsets. detectPaste then matches on
+                // lineHash and clones it via cloneAsPaste, surfacing as
+                // duplicate annotations after a single cut+paste cycle.
+                if (change.text.length === 0 && r0 <= a0 && r1 >= a1) {
+                    this.suspend(ann.id, ann.lineHash);
+                    continue;
+                }
+
                 if (r1 <= a0) {
                     // Cas A — strictly before.
                     ann.startOffset = a0 + delta;
@@ -479,9 +493,17 @@ export class AnnotationStore {
                 } else if (r0 >= a0 && r1 <= a1) {
                     // Cas C — strictly inside.
                     ann.endOffset = a1 + delta;
-                    if (this.changeAffectsLineStructure(change)) {
-                        this.refreshAnchorContext(ann, event.document);
-                    }
+                    // Always refresh: a Cas C change modified the annotation's
+                    // own content (single-char typing, replacement, or
+                    // multi-line edit). Without this, ann.lineHash stays bound
+                    // to the pre-edit text; a later cut would suspend with the
+                    // stale hash, and detectPaste's hashLine on the post-edit
+                    // pasted content would not match -- the annotation
+                    // disappears (suspended, then TTL-disposed). Keep the
+                    // structural-change gate for Cas A/B (offsets shift but
+                    // content is unchanged) -- only Cas C needs unconditional
+                    // refresh.
+                    this.refreshAnchorContext(ann, event.document);
                 } else {
                     // Cas D — boundary crossing → suspend.
                     // blockHash = ann.lineHash (deterministic per the
@@ -1320,6 +1342,22 @@ export class AnnotationStore {
         }
         const baseOffset = change.rangeOffset;
         const lines = change.text.split('\n');
+
+        // Pre-scan: does ANY line of this paste have an exact lineHash that
+        // matches a suspended bucket? If yes, the per-line loop will resume
+        // cleanly; the "1b. Fallback resume" path below MUST stay disabled
+        // for ALL lines of this paste, otherwise an early non-matching line
+        // (e.g. the first line of a multi-line block paste) will spuriously
+        // trigger fallback before the real-matching line is reached.
+        let anyExactSuspendedHit = false;
+        for (const lineText of lines) {
+            const h = hashLine(lineText);
+            if (h !== EMPTY_LINE_HASH && this.suspendedByLineHash.has(h)) {
+                anyExactSuspendedHit = true;
+                break;
+            }
+        }
+
         let cursor = 0;
         for (const lineText of lines) {
             const lineOffset = baseOffset + cursor;
@@ -1351,6 +1389,56 @@ export class AnnotationStore {
                     resumedThisCall.add(id);
                     resumed = true;
                     break;
+                }
+            }
+            if (resumed) {
+                continue;
+            }
+
+            // 1b. Fallback resume — exact-hash lookup missed for THIS line
+            // AND no other line of the paste exact-matched either. A recent
+            // suspend in this file with no active match elsewhere is almost
+            // certainly the user's cut/paste round-trip whose content drifted
+            // (e.g. JSON formatOnPaste re-indented the inserted line, or a
+            // single-character edit between annotation creation and cut left
+            // ann.lineHash slightly stale). Constraints: no exact hit
+            // anywhere in this paste (`anyExactSuspendedHit === false`),
+            // exactly one recently-suspended annotation in this file, and
+            // zero active candidates with matching lineHash -- avoids
+            // misfiring on the first line of a block paste before a later
+            // line could resume cleanly, and avoids hijacking copy+paste
+            // sequences.
+            if (!anyExactSuspendedHit) {
+                const suspendWindowMs = 5_000;
+                let activeSourceMatchExists = false;
+                for (const sourceAnn of this.map.values()) {
+                    if (sourceAnn.state === 'active' && sourceAnn.lineHash === lineHashValue) {
+                        activeSourceMatchExists = true;
+                        break;
+                    }
+                }
+                if (!activeSourceMatchExists) {
+                    const docUri = document.uri.toString();
+                    const now = Date.now();
+                    const recentSuspendsInFile: string[] = [];
+                    for (const [sid, rec] of this.suspendedById) {
+                        if (rec.annotation.fileUri !== docUri) {
+                            continue;
+                        }
+                        if (now - rec.suspendedAt > suspendWindowMs) {
+                            continue;
+                        }
+                        if (resumedThisCall.has(sid)) {
+                            continue;
+                        }
+                        recentSuspendsInFile.push(sid);
+                    }
+                    if (recentSuspendsInFile.length === 1) {
+                        const sid = recentSuspendsInFile[0];
+                        this.resume(sid, document, lineOffset);
+                        resumedThisCall.add(sid);
+                        resumed = true;
+                    }
                 }
             }
             if (resumed) {
