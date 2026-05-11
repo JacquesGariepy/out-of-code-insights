@@ -971,7 +971,7 @@
         "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" \"out/transactional/__tests__/**/*.js\" --timeout 5000"
     },
     "devDependencies": {
-        "@types/diff": "^6.0.0",
+        "@types/diff": "^8.0.0",
         "@types/fs-extra": "^11.0.4",
         "@types/glob": "^9.0.0",
         "@types/lodash": "^4.17.24",
