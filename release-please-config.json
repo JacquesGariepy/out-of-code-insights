@@ -1,0 +1,22 @@
+{
+    "release-type": "node",
+    "include-component-in-tag": false,
+    "packages": {
+        ".": {
+            "package-name": "out-of-code-insights",
+            "include-v-in-tag": true,
+            "changelog-path": "CHANGELOG.md",
+            "changelog-sections": [
+                { "type": "feat", "section": "Added" },
+                { "type": "fix", "section": "Fixed" },
+                { "type": "perf", "section": "Changed" },
+                { "type": "refactor", "section": "Changed", "hidden": false },
+                { "type": "chore", "section": "Internal", "hidden": true },
+                { "type": "docs", "section": "Documentation", "hidden": true },
+                { "type": "test", "section": "Tests", "hidden": true },
+                { "type": "ci", "section": "Internal", "hidden": true },
+                { "type": "build", "section": "Internal", "hidden": true }
+            ]
+        }
+    }
+}
