@@ -89,4 +89,4 @@ Strings live in `package.nls.json` (en) and `package.nls.fr.json` (fr); resolve 
 ## Known debt to be aware of
 
 - `src/managers/AnnotationManager.ts` is ~4,300 lines and concentrates many responsibilities. Decomposition is roadmapped; do not undertake it ad hoc inside an unrelated PR.
-- Releases are tag-driven: bump `package.json` + `CHANGELOG.md`, commit `chore: release vX.Y.Z`, push, then push an annotated `vX.Y.Z` tag. `release.yml` packages and publishes to the Marketplace.
+- Releases are managed by release-please (since v1.0.21). Push conventional commits to main. release-please opens and maintains a release PR aggregating commits since the last tag and computing the SemVer bump. Merging the release PR cuts a new version: it bumps package.json, finalizes CHANGELOG.md, creates an annotated tag, and triggers release.yml which packages and publishes to the Marketplace. Configuration lives in `release-please-config.json` and `.release-please-manifest.json`. Do not manually bump the version or commit `chore: release vX.Y.Z` anymore; let release-please handle it.
