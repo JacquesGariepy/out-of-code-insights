@@ -1250,4 +1250,612 @@ suite('Lot 7 — clipboard cut/copy + paste on non-code files (failing-first rep
             await restore();
         }
     });
+
+    // -----------------------------------------------------------------------
+    // Scenario J — JSON cut+paste followed by a SECOND document change that
+    // simulates the JSON formatter's reformat (separate
+    // onDidChangeTextDocument event arriving ~ms after the paste). This is
+    // the prime suspect for the user's intermittent flake:
+    // "des fois ça fonctionne, des fois non". Variants exercise different
+    // sub-change shapes (Cas C replace, pure insert inside the resumed
+    // annotation, Cas D-style whole-line re-write) and different timings.
+    // -----------------------------------------------------------------------
+    async function setupJsonCutPaste(
+        relPath: string,
+        message: string
+    ): Promise<{
+        uri: vscode.Uri;
+        document: vscode.TextDocument;
+        editor: vscode.TextEditor;
+        beforeCutId: string;
+        annotatedLine: number;
+    }> {
+        const fixture =
+            '{\n' +
+            '  "name": "demo",\n' +
+            '  "version": "1.0.0",\n' +
+            '  "active": true,\n' +
+            '  "tag": "alpha",\n' +
+            '  "owner": "team-a",\n' +
+            '  "id": 42\n' +
+            '}\n';
+        const uri = await ensureFixture(relPath, fixture);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        await delay(300);
+        if (document.languageId !== 'json') {
+            await vscode.languages.setTextDocumentLanguage(document, 'json');
+            await delay(100);
+        }
+        const annotatedLine = 4; // '  "tag": "alpha",'
+        editor.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, 0);
+        await vscode.commands.executeCommand('annotations.add', { line: annotatedLine, message });
+        await delay(800);
+        const before = annotationsForFileFromPersisted(uri.toString(), document);
+        assert.strictEqual(before.length, 1, 'setup: 1 annotation');
+
+        editor.selection = new vscode.Selection(annotatedLine, 0, annotatedLine + 1, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardCutAction');
+        await delay(700);
+
+        const pasteLine = 6;
+        const live = vscode.window.activeTextEditor ?? editor;
+        live.selection = new vscode.Selection(pasteLine, 0, pasteLine, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        await delay(800);
+        return { uri, document, editor, beforeCutId: before[0].id, annotatedLine };
+    }
+
+    async function assertJ(
+        uri: vscode.Uri,
+        doc: vscode.TextDocument,
+        beforeCutId: string,
+        label: string
+    ): Promise<void> {
+        await doc.save();
+        await delay(200);
+        const after = annotationsForFileFromPersisted(uri.toString(), doc);
+        // eslint-disable-next-line no-console
+        console.log(`[lot7-J:${label}] persisted:`, JSON.stringify(after, null, 2), '— total =', after.length);
+        assert.strictEqual(
+            after.length,
+            1,
+            `${label}: must leave EXACTLY 1 annotation, got ${after.length}: ` + JSON.stringify(after)
+        );
+        assert.strictEqual(after[0].id, beforeCutId, `${label}: id must be preserved`);
+        assert.notStrictEqual(after[0].state, 'suspended', `${label}: must be active`);
+    }
+
+    test('Scenario J(a) — JSON cut+paste, no formatter follow-up (baseline control)', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+        const { uri, document, beforeCutId } = await setupJsonCutPaste('lot7-J-a.json', 'lot7-J-a-source');
+        await assertJ(uri, document, beforeCutId, 'J(a)-baseline');
+    });
+
+    test('Scenario J(b) — JSON cut+paste then immediate Cas-C replace inside the just-resumed annotation', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+        const { uri, document, beforeCutId } = await setupJsonCutPaste('lot7-J-b.json', 'lot7-J-b-source');
+        const updated = vscode.window.activeTextEditor?.document ?? document;
+
+        // Simulate formatter Cas-C replace: change `  "tag":` to `   "tag":`
+        // (1 extra space indent) on the just-resumed annotation's line.
+        // This mimics the JSON LSP re-indenting the pasted line.
+        const pasteLineInUpdated = 6;
+        const lineText = updated.lineAt(pasteLineInUpdated).text;
+        const tagIdx = lineText.indexOf('"tag"');
+        if (tagIdx > 0) {
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(
+                uri,
+                new vscode.Range(
+                    new vscode.Position(pasteLineInUpdated, 0),
+                    new vscode.Position(pasteLineInUpdated, tagIdx)
+                ),
+                ' '.repeat(tagIdx + 1) // one more space
+            );
+            await vscode.workspace.applyEdit(edit);
+            await delay(700);
+        }
+        await assertJ(uri, updated, beforeCutId, 'J(b)-immediate-CasC');
+    });
+
+    test('Scenario J(c) — JSON cut+paste then 100ms-delayed pure insert inside the resumed annotation', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+        const { uri, document, beforeCutId } = await setupJsonCutPaste('lot7-J-c.json', 'lot7-J-c-source');
+        const updated = vscode.window.activeTextEditor?.document ?? document;
+        await delay(100);
+
+        // Pure insert (rangeLength=0, text non-empty) inside the resumed
+        // line. The Cas C path will refresh the lineHash; detectPaste will
+        // then run on this insert. If the active-clone path matches the
+        // freshly-refreshed lineHash, we'd get a spurious duplicate.
+        const pasteLineInUpdated = 6;
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(uri, new vscode.Position(pasteLineInUpdated, 2), '/* fmt */ ');
+        await vscode.workspace.applyEdit(edit);
+        await delay(800);
+        await assertJ(uri, updated, beforeCutId, 'J(c)-100ms-insert');
+    });
+
+    test('Scenario J(d) — JSON cut+paste then 500ms-delayed whole-line replace (formatter style)', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+        const { uri, document, beforeCutId } = await setupJsonCutPaste('lot7-J-d.json', 'lot7-J-d-source');
+        const updated = vscode.window.activeTextEditor?.document ?? document;
+        await delay(500);
+
+        // Whole-line replace: range covers the entire resumed line + newline
+        // and text is the same content with adjusted indent. This is the
+        // formatter's typical "delete and re-insert" shape. If the replace
+        // is wider than the annotation, it could hit Cas D and re-suspend.
+        const pasteLineInUpdated = 6;
+        const lineText = updated.lineAt(pasteLineInUpdated).text;
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(
+            uri,
+            new vscode.Range(
+                new vscode.Position(pasteLineInUpdated, 0),
+                new vscode.Position(pasteLineInUpdated + 1, 0)
+            ),
+            lineText.trimStart().padStart(lineText.length + 2, ' ') + '\n'
+        );
+        await vscode.workspace.applyEdit(edit);
+        await delay(800);
+        await assertJ(uri, updated, beforeCutId, 'J(d)-500ms-whole-line-replace');
+    });
+
+    // -----------------------------------------------------------------------
+    // Scenario K — cut+paste annotation-follow contract across four axes:
+    //   K(a) same-file  × whole-line cut (Selection covers line + trailing \n)
+    //   K(b) same-file  × intra-line cut (Selection covers line content only,
+    //                     newline left in place — source line becomes blank)
+    //   K(c) cross-file × whole-line cut (cut in fileA, paste in fileB)
+    //   K(d) cross-file × intra-line cut (cut in fileA without newline,
+    //                     paste at col 0 of an empty line in fileB)
+    // Expected contract for every scenario: after the round-trip, EXACTLY ONE
+    // annotation with the original id remains in the persisted v2 envelope,
+    // its state is `active` (not suspended/disposed), it lives in the
+    // PASTE-destination fileUri, and document.positionAt(startOffset).line
+    // equals the paste-destination line. This is the user-facing contract the
+    // mission demands; failures here describe the bug the upcoming fix must
+    // close.
+    // -----------------------------------------------------------------------
+    function assertSurvivor(
+        annotations: AnnotationView[],
+        expectedId: string,
+        expectedLine: number,
+        label: string
+    ): void {
+        // eslint-disable-next-line no-console
+        console.log(
+            `[lot7-K:${label}] persisted (dest):`,
+            JSON.stringify(annotations, null, 2),
+            '— total =',
+            annotations.length
+        );
+        const survivors = annotations.filter((a) => a.id === expectedId);
+        assert.strictEqual(
+            survivors.length,
+            1,
+            `${label}: expected exactly 1 annotation with id ${expectedId} on destination, ` +
+                `got ${survivors.length}: ` +
+                JSON.stringify(annotations)
+        );
+        const s = survivors[0];
+        assert.notStrictEqual(
+            s.state,
+            'suspended',
+            `${label}: survivor must be ACTIVE, got state=${s.state}: ` + JSON.stringify(s)
+        );
+        assert.notStrictEqual(
+            s.state,
+            'disposed',
+            `${label}: survivor must not be DISPOSED, got state=${s.state}: ` + JSON.stringify(s)
+        );
+        assert.strictEqual(
+            s.line,
+            expectedLine,
+            `${label}: survivor must resolve to line ${expectedLine}, got ${s.line}: ` + JSON.stringify(s)
+        );
+    }
+
+    test('K(a) — same-file WHOLE-LINE cut+paste: annotation follows to new line', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+
+        const fixture =
+            '# Document\n' +
+            '\n' +
+            'intro line\n' +
+            'TARGET_K_A\n' +
+            'middle one\n' +
+            'middle two\n' +
+            'middle three\n' +
+            '\n' +
+            'tail line\n';
+        const uri = await ensureFixture('lot7-K-a-samefile-whole.md', fixture);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        await delay(300);
+        if (document.languageId !== 'markdown') {
+            await vscode.languages.setTextDocumentLanguage(document, 'markdown');
+            await delay(100);
+        }
+
+        const annotatedLine = 3; // 'TARGET_K_A'
+        editor.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, 0);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: annotatedLine,
+            message: 'lot7-K-a-source',
+        });
+        await delay(800);
+
+        const before = annotationsForFileFromPersisted(uri.toString(), document);
+        assert.strictEqual(before.length, 1, 'K(a) setup: 1 annotation: ' + JSON.stringify(before));
+        const annId = before[0].id;
+
+        // Whole-line cut: selection covers line + trailing newline.
+        editor.selection = new vscode.Selection(annotatedLine, 0, annotatedLine + 1, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardCutAction');
+        await delay(700);
+
+        // After cut the doc lost one line. Original 'tail line' was at
+        // index 8; now at 7. Paste at index 6 (one above 'tail line' after
+        // the blank line), so the relocated annotation lands at line 6.
+        const live = vscode.window.activeTextEditor ?? editor;
+        const pasteLine = 6;
+        live.selection = new vscode.Selection(pasteLine, 0, pasteLine, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        await delay(1200);
+
+        const updated = vscode.window.activeTextEditor?.document ?? document;
+        await updated.save();
+        await delay(200);
+
+        const after = annotationsForFileFromPersisted(uri.toString(), updated);
+        assertSurvivor(after, annId, pasteLine, 'K(a)-same-file-whole-line');
+    });
+
+    test('K(b) — same-file INTRA-LINE cut+paste: annotation follows to new line', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+
+        const fixture =
+            '# Document\n' +
+            '\n' +
+            'intro line\n' +
+            'TARGET_K_B\n' +
+            'middle one\n' +
+            '\n' + // line 5 — empty paste target
+            'tail line\n';
+        const uri = await ensureFixture('lot7-K-b-samefile-intra.md', fixture);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        await delay(300);
+        if (document.languageId !== 'markdown') {
+            await vscode.languages.setTextDocumentLanguage(document, 'markdown');
+            await delay(100);
+        }
+
+        const annotatedLine = 3;
+        editor.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, 0);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: annotatedLine,
+            message: 'lot7-K-b-source',
+        });
+        await delay(800);
+
+        const before = annotationsForFileFromPersisted(uri.toString(), document);
+        assert.strictEqual(before.length, 1, 'K(b) setup: 1 annotation: ' + JSON.stringify(before));
+        const annId = before[0].id;
+
+        // INTRA-line cut: select line content only, newline stays.
+        const lineLen = document.lineAt(annotatedLine).text.length;
+        editor.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, lineLen);
+        await vscode.commands.executeCommand('editor.action.clipboardCutAction');
+        await delay(700);
+
+        // Doc line count unchanged; line 3 is now blank. Paste at col 0 of
+        // the empty line 5 → line 5 becomes 'TARGET_K_B'.
+        const live = vscode.window.activeTextEditor ?? editor;
+        const pasteLine = 5;
+        live.selection = new vscode.Selection(pasteLine, 0, pasteLine, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        await delay(1200);
+
+        const updated = vscode.window.activeTextEditor?.document ?? document;
+        await updated.save();
+        await delay(200);
+
+        const after = annotationsForFileFromPersisted(uri.toString(), updated);
+        assertSurvivor(after, annId, pasteLine, 'K(b)-same-file-intra-line');
+    });
+
+    test('K(c) — CROSS-FILE WHOLE-LINE cut+paste: annotation follows to destination file/line', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+
+        const fixtureSrc =
+            '# Source Document\n' + '\n' + 'src line A\n' + 'TARGET_K_C\n' + 'src line C\n' + 'src tail\n';
+        const fixtureDst = '# Dest Document\n' + '\n' + 'dst line A\n' + 'dst line B\n' + 'dst line C\n' + 'dst tail\n';
+        const uriSrc = await ensureFixture('lot7-K-c-source.md', fixtureSrc);
+        const uriDst = await ensureFixture('lot7-K-c-dest.md', fixtureDst);
+
+        const docSrc = await vscode.workspace.openTextDocument(uriSrc);
+        const edSrc = await vscode.window.showTextDocument(docSrc);
+        await delay(300);
+        if (docSrc.languageId !== 'markdown') {
+            await vscode.languages.setTextDocumentLanguage(docSrc, 'markdown');
+            await delay(100);
+        }
+
+        const annotatedLine = 3; // 'TARGET_K_C'
+        edSrc.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, 0);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: annotatedLine,
+            message: 'lot7-K-c-source',
+        });
+        await delay(800);
+
+        const beforeSrc = annotationsForFileFromPersisted(uriSrc.toString(), docSrc);
+        assert.strictEqual(beforeSrc.length, 1, 'K(c) setup: 1 annotation in source: ' + JSON.stringify(beforeSrc));
+        const annId = beforeSrc[0].id;
+
+        // Whole-line cut in SOURCE.
+        edSrc.selection = new vscode.Selection(annotatedLine, 0, annotatedLine + 1, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardCutAction');
+        await delay(700);
+
+        // Switch to DESTINATION file and paste at line 2 col 0.
+        const docDst = await vscode.workspace.openTextDocument(uriDst);
+        const edDst = await vscode.window.showTextDocument(docDst);
+        await delay(300);
+        if (docDst.languageId !== 'markdown') {
+            await vscode.languages.setTextDocumentLanguage(docDst, 'markdown');
+            await delay(100);
+        }
+
+        const pasteLine = 2;
+        edDst.selection = new vscode.Selection(pasteLine, 0, pasteLine, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        await delay(1500);
+
+        await docDst.save();
+        await delay(200);
+        await docSrc.save();
+        await delay(200);
+
+        const afterSrc = annotationsForFileFromPersisted(uriSrc.toString(), docSrc);
+        const afterDst = annotationsForFileFromPersisted(uriDst.toString(), docDst);
+        // eslint-disable-next-line no-console
+        console.log('[lot7-K:K(c)] source persisted after round-trip:', JSON.stringify(afterSrc, null, 2));
+
+        // Source must NOT still hold the annotation (it was cut and moved out).
+        const stillInSrc = afterSrc.filter((a) => a.id === annId && a.state !== 'disposed');
+        assert.strictEqual(
+            stillInSrc.length,
+            0,
+            `K(c): annotation ${annId} must not remain in source after cross-file paste, got ` +
+                JSON.stringify(stillInSrc)
+        );
+        assertSurvivor(afterDst, annId, pasteLine, 'K(c)-cross-file-whole-line');
+    });
+
+    test('K(d) — CROSS-FILE INTRA-LINE cut+paste: annotation follows to destination file/line', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+
+        const fixtureSrc =
+            '# Source Document\n' + '\n' + 'src line A\n' + 'TARGET_K_D\n' + 'src line C\n' + 'src tail\n';
+        const fixtureDst = '# Dest Document\n' + '\n' + '\n' + 'dst line A\n' + 'dst tail\n'; // empty line 2 is the paste target
+        const uriSrc = await ensureFixture('lot7-K-d-source.md', fixtureSrc);
+        const uriDst = await ensureFixture('lot7-K-d-dest.md', fixtureDst);
+
+        const docSrc = await vscode.workspace.openTextDocument(uriSrc);
+        const edSrc = await vscode.window.showTextDocument(docSrc);
+        await delay(300);
+        if (docSrc.languageId !== 'markdown') {
+            await vscode.languages.setTextDocumentLanguage(docSrc, 'markdown');
+            await delay(100);
+        }
+
+        const annotatedLine = 3;
+        edSrc.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, 0);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: annotatedLine,
+            message: 'lot7-K-d-source',
+        });
+        await delay(800);
+
+        const beforeSrc = annotationsForFileFromPersisted(uriSrc.toString(), docSrc);
+        assert.strictEqual(beforeSrc.length, 1, 'K(d) setup: 1 annotation in source: ' + JSON.stringify(beforeSrc));
+        const annId = beforeSrc[0].id;
+
+        // INTRA-line cut in SOURCE: line content only, no trailing newline.
+        const lineLen = docSrc.lineAt(annotatedLine).text.length;
+        edSrc.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, lineLen);
+        await vscode.commands.executeCommand('editor.action.clipboardCutAction');
+        await delay(700);
+
+        // Switch to DESTINATION and paste at col 0 of the empty line 2.
+        const docDst = await vscode.workspace.openTextDocument(uriDst);
+        const edDst = await vscode.window.showTextDocument(docDst);
+        await delay(300);
+        if (docDst.languageId !== 'markdown') {
+            await vscode.languages.setTextDocumentLanguage(docDst, 'markdown');
+            await delay(100);
+        }
+
+        const pasteLine = 2;
+        edDst.selection = new vscode.Selection(pasteLine, 0, pasteLine, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        await delay(1500);
+
+        await docDst.save();
+        await delay(200);
+        await docSrc.save();
+        await delay(200);
+
+        const afterSrc = annotationsForFileFromPersisted(uriSrc.toString(), docSrc);
+        const afterDst = annotationsForFileFromPersisted(uriDst.toString(), docDst);
+        // eslint-disable-next-line no-console
+        console.log('[lot7-K:K(d)] source persisted after round-trip:', JSON.stringify(afterSrc, null, 2));
+
+        const stillInSrc = afterSrc.filter((a) => a.id === annId && a.state !== 'disposed');
+        assert.strictEqual(
+            stillInSrc.length,
+            0,
+            `K(d): annotation ${annId} must not remain in source after cross-file intra-line paste, got ` +
+                JSON.stringify(stillInSrc)
+        );
+        assertSurvivor(afterDst, annId, pasteLine, 'K(d)-cross-file-intra-line');
+    });
+
+    // -----------------------------------------------------------------------
+    // K(e) — CROSS-FILE cut + paste with CONTENT DRIFT (formatter-style indent
+    // change between cut and paste). This is the gap Phase 1 audit identified
+    // at AnnotationStore.ts:1425 — Step 1 (exact-hash) misses because the
+    // pasted line's hash differs from the suspended bucket (different indent),
+    // and the Step 1b fallback historically filtered cross-file suspends out
+    // (`rec.annotation.fileUri !== docUri` continue), so the annotation gets
+    // stranded in the suspended buffer and TTL-disposed after 30s.
+    //
+    // The drift is simulated by issuing the paste via `vscode.workspace.applyEdit`
+    // with a re-indented copy of the source line, mirroring what `formatOnPaste`
+    // does in JSON/JS/TS when the destination indent depth differs from the
+    // source indent depth.
+    // -----------------------------------------------------------------------
+    test('K(e) — CROSS-FILE cut+paste with content DRIFT (re-indented paste): annotation follows', async function () {
+        this.timeout(45000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+
+        const fixtureSrc =
+            '{\n' +
+            '  "name": "demo",\n' +
+            '  "version": "1.0.0",\n' +
+            '  "tag": "alpha",\n' + // annotated line (index 3), 2-space indent
+            '  "id": 42\n' +
+            '}\n';
+        const fixtureDst = '{\n' + '  "outer": {\n' + '\n' + '  }\n' + '}\n'; // empty line 2 inside nested object
+        const uriSrc = await ensureFixture('lot7-K-e-source.json', fixtureSrc);
+        const uriDst = await ensureFixture('lot7-K-e-dest.json', fixtureDst);
+
+        const docSrc = await vscode.workspace.openTextDocument(uriSrc);
+        const edSrc = await vscode.window.showTextDocument(docSrc);
+        await delay(300);
+        if (docSrc.languageId !== 'json') {
+            await vscode.languages.setTextDocumentLanguage(docSrc, 'json');
+            await delay(100);
+        }
+
+        const annotatedLine = 3;
+        edSrc.selection = new vscode.Selection(annotatedLine, 0, annotatedLine, 0);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: annotatedLine,
+            message: 'lot7-K-e-source',
+        });
+        await delay(800);
+
+        const beforeSrc = annotationsForFileFromPersisted(uriSrc.toString(), docSrc);
+        assert.strictEqual(beforeSrc.length, 1, 'K(e) setup: 1 annotation in source: ' + JSON.stringify(beforeSrc));
+        const annId = beforeSrc[0].id;
+
+        // Whole-line cut in SOURCE → suspends with hash('  "tag": "alpha",').
+        edSrc.selection = new vscode.Selection(annotatedLine, 0, annotatedLine + 1, 0);
+        await vscode.commands.executeCommand('editor.action.clipboardCutAction');
+        await delay(700);
+
+        // Switch focus to DESTINATION. Apply a paste-equivalent insert via
+        // applyEdit with DIFFERENT indent (4 spaces instead of 2) — simulating
+        // formatOnPaste re-indenting the line to fit the deeper nesting in dst.
+        // The pasted text hashes differently from the suspended bucket so the
+        // exact-hash Step 1 misses; recovery depends on Step 1b fallback.
+        const docDst = await vscode.workspace.openTextDocument(uriDst);
+        await vscode.window.showTextDocument(docDst);
+        await delay(300);
+        if (docDst.languageId !== 'json') {
+            await vscode.languages.setTextDocumentLanguage(docDst, 'json');
+            await delay(100);
+        }
+
+        const pasteLine = 2; // empty line inside the nested object
+        const reindented = '    "tag": "alpha",\n'; // 4-space indent (drift)
+        const edit = new vscode.WorkspaceEdit();
+        edit.insert(uriDst, new vscode.Position(pasteLine, 0), reindented);
+        const applied = await vscode.workspace.applyEdit(edit);
+        assert.ok(applied, 'K(e) drifted-paste applyEdit must succeed');
+        await delay(1500);
+
+        await docDst.save();
+        await delay(200);
+        await docSrc.save();
+        await delay(200);
+
+        const afterSrc = annotationsForFileFromPersisted(uriSrc.toString(), docSrc);
+        const afterDst = annotationsForFileFromPersisted(uriDst.toString(), docDst);
+        // eslint-disable-next-line no-console
+        console.log(
+            '[lot7-K:K(e)] cross-file drift source persisted:',
+            JSON.stringify(afterSrc, null, 2),
+            '\n[lot7-K:K(e)] cross-file drift dest persisted:',
+            JSON.stringify(afterDst, null, 2)
+        );
+
+        const stillInSrc = afterSrc.filter((a) => a.id === annId && a.state !== 'disposed');
+        assert.strictEqual(
+            stillInSrc.length,
+            0,
+            `K(e): annotation ${annId} must not remain in source after cross-file drifted paste, got ` +
+                JSON.stringify(stillInSrc)
+        );
+        assertSurvivor(afterDst, annId, pasteLine, 'K(e)-cross-file-drift');
+    });
 });

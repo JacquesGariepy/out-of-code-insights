@@ -505,7 +505,30 @@ export class AnnotationStore {
                     // refresh.
                     this.refreshAnchorContext(ann, event.document);
                 } else {
-                    // Cas D — boundary crossing → suspend.
+                    // Cas D — boundary crossing.
+                    //
+                    // Survival check before suspend: when the change is a
+                    // REPLACE (text.length > 0 AND rangeLength > 0) and the
+                    // replacement text still contains a line whose hash
+                    // equals ann.lineHash, the annotated line survived the
+                    // edit in-place — the boundary overshoot is just the
+                    // formatter rewriting indentation or appending/altering
+                    // the trailing newline. Re-anchor at the surviving line
+                    // rather than suspending; this keeps the annotation
+                    // active inside the v2 store without depending on the
+                    // v1 reanchor rescue (AnnotationManager.ts:4155), which
+                    // is best-effort and may miss when the v1 line index
+                    // disagrees with the v2 offset.
+                    if (change.text.length > 0 && change.rangeLength > 0) {
+                        const survivor = this.findLineHashInText(change.text, ann.lineHash);
+                        if (survivor !== null) {
+                            const length = ann.endOffset - ann.startOffset;
+                            ann.startOffset = change.rangeOffset + survivor.lineStart;
+                            ann.endOffset = ann.startOffset + length;
+                            this.refreshAnchorContext(ann, event.document);
+                            continue;
+                        }
+                    }
                     // blockHash = ann.lineHash (deterministic per the
                     // pragmatic solution: paste detection re-computes the
                     // same hash on the inserted text and matches).
@@ -1240,6 +1263,37 @@ export class AnnotationStore {
 
     private changeAffectsLineStructure(change: vscode.TextDocumentContentChangeEvent): boolean {
         return change.text.includes('\n') || change.range.start.line !== change.range.end.line;
+    }
+
+    /**
+     * Scan `text` line-by-line and return the byte offset (within `text`) +
+     * content of the FIRST line whose normalized hash equals `hash`.
+     *
+     * Used by the Cas D survival check (applyDocumentChange) to detect when a
+     * wide REPLACE rewrote the annotated line in place — formatter-style
+     * re-indents typically emit a single replace whose range overshoots the
+     * annotation's offsets by the trailing newline, even though the line
+     * content (after normalizeLine) is unchanged. In that case the annotation
+     * must NOT slip into the suspend buffer; it should re-anchor at the
+     * surviving line inside the inserted text.
+     *
+     * Returns null for empty `text` or for the universal blank-line hash
+     * (EMPTY_LINE_HASH) — those are degenerate matches that would re-anchor
+     * arbitrarily and are explicitly excluded.
+     */
+    private findLineHashInText(text: string, hash: string): { lineStart: number; lineText: string } | null {
+        if (text.length === 0 || hash === EMPTY_LINE_HASH) {
+            return null;
+        }
+        const lines = text.split('\n');
+        let cursor = 0;
+        for (const lineText of lines) {
+            if (hashLine(lineText) === hash) {
+                return { lineStart: cursor, lineText };
+            }
+            cursor += lineText.length + 1; // +1 for the '\n' splitter consumed by split()
+        }
+        return null;
     }
 
     private refreshAnchorContext(ann: AnnotationV2, document: vscode.TextDocument): void {
