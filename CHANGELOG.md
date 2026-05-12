@@ -7,35 +7,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.20] - 2026-05-12
+
+### Fixed
+- Annotation is now preserved when a line is cut and pasted, within the
+  same file or across files (follow-up to #37).
+
 ### Changed
 - deps: bump @anthropic-ai/claude-code from 2.1.126 to 2.1.138 and openai
   from 6.36.0 to 6.37.0 (llm-providers group).
 
-### Fixed
-- Annotation anchoring is now robust on non-code files (Markdown, JSON,
-  YAML, CSV, HTML, plain text). When the anchored line's hash collides
-  with other lines in the document, the algorithm now requires context
-  validation rather than blindly trusting the stored line position.
-  Adds position stickiness so anchors don't drift downward when content
-  is appended below them.
-- Annotation now correctly follows a cut+paste round-trip on Markdown,
-  TypeScript, JavaScript, and most file types. Whole-line cut now
-  suspends the annotation (previously slipped into Cas C and stayed
-  active with collapsed offsets, surfacing as a duplicate). Single-line
-  edits inside an annotated line refresh the stored line hash so a
-  later cut+paste resumes correctly. A defensive fallback in the paste
-  detector resumes a unique recently-suspended annotation when the
-  exact line-hash lookup misses (e.g. content drift between cut and
-  paste), gated to avoid hijacking copy+paste sequences.
-- Note: a JSON-specific edge case for cut+paste is still under
-  investigation (#37).
-- Cut+paste of an annotated line now stays attached when the editor's
-  "format on paste" or "format on type" reformats the pasted line
-  (for example, re-indenting it to match the destination's nesting
-  depth). Previously the annotation could briefly slip into the
-  suspended buffer before recovering through the legacy rescue path;
-  the relocation now completes inside a single document-change event.
-  Follow-up to #37.
+### Internal
+- Routine dependency updates: fast-uri, @types/diff, github/codeql-action,
+  fs-extra, c8, dependabot/fetch-metadata.
 
 ## [1.0.19] - 2026-05-06
 
