@@ -7,6 +7,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Changed
+- deps: bump @anthropic-ai/claude-code from 2.1.126 to 2.1.138 and openai
+  from 6.36.0 to 6.37.0 (llm-providers group).
+
 ### Fixed
 - Annotation anchoring is now robust on non-code files (Markdown, JSON,
   YAML, CSV, HTML, plain text). When the anchored line's hash collides
@@ -25,6 +29,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   paste), gated to avoid hijacking copy+paste sequences.
 - Note: a JSON-specific edge case for cut+paste is still under
   investigation (#37).
+- Cut+paste of an annotated line now stays attached when the editor's
+  "format on paste" or "format on type" reformats the pasted line
+  (for example, re-indenting it to match the destination's nesting
+  depth). Previously the annotation could briefly slip into the
+  suspended buffer before recovering through the legacy rescue path;
+  the relocation now completes inside a single document-change event.
+  Follow-up to #37.
 
 ## [1.0.19] - 2026-05-06
 
