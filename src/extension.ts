@@ -601,6 +601,36 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
         })
     );
 
+    // Never silently lose user data: when annotated code is deleted and not
+    // pasted back within the suspend TTL, the store disposes the suspended
+    // entry (it stops being serialized). Surface a non-modal choice so the
+    // dev decides — restore the annotation (it stays in the panel/tree, shown
+    // as orphaned until it is re-attached or deleted) or confirm the removal.
+    context.subscriptions.push(
+        annotationStore.onDidDispose(({ annotation, reason }) => {
+            if (reason !== 'ttl-expired' || !annotationStore) {
+                return;
+            }
+            const keepLabel = loc('keepOrphanedAnnotation', 'Keep annotation');
+            const discardLabel = loc('discardAnnotation', 'Delete');
+            void vscode.window
+                .showWarningMessage(
+                    loc(
+                        'annotatedCodeDeleted',
+                        'The code for annotation "{0}" was deleted. Keep the annotation?',
+                        annotation.message.substring(0, 40)
+                    ),
+                    keepLabel,
+                    discardLabel
+                )
+                .then((choice) => {
+                    if (choice === keepLabel && annotationStore && !annotationStore.get(annotation.id)) {
+                        annotationStore.upsert({ ...annotation, state: 'active' });
+                    }
+                });
+        })
+    );
+
     context.subscriptions.push(annotationStore, visibilityFilter, kanbanColumnStore);
     if (annotationPersistence) {
         context.subscriptions.push(annotationPersistence);

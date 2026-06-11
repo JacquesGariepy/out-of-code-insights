@@ -1,4 +1,7 @@
 {
+    "annotatedCodeDeleted": "The code for annotation \"{0}\" was deleted. Keep the annotation?",
+    "keepOrphanedAnnotation": "Keep annotation",
+    "discardAnnotation": "Delete",
     "initializeError": "Failed to initialize the extension",
     "enterUsername": "Enter your name (for annotations)",
     "usernamePlaceholder": "John Doe",

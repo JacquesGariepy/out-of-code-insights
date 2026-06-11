@@ -7,7 +7,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- When annotated code is deleted and not pasted back within the recovery
+  window, a non-modal prompt now asks whether to keep the annotation
+  (restored in the panel/tree) or delete it — annotations are never
+  silently lost anymore.
+
 ### Fixed
+- Editing the text of an annotated line (typing or deleting characters at
+  the start or end of the line) no longer hides the annotation: the anchor
+  hash now rebinds to the edited line content instead of going stale.
 - Annotations no longer drift or get orphaned when code is moved, copied,
   or cut+pasted: the legacy line-based tracker ran on top of the v2
   offset-based store and double-shifted positions, which were then

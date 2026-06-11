@@ -1,4 +1,7 @@
 {
+    "annotatedCodeDeleted": "Le code de l'annotation « {0} » a été supprimé. Conserver l'annotation ?",
+    "keepOrphanedAnnotation": "Conserver l'annotation",
+    "discardAnnotation": "Supprimer",
     "initializeError": "Échec de l'initialisation de l'extension",
     "enterUsername": "Entrez votre nom (pour les annotations)",
     "usernamePlaceholder": "Jonn Doe",

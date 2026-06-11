@@ -239,6 +239,33 @@ suite('Lot 8 — typing Space/Enter at the end of an annotated line keeps the an
         assert.strictEqual(after.hashMatchesLineAtOffset, true, 'lineHash must still match the anchored line');
     });
 
+    test('Backspace on the last char of the annotated line, then retype — annotation stays attached', async function () {
+        this.timeout(30000);
+        // Video repro: '## Context' → backspace → '## Contex' → retype 't'.
+        await placeCursorAtEol(CONTEXT_LINE);
+        await vscode.commands.executeCommand('deleteLeft');
+        await delay(600);
+
+        const afterDelete = resolveView(document, uri.toString());
+        assert.strictEqual(afterDelete.count, 1, 'annotation must survive the in-line deletion');
+        assert.strictEqual(afterDelete.state, 'active', 'annotation must stay active after deleting a char');
+        assert.strictEqual(afterDelete.line, CONTEXT_LINE, 'annotation must stay on the edited line');
+        assert.strictEqual(
+            afterDelete.hashMatchesLineAtOffset,
+            true,
+            'lineHash must be refreshed to "## Contex" so the decoration stays visible'
+        );
+
+        await typeText('t');
+        await delay(600);
+
+        const afterRetype = resolveView(document, uri.toString());
+        assert.strictEqual(afterRetype.count, 1);
+        assert.strictEqual(afterRetype.state, 'active');
+        assert.strictEqual(afterRetype.line, CONTEXT_LINE);
+        assert.strictEqual(afterRetype.hashMatchesLineAtOffset, true, 'lineHash must track the restored text');
+    });
+
     test('Space typed in the middle of the annotated line — annotation stays attached with refreshed hash', async function () {
         this.timeout(30000);
         // Cursor between '##' and ' Context' tail: inside the annotated range (Cas C).

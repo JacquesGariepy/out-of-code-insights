@@ -130,6 +130,8 @@ export class AnnotationStore {
     private readonly _onDidDispose = new TypedEventEmitter<{
         annotationId: string;
         reason: 'ttl-expired' | 'explicit';
+        /** Snapshot taken at disposal time so listeners can offer recovery. */
+        annotation: Readonly<AnnotationV2>;
     }>();
 
     readonly onDidChange = this._onDidChange.event;
@@ -484,11 +486,29 @@ export class AnnotationStore {
                     // Cas A — strictly before.
                     ann.startOffset = a0 + delta;
                     ann.endOffset = a1 + delta;
-                    if (this.changeAffectsLineStructure(change)) {
+                    // Refresh on structural changes (the annotation's line
+                    // index moved) AND on same-line edits before the anchor:
+                    // typing at the start of the annotated line is Cas A by
+                    // offsets (r1 == a0) yet rewrites the very line content
+                    // the lineHash is bound to. A stale hash makes the
+                    // render-side resolver orphan the annotation (decoration
+                    // disappears while the CodeLens stays).
+                    if (
+                        this.changeAffectsLineStructure(change) ||
+                        this.changeTouchesAnnotationLine(change, ann, event.document)
+                    ) {
                         this.refreshAnchorContext(ann, event.document);
                     }
                 } else if (r0 >= a1) {
-                    // Cas B — strictly after: no-op.
+                    // Cas B — strictly after by offsets. Same-line guard: an
+                    // insert at exactly r0 == a1 (e.g. retyping the last
+                    // character of the line right after a deletion shrank
+                    // endOffset) edits the annotated line's content without
+                    // entering the [a0, a1] range. The offsets stay valid but
+                    // the lineHash must rebind to the new line content.
+                    if (this.changeTouchesAnnotationLine(change, ann, event.document)) {
+                        this.refreshAnchorContext(ann, event.document);
+                    }
                     continue;
                 } else if (r0 >= a0 && r1 <= a1) {
                     // Cas C — strictly inside.
@@ -1266,6 +1286,23 @@ export class AnnotationStore {
     }
 
     /**
+     * True when the change's post-edit region shares a line with the
+     * annotation's anchor line. Both sides are evaluated against the
+     * POST-change document (`positionAt` on the already-mutated text), and
+     * the annotation offsets must already be shifted by the caller.
+     */
+    private changeTouchesAnnotationLine(
+        change: vscode.TextDocumentContentChangeEvent,
+        ann: AnnotationV2,
+        document: vscode.TextDocument
+    ): boolean {
+        const annLine = document.positionAt(ann.startOffset).line;
+        const changeStartLine = document.positionAt(change.rangeOffset).line;
+        const changeEndLine = document.positionAt(change.rangeOffset + change.text.length).line;
+        return annLine >= changeStartLine && annLine <= changeEndLine;
+    }
+
+    /**
      * Scan `text` line-by-line and return the byte offset (within `text`) +
      * content of the FIRST line whose normalized hash equals `hash`.
      *
@@ -1370,11 +1407,13 @@ export class AnnotationStore {
         }
         for (const id of expired) {
             const rec = this.suspendedById.get(id);
-            if (rec) {
-                rec.annotation.state = 'disposed';
+            if (!rec) {
+                continue;
             }
+            rec.annotation.state = 'disposed';
+            const snapshot = this.freezeAnnotation(rec.annotation);
             this.unindexSuspended(id);
-            this._onDidDispose.fire({ annotationId: id, reason: 'ttl-expired' });
+            this._onDidDispose.fire({ annotationId: id, reason: 'ttl-expired', annotation: snapshot });
         }
     }
 
