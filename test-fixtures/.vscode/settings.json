@@ -1,3 +1,5 @@
 {
-    "annotation.path": ".out-of-code-insights/annotations.json"
+    "annotation.path": ".out-of-code-insights/annotations.json",
+    "editor.formatOnPaste": false,
+    "editor.formatOnType": false
 }
