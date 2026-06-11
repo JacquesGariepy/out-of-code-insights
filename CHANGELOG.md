@@ -7,6 +7,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+- Annotations no longer drift or get orphaned when code is moved, copied,
+  or cut+pasted: the legacy line-based tracker ran on top of the v2
+  offset-based store and double-shifted positions, which were then
+  persisted. Position tracking is now owned solely by the annotation
+  store at runtime.
+
 ## [1.0.20] - 2026-05-12
 
 ### Fixed

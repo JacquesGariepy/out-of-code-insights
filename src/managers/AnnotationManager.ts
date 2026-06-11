@@ -90,6 +90,14 @@ export class AnnotationManager extends EventEmitter {
             backgroundColor: 'rgba(255, 255, 0, 0.3)',
         });
     private initializationPromise: Promise<void>;
+    /**
+     * When true, handleDocumentChange is a no-op: the v2 AnnotationStore owns
+     * position tracking (offset shift + suspend/resume on cut/paste) and the
+     * store→manager mirror projects the resulting lines back into this map.
+     * Running both trackers double-shifts lines, and the legacy saveAnnotations
+     * bridge then persists the corrupted positions into the store.
+     */
+    public documentChangeTrackingDelegatedToStore = false;
     private documentSnapshots: Map<string, string[]> = new Map();
     /** Milliseconds to hold a deferred (cut) annotation before showing the expiry dialog. */
     public clipboardWindowMs = 5000;
@@ -3844,6 +3852,9 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async handleDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
+        if (this.documentChangeTrackingDelegatedToStore) {
+            return;
+        }
         if (event.contentChanges.length === 0) {
             return;
         }

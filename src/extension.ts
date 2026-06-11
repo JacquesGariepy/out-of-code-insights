@@ -641,6 +641,15 @@ function stubLegacyAnnotationManagerIO(manager: AnnotationManager): void {
     m.saveAnnotations = async () => {
         // intentional R2 no-op — AnnotationStore owns disk.
     };
+    // AnnotationStore owns position tracking too (applyDocumentChange:
+    // offset shift + suspend/resume across cut/copy/paste). The legacy
+    // line-based tracker fired on the SAME onDidChangeTextDocument event,
+    // AFTER the store listener and the store→manager mirror had already
+    // updated `annotation.line` — so its arithmetic shift ran on
+    // already-shifted lines (double shift), and the saveAnnotations bridge
+    // then reconciled the corrupted lines back into the store. Symptom:
+    // annotations drift or orphan on move/copy/cut+paste.
+    manager.documentChangeTrackingDelegatedToStore = true;
 }
 
 /**
