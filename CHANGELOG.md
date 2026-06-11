@@ -7,6 +7,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.22] - 2026-06-11
+
 ### Added
 - The documentation generator is fully configurable — nothing hardcoded:
   `annotation.docs.siteTitle`, `tagPrefix`, `apiFolder`, `guideFile`,
