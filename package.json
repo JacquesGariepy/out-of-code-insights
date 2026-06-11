@@ -290,6 +290,11 @@
                 "icon": "$(key)"
             },
             {
+                "command": "annotations.enterLicenseKey",
+                "title": "Enter License Key (Pro)",
+                "icon": "$(key)"
+            },
+            {
                 "command": "annotations.manageAIProfiles",
                 "title": "AI: Manage Custom Profiles",
                 "icon": "$(settings-gear)"
@@ -945,6 +950,25 @@
                     "type": "string",
                     "default": "untagged",
                     "description": "Bucket label used for annotations without tags in the inventory pages."
+                },
+                "annotation.pro.licenseServerUrl": {
+                    "type": "string",
+                    "default": "",
+                    "description": "URL of the license validation server for Pro features. Empty (default): license validation is skipped and no Pro entitlement is granted — the extension stays fully free as long as no feature is gated."
+                },
+                "annotation.pro.offlineGraceDays": {
+                    "type": "number",
+                    "default": 7,
+                    "minimum": 0,
+                    "description": "Number of days a successfully validated license keeps unlocking Pro features while the license server is unreachable."
+                },
+                "annotation.pro.gatedFeatures": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": [],
+                    "description": "Feature ids that require a valid Pro entitlement. Empty (default): every feature stays free."
                 },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",

@@ -7,6 +7,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- Pro licensing scaffold (inactive by default — the extension stays fully
+  free): new command **Enter License Key (Pro)** stores the key in VS Code
+  Secret Storage and validates it against the server configured via
+  `annotation.pro.licenseServerUrl` (empty default skips validation).
+  Entitlements are cached with an offline grace period
+  (`annotation.pro.offlineGraceDays`, default 7) and features are gated only
+  when listed in `annotation.pro.gatedFeatures` (empty default — nothing is
+  gated).
+
 ## [1.0.22] - 2026-06-11
 
 ### Added
