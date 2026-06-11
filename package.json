@@ -95,6 +95,11 @@
                 "icon": "$(cloud-upload)"
             },
             {
+                "command": "annotations.generateDocs",
+                "title": "Generate Annotation Documentation",
+                "icon": "$(book)"
+            },
+            {
                 "command": "annotations.importJSON",
                 "title": "Import Annotations from JSON",
                 "icon": "$(cloud-download)"
@@ -578,6 +583,13 @@
                     "order": 3
                 },
                 {
+                    "command": "annotations.generateDocs",
+                    "when": "view == annotationsView",
+                    "group": "navigation@9",
+                    "icon": "$(book)",
+                    "order": 9
+                },
+                {
                     "command": "annotations.exportJSON",
                     "when": "view == annotationsView",
                     "group": "navigation@4",
@@ -883,6 +895,11 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Use Claude Code SDK with automatic fallback to REST API if SDK fails."
+                },
+                "annotation.docs.outputPath": {
+                    "type": "string",
+                    "default": "docs/annotations",
+                    "description": "Workspace-relative folder where 'Generate Annotation Documentation' writes the DocFX-compatible Markdown site (toc.yml, index.md, by-type.md, by-file.md, links.md)."
                 },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",

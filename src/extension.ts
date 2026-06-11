@@ -5,6 +5,7 @@ if (typeof globalThis.AbortController === 'undefined') {
     (globalThis as any).AbortController = AbortController;
 }
 
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { AnnotationManager } from './managers/AnnotationManager';
 import type { Annotation } from './common/types';
@@ -25,6 +26,7 @@ import { AnnotationPersistence } from './transactional/AnnotationPersistence';
 import { VisibilityFilter } from './transactional/VisibilityFilter';
 import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
+import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerator';
 
 let annotationManager: AnnotationManager | undefined;
 let profileManager: UserProfileManager | undefined;
@@ -1051,6 +1053,119 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             }
             for (const ann of annotationStore.list()) {
                 annotationStore.remove(ann.id);
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.generateDocs', async () => {
+            if (!annotationStore) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return;
+            }
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                vscode.window.showErrorMessage(
+                    localize('noWorkspaceDocs', 'Open a workspace to generate documentation.')
+                );
+                return;
+            }
+            try {
+                const outDirSetting = vscode.workspace
+                    .getConfiguration('annotation')
+                    .get<string>('docs.outputPath', 'docs/annotations')
+                    .trim();
+                // Same traversal contract as the annotations file path: the
+                // docs always land inside the workspace.
+                if (path.isAbsolute(outDirSetting) || outDirSetting.split(/[\\/]/).includes('..')) {
+                    vscode.window.showErrorMessage(
+                        localize(
+                            'docsPathInvalid',
+                            'annotation.docs.outputPath must be a relative path inside the workspace.'
+                        )
+                    );
+                    return;
+                }
+
+                const all = annotationStore.serialize().annotations;
+                // Resolve display lines per file. openTextDocument loads the
+                // file into memory without showing it — cheap and works for
+                // closed files; failures degrade to line -1 (link without
+                // a line fragment).
+                const lineByAnnotationId = new Map<string, number>();
+                const byUri = new Map<string, typeof all>();
+                for (const a of all) {
+                    const bucket = byUri.get(a.fileUri);
+                    if (bucket) {
+                        bucket.push(a);
+                    } else {
+                        byUri.set(a.fileUri, [a]);
+                    }
+                }
+                for (const [uriStr, anns] of byUri) {
+                    try {
+                        const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uriStr));
+                        for (const a of anns) {
+                            lineByAnnotationId.set(a.id, doc.positionAt(a.startOffset).line);
+                        }
+                    } catch {
+                        for (const a of anns) {
+                            lineByAnnotationId.set(a.id, -1);
+                        }
+                    }
+                }
+
+                const docAnnotations: DocAnnotation[] = all.map((a) => ({
+                    id: a.id,
+                    file: a.file,
+                    line: lineByAnnotationId.get(a.id) ?? -1,
+                    state: a.state,
+                    message: a.message,
+                    author: a.author,
+                    timestamp: a.timestamp,
+                    tags: a.tags,
+                    severity: a.severity,
+                    resolved: a.resolved,
+                    priority: a.priority,
+                    kanbanColumn: a.kanbanColumn,
+                    thread: a.thread,
+                    linkedAnnotations: a.linkedAnnotations,
+                    snippet: a.snippet,
+                }));
+
+                const depth = outDirSetting.split(/[\\/]/).filter((s) => s.length > 0).length;
+                const files = generateDocSet(docAnnotations, {
+                    title: localize('docsTitle', 'Annotations — {0}', workspaceFolder.name),
+                    sourceLinkPrefix: '../'.repeat(depth),
+                    generatedAt: new Date().toISOString(),
+                });
+
+                const outDir = vscode.Uri.joinPath(workspaceFolder.uri, ...outDirSetting.split(/[\\/]/));
+                await vscode.workspace.fs.createDirectory(outDir);
+                for (const [name, content] of files) {
+                    await vscode.workspace.fs.writeFile(
+                        vscode.Uri.joinPath(outDir, name),
+                        Buffer.from(content, 'utf8')
+                    );
+                }
+
+                const openLabel = localize('openDocs', 'Open');
+                const choice = await vscode.window.showInformationMessage(
+                    localize(
+                        'docsGenerated',
+                        'Annotation documentation generated ({0} annotation(s)) in {1}.',
+                        docAnnotations.length,
+                        outDirSetting
+                    ),
+                    openLabel
+                );
+                if (choice === openLabel) {
+                    const indexDoc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(outDir, 'index.md'));
+                    await vscode.window.showTextDocument(indexDoc);
+                }
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                vscode.window.showErrorMessage(localize('docsFailed', 'Failed to generate documentation') + `: ${msg}`);
             }
         })
     );

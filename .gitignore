@@ -52,4 +52,6 @@ test-fixtures/lot7-J-*.json
 test-fixtures/lot7-K-*
 test-fixtures/lot8-*.md
 test-fixtures/lot9-*.md
+test-fixtures/lot10-*.md
+test-fixtures/docs/
 

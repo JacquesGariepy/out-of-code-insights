@@ -8,6 +8,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- New command **Generate Annotation Documentation** (book icon in the
+  Annotations view, also in the command palette): builds a DocFX-compatible
+  Markdown site from all annotations — `toc.yml`, overview with counts by
+  type/severity/file, a by-type page (tags act as the annotation type
+  taxonomy), a by-file page with clickable `file:line` source links, code
+  snippets, discussion threads, and a links page mapping annotation
+  relationships. Output folder is configurable via
+  `annotation.docs.outputPath` (default `docs/annotations`).
 - Deleting a file (or folder) that still has annotations now asks whether
   to keep or delete them, instead of silently purging them.
 - Annotations re-anchor automatically when a file changed outside the
