@@ -1248,14 +1248,46 @@ suite('AnnotationStore — onDidDispose', () => {
         const doc = makeDoc('abc\nfg\n');
         const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc));
         store.suspend(ann.id, ann.lineHash);
-        const events: { id: string; reason: string }[] = [];
-        const sub = store.onDidDispose((e) => events.push({ id: e.annotationId, reason: e.reason }));
+        const events: { id: string; reason: string; snapshotId: string; snapshotState: string }[] = [];
+        const sub = store.onDidDispose((e) =>
+            events.push({
+                id: e.annotationId,
+                reason: e.reason,
+                snapshotId: e.annotation.id,
+                snapshotState: e.annotation.state,
+            })
+        );
         await new Promise((r) => setTimeout(r, 20));
         store.applyDocumentChange(makeEvent(doc, []));
         sub.dispose();
         assert.strictEqual(events.length, 1);
         assert.strictEqual(events[0].id, ann.id);
         assert.strictEqual(events[0].reason, 'ttl-expired');
+        // The event carries a full snapshot so a listener can offer recovery
+        // (extension.ts re-activates it via upsert when the user keeps it).
+        assert.strictEqual(events[0].snapshotId, ann.id);
+        assert.strictEqual(events[0].snapshotState, 'disposed');
+    });
+
+    test('disposed annotation can be revived via upsert (keep-annotation recovery path)', async () => {
+        const store = new AnnotationStore({ suspendTtlMs: 5 });
+        const doc = makeDoc('abc\nfg\n');
+        const ann = store.add({ ...defaultDraft(), message: 'keep me' }, { line: 1 }, asDoc(doc));
+        store.suspend(ann.id, ann.lineHash);
+        let snapshot: Parameters<Parameters<typeof store.onDidDispose>[0]>[0]['annotation'] | undefined;
+        const sub = store.onDidDispose((e) => (snapshot = e.annotation));
+        await new Promise((r) => setTimeout(r, 20));
+        store.applyDocumentChange(makeEvent(doc, []));
+        sub.dispose();
+        assert.ok(snapshot, 'dispose event must carry the snapshot');
+        assert.strictEqual(store.get(ann.id), undefined, 'annotation is gone after disposal');
+
+        const revived = store.upsert({ ...snapshot, state: 'active' });
+        assert.strictEqual(revived.id, ann.id);
+        assert.strictEqual(revived.state, 'active');
+        assert.strictEqual(store.get(ann.id)?.message, 'keep me');
+        const validation = store.validate();
+        assert.strictEqual(validation.valid, true, JSON.stringify(validation.violations));
     });
 });
 
