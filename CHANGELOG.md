@@ -7,6 +7,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.0.21] - 2026-06-11
+
 ### Added
 - When annotated code is deleted and not pasted back within the recovery
   window, a non-modal prompt now asks whether to keep the annotation
