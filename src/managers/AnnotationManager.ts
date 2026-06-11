@@ -27,6 +27,7 @@ import {
     MovedBlock,
     reanchor,
 } from '../anchoring/anchor';
+import { resolveAnnotationStyle, StyleSpec } from '../decorations/annotationStyle';
 
 interface CopySourceSnapshot {
     uri: string;
@@ -5146,18 +5147,27 @@ export class AnnotationManager extends EventEmitter {
         // Get severity icon
         const severityIcon = this.getSeverityIcon(annotation.severity || 'info');
 
+        // Configurable per-tag / per-severity styling (better-comments style).
+        // Resolved fields override the theme defaults from annotation.colors;
+        // undefined fields keep the existing fallbacks.
+        const styleSettings = vscode.workspace.getConfiguration('annotation');
+        const style = resolveAnnotationStyle(annotation, {
+            severityStyles: styleSettings.get<Record<string, StyleSpec>>('severityStyles', {}),
+            tagStyles: styleSettings.get<Record<string, StyleSpec>>('tagStyles', {}),
+        });
+
         return vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
-            backgroundColor: colors.highlightBackground,
+            backgroundColor: style.backgroundColor ?? colors.highlightBackground,
             after: {
                 contentText: ` 💬 ${severityIcon} ${annotation.message}${annotation.pinned ? '📌' : ''}`,
-                color: colors.annotation,
+                color: style.annotationColor ?? colors.annotation,
                 margin: '0 0 0 1em',
             },
-            borderColor: colors.commentBorder,
+            borderColor: style.border ?? colors.commentBorder,
             borderWidth: '0 0 0 2px',
             borderStyle: 'solid',
-            gutterIconPath: this.getGutterIconPath(),
+            gutterIconPath: style.gutterIcon ? this.getGutterIconPath() : undefined,
             gutterIconSize: 'contain',
         });
     }
