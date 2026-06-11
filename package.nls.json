@@ -513,5 +513,14 @@
     "updateMessageError": "Failed to update annotation message",
     "annotationNotFound": "Annotation not found: {0}",
     "noAnnotationsToEdit": "No annotations to edit.",
-    "pickAnnotationToEdit": "Select an annotation to edit"
+    "pickAnnotationToEdit": "Select an annotation to edit",
+    "enterLicenseKeyPrompt": "Enter your Out-of-Code Insights license key",
+    "licenseKeyPlaceholder": "XXXX-XXXX-XXXX-XXXX",
+    "licenseKeyEmpty": "License key cannot be empty",
+    "licenseValid": "License key validated — {0} Pro feature(s) unlocked.",
+    "licenseInvalid": "License key could not be validated. Pro features remain locked.",
+    "licenseValidationFailed": "License validation failed",
+    "licenseServerNotConfigured": "License key stored. It will be validated once a license server is configured (annotation.pro.licenseServerUrl).",
+    "proFeatureLocked": "\"{0}\" is a Pro feature — enter your license key to unlock it.",
+    "enterLicense": "Enter license"
 }

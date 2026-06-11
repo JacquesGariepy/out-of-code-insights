@@ -30,6 +30,7 @@ import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerato
 import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
 import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
 import { createDebounced } from './utils/debounce';
+import { LicenseManager } from './pro/LicenseManager';
 
 let annotationManager: AnnotationManager | undefined;
 let profileManager: UserProfileManager | undefined;
@@ -50,6 +51,13 @@ let docsGenerationInProgress = false;
 
 /** Quiet period between the last annotation change and a watch-mode regeneration. */
 const DOCS_WATCH_DEBOUNCE_MS = 2000;
+
+// Pro licensing scaffold — fully free by default (no gated features, no
+// license server configured). The module-level getter mirrors
+// getAnnotationStore(); requireEntitlement() lives next to the manager.
+let licenseManager: LicenseManager | undefined;
+
+export { getLicenseManager, requireEntitlement } from './pro/LicenseManager';
 
 /**
  * Lookup hook for the in-process AnnotationStore.
@@ -79,6 +87,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     LocalizationManager.getInstance(context);
     registerEssentialCommands(context);
+
+    // Pro licensing scaffold. Constructed before the manager graph so the
+    // enter-license command is available even if later activation steps
+    // fail. With the default settings (empty licenseServerUrl, empty
+    // gatedFeatures) this is inert: refresh() short-circuits and every
+    // feature stays free.
+    licenseManager = new LicenseManager(context);
+    context.subscriptions.push(licenseManager);
+    registerLicenseCommands(context);
+    void licenseManager.refresh();
 
     try {
         logger.info('Creating managers');
@@ -476,7 +494,69 @@ function registerEssentialCommands(context: vscode.ExtensionContext): void {
     );
 }
 
+/**
+ * Register the `annotations.enterLicenseKey` command: input box → store the
+ * key in SecretStorage → validate against the configured license server →
+ * toast with the result. With the default empty
+ * `annotation.pro.licenseServerUrl` the key is stored and validation is
+ * deferred until a server is configured.
+ */
+function registerLicenseCommands(context: vscode.ExtensionContext): void {
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.enterLicenseKey', async () => {
+            if (!licenseManager) {
+                return;
+            }
+            const entered = await vscode.window.showInputBox({
+                prompt: loc('enterLicenseKeyPrompt', 'Enter your Out-of-Code Insights license key'),
+                placeHolder: loc('licenseKeyPlaceholder', 'XXXX-XXXX-XXXX-XXXX'),
+                password: true,
+                ignoreFocusOut: true,
+                validateInput: (text) =>
+                    text.trim().length === 0 ? loc('licenseKeyEmpty', 'License key cannot be empty') : null,
+            });
+            if (!entered) {
+                return;
+            }
+            const key = entered.trim();
+            await licenseManager.storeLicenseKey(key);
+            try {
+                const result = await licenseManager.validate(key);
+                if (result.skipped) {
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'licenseServerNotConfigured',
+                            'License key stored. It will be validated once a license server is configured (annotation.pro.licenseServerUrl).'
+                        )
+                    );
+                } else if (result.valid) {
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'licenseValid',
+                            'License key validated — {0} Pro feature(s) unlocked.',
+                            result.entitlements.length
+                        )
+                    );
+                } else {
+                    vscode.window.showWarningMessage(
+                        loc('licenseInvalid', 'License key could not be validated. Pro features remain locked.')
+                    );
+                }
+            } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                vscode.window.showErrorMessage(
+                    loc('licenseValidationFailed', 'License validation failed') + `: ${msg}`
+                );
+            }
+        })
+    );
+}
+
 export function deactivate(): void {
+    if (licenseManager) {
+        licenseManager.dispose();
+        licenseManager = undefined;
+    }
     if (annotationManager) {
         annotationManager.dispose();
         annotationManager = undefined;

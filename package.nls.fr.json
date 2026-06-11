@@ -513,5 +513,14 @@
     "updateMessageError": "Échec de la mise à jour du message de l'annotation",
     "annotationNotFound": "Annotation introuvable : {0}",
     "noAnnotationsToEdit": "Aucune annotation à modifier.",
-    "pickAnnotationToEdit": "Sélectionnez une annotation à modifier"
+    "pickAnnotationToEdit": "Sélectionnez une annotation à modifier",
+    "enterLicenseKeyPrompt": "Entrez votre clé de licence Out-of-Code Insights",
+    "licenseKeyPlaceholder": "XXXX-XXXX-XXXX-XXXX",
+    "licenseKeyEmpty": "La clé de licence ne peut pas être vide",
+    "licenseValid": "Clé de licence validée — {0} fonctionnalité(s) Pro déverrouillée(s).",
+    "licenseInvalid": "La clé de licence n'a pas pu être validée. Les fonctionnalités Pro restent verrouillées.",
+    "licenseValidationFailed": "Échec de la validation de la licence",
+    "licenseServerNotConfigured": "Clé de licence enregistrée. Elle sera validée dès qu'un serveur de licence sera configuré (annotation.pro.licenseServerUrl).",
+    "proFeatureLocked": "« {0} » est une fonctionnalité Pro — entrez votre clé de licence pour la déverrouiller.",
+    "enterLicense": "Entrer la licence"
 }
