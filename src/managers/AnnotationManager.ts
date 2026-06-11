@@ -91,13 +91,19 @@ export class AnnotationManager extends EventEmitter {
         });
     private initializationPromise: Promise<void>;
     /**
-     * When true, handleDocumentChange is a no-op: the v2 AnnotationStore owns
-     * position tracking (offset shift + suspend/resume on cut/paste) and the
-     * store→manager mirror projects the resulting lines back into this map.
-     * Running both trackers double-shifts lines, and the legacy saveAnnotations
-     * bridge then persists the corrupted positions into the store.
+     * When true, the v2 AnnotationStore owns the annotation lifecycle and the
+     * legacy event handlers become no-ops:
+     *  - handleDocumentChange: store does offset shift + suspend/resume on
+     *    cut/paste; running both trackers double-shifts lines and the legacy
+     *    saveAnnotations bridge then persists the corrupted positions.
+     *  - handleDocumentOpen: store.reanchorDocument relocates after external
+     *    edits; the legacy findAnchor pass would fight it through the bridge.
+     *  - handleFileRename: store.applyFileRename patches active AND suspended
+     *    annotations (the legacy path missed suspended ones).
+     *  - handleFileDelete: the legacy path silently deleted the annotations
+     *    of a removed file; the store-side listener prompts the user instead.
      */
-    public documentChangeTrackingDelegatedToStore = false;
+    public lifecycleDelegatedToStore = false;
     private documentSnapshots: Map<string, string[]> = new Map();
     /** Milliseconds to hold a deferred (cut) annotation before showing the expiry dialog. */
     public clipboardWindowMs = 5000;
@@ -3368,6 +3374,9 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async handleFileRename(event: vscode.FileRenameEvent): Promise<void> {
+        if (this.lifecycleDelegatedToStore) {
+            return;
+        }
         for (const file of event.files) {
             const oldRelativePath = this.getRelativePath(file.oldUri.fsPath);
             const newRelativePath = this.getRelativePath(file.newUri.fsPath);
@@ -3398,6 +3407,9 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async handleFileDelete(event: vscode.FileDeleteEvent): Promise<void> {
+        if (this.lifecycleDelegatedToStore) {
+            return;
+        }
         for (const file of event.files) {
             const annotationsToDelete: string[] = [];
             this.annotations.forEach((annotation, id) => {
@@ -3852,7 +3864,7 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async handleDocumentChange(event: vscode.TextDocumentChangeEvent): Promise<void> {
-        if (this.documentChangeTrackingDelegatedToStore) {
+        if (this.lifecycleDelegatedToStore) {
             return;
         }
         if (event.contentChanges.length === 0) {
@@ -4933,6 +4945,9 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async handleDocumentOpen(document: vscode.TextDocument): Promise<void> {
+        if (this.lifecycleDelegatedToStore) {
+            return;
+        }
         this.snapshotDocument(document);
 
         const relativeFilePath = this.getRelativePath(document.fileName);

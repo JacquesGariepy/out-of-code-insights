@@ -519,10 +519,20 @@ interface ActivationLogger {
  *  - subscribe `store.onDidChange` → `persistence.save(...)` (debounced 500ms).
  *  - register all subscriptions on `context.subscriptions`.
  */
+/**
+ * `annotation.cutRecoveryWindowSeconds`, clamped to [5, 600], in ms. This is
+ * how long a cut/deleted annotation waits in the suspended buffer for its
+ * content to be pasted back before the keep-or-delete prompt fires.
+ */
+function readCutRecoveryWindowMs(): number {
+    const seconds = vscode.workspace.getConfiguration('annotation').get<number>('cutRecoveryWindowSeconds', 30);
+    return Math.min(600, Math.max(5, seconds)) * 1000;
+}
+
 async function bootstrapTransactionalStack(context: vscode.ExtensionContext, logger: ActivationLogger): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 
-    annotationStore = new AnnotationStore({ suspendTtlMs: 30_000 });
+    annotationStore = new AnnotationStore({ suspendTtlMs: readCutRecoveryWindowMs() });
 
     if (workspaceFolder) {
         annotationPersistence = new AnnotationPersistence(workspaceFolder);
@@ -601,6 +611,100 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
         })
     );
 
+    // Follow the user's cut-recovery-window setting live.
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration((e) => {
+            if (e.affectsConfiguration('annotation.cutRecoveryWindowSeconds') && annotationStore) {
+                annotationStore.updateSuspendTtl(readCutRecoveryWindowMs());
+            }
+        })
+    );
+
+    // Re-anchor annotations whose file changed outside the editor's edit
+    // stream (git pull / branch switch / external tools) when the document
+    // (re)opens. Also sweep documents already open at activation.
+    context.subscriptions.push(
+        vscode.workspace.onDidOpenTextDocument((document) => {
+            if (annotationStore) {
+                const moved = annotationStore.reanchorDocument(document);
+                if (moved > 0) {
+                    logger.info(
+                        `reanchorDocument: relocated ${String(moved)} annotation(s) in ${document.uri.toString()}`
+                    );
+                }
+            }
+        })
+    );
+    for (const document of vscode.workspace.textDocuments) {
+        annotationStore.reanchorDocument(document);
+    }
+
+    // File lifecycle — owned by the store (legacy handlers are disabled via
+    // lifecycleDelegatedToStore).
+    context.subscriptions.push(
+        vscode.workspace.onDidRenameFiles((event) => {
+            if (!annotationStore) {
+                return;
+            }
+            for (const file of event.files) {
+                annotationStore.applyFileRename(
+                    file.oldUri.toString(),
+                    file.newUri.toString(),
+                    vscode.workspace.asRelativePath(file.newUri)
+                );
+            }
+        })
+    );
+    context.subscriptions.push(
+        vscode.workspace.onDidDeleteFiles((event) => {
+            if (!annotationStore) {
+                return;
+            }
+            for (const file of event.files) {
+                const uriStr = file.toString();
+                const folderPrefix = uriStr.endsWith('/') ? uriStr : uriStr + '/';
+                // serialize() is the only view that includes suspended
+                // entries; a deleted path may be a folder, so match by
+                // exact uri OR prefix.
+                const affected = annotationStore
+                    .serialize()
+                    .annotations.filter((a) => a.fileUri === uriStr || a.fileUri.startsWith(folderPrefix));
+                if (affected.length === 0) {
+                    continue;
+                }
+                const keepLabel = loc('keepAnnotations', 'Keep annotations');
+                const deleteLabel = loc('deleteAnnotations', 'Delete annotations');
+                void vscode.window
+                    .showWarningMessage(
+                        loc(
+                            'fileDeletedWithAnnotations',
+                            '{0} annotation(s) reference the deleted file "{1}". Keep them?',
+                            affected.length,
+                            vscode.workspace.asRelativePath(file)
+                        ),
+                        keepLabel,
+                        deleteLabel
+                    )
+                    .then((choice) => {
+                        if (choice === deleteLabel && annotationStore) {
+                            annotationStore.beginTransaction();
+                            try {
+                                for (const a of affected) {
+                                    annotationStore.remove(a.id);
+                                }
+                                annotationStore.commit();
+                            } catch (err) {
+                                annotationStore.rollback();
+                                getLogger().error('delete-file annotation cleanup failed', err);
+                            }
+                        }
+                        // Keep (or dismissed): annotations stay in the store and
+                        // the panel/tree; they render as orphaned references.
+                    });
+            }
+        })
+    );
+
     // Never silently lose user data: when annotated code is deleted and not
     // pasted back within the suspend TTL, the store disposes the suspended
     // entry (it stops being serialized). Surface a non-modal choice so the
@@ -671,15 +775,13 @@ function stubLegacyAnnotationManagerIO(manager: AnnotationManager): void {
     m.saveAnnotations = async () => {
         // intentional R2 no-op — AnnotationStore owns disk.
     };
-    // AnnotationStore owns position tracking too (applyDocumentChange:
-    // offset shift + suspend/resume across cut/copy/paste). The legacy
-    // line-based tracker fired on the SAME onDidChangeTextDocument event,
-    // AFTER the store listener and the store→manager mirror had already
-    // updated `annotation.line` — so its arithmetic shift ran on
-    // already-shifted lines (double shift), and the saveAnnotations bridge
-    // then reconciled the corrupted lines back into the store. Symptom:
-    // annotations drift or orphan on move/copy/cut+paste.
-    manager.documentChangeTrackingDelegatedToStore = true;
+    // AnnotationStore owns the rest of the lifecycle too: document-change
+    // tracking (the legacy line-based tracker fired on the SAME event AFTER
+    // the store and the mirror, double-shifting lines that the bridge then
+    // persisted), open-time re-anchoring, file rename, and file delete
+    // (which the legacy handler performed as a SILENT annotation purge —
+    // replaced by a store-side prompt).
+    manager.lifecycleDelegatedToStore = true;
 }
 
 /**

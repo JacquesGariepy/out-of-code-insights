@@ -7,6 +7,8 @@ export async function run(): Promise<void> {
         ui: 'tdd',
         color: true,
         timeout: 20000,
+        // Optional filter for local debugging: MOCHA_GREP="Scenario H" npm test
+        grep: process.env.MOCHA_GREP || undefined,
     });
 
     const testsRoot = path.resolve(__dirname, '..');

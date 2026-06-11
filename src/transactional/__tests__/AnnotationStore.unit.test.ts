@@ -1291,6 +1291,247 @@ suite('AnnotationStore — onDidDispose', () => {
     });
 });
 
+suite('AnnotationStore — sticky boundaries: editing the annotated line rebinds the anchor', () => {
+    test('two successive keystrokes at end of the annotated line keep the hash bound', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('aaa\nbbb\nccc');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc0)); // offsets [4, 7]
+
+        // Keystroke 1: 'x' appended at EOL (offset 7 == endOffset).
+        const doc1 = makeDoc('aaa\nbbbx\nccc');
+        store.applyDocumentChange(
+            makeEvent(doc1, [
+                {
+                    range: { start: { line: 1, character: 3 }, end: { line: 1, character: 3 } },
+                    rangeOffset: 7,
+                    rangeLength: 0,
+                    text: 'x',
+                },
+            ])
+        );
+        let current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(current.endOffset, 8, 'endOffset must extend over the appended char');
+        assert.strictEqual(current.lineHash, hashLine('bbbx'), 'hash must rebind after keystroke 1');
+
+        // Keystroke 2: 'y' appended at the NEW end (offset 8). Before the
+        // sticky-boundary fix, endOffset had desynced and this keystroke was
+        // "strictly after" — the hash stayed bound to the pre-edit text.
+        const doc2 = makeDoc('aaa\nbbbxy\nccc');
+        store.applyDocumentChange(
+            makeEvent(doc2, [
+                {
+                    range: { start: { line: 1, character: 4 }, end: { line: 1, character: 4 } },
+                    rangeOffset: 8,
+                    rangeLength: 0,
+                    text: 'y',
+                },
+            ])
+        );
+        current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(current.state, 'active');
+        assert.strictEqual(current.endOffset, 9);
+        assert.strictEqual(current.lineHash, hashLine('bbbxy'), 'hash must rebind after keystroke 2');
+    });
+
+    test('typing at the start of the annotated line rebinds the hash (Cas A flush boundary)', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('aaa\nbbb\nccc');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc0));
+
+        const doc1 = makeDoc('aaa\nZbbb\nccc');
+        store.applyDocumentChange(
+            makeEvent(doc1, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+                    rangeOffset: 4,
+                    rangeLength: 0,
+                    text: 'Z',
+                },
+            ])
+        );
+        const current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(current.startOffset, 5, 'annotation content shifted right by the insert');
+        assert.strictEqual(doc1.positionAt(current.startOffset).line, 1, 'still anchored on line 1');
+        assert.strictEqual(current.lineHash, hashLine('Zbbb'), 'hash must rebind to the rewritten line');
+    });
+
+    test('typing on an annotated blank line grows the annotation and upgrades EMPTY_LINE_HASH', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('aaa\n\nccc');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc0)); // zero-length [4, 4]
+        assert.strictEqual(store.get(ann.id)?.lineHash, hashLine(''));
+
+        const doc1 = makeDoc('aaa\nh\nccc');
+        store.applyDocumentChange(
+            makeEvent(doc1, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+                    rangeOffset: 4,
+                    rangeLength: 0,
+                    text: 'h',
+                },
+            ])
+        );
+        const current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(current.state, 'active');
+        assert.strictEqual(current.startOffset, 4);
+        assert.strictEqual(current.endOffset, 5, 'annotation must grow over the typed text');
+        assert.strictEqual(current.lineHash, hashLine('h'), 'hash must upgrade from the blank-line sentinel');
+    });
+
+    test('Enter at end of the annotated line does NOT absorb the next line', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('aaa\nbbb\nccc');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc0));
+
+        const doc1 = makeDoc('aaa\nbbb\n\nccc');
+        store.applyDocumentChange(
+            makeEvent(doc1, [
+                {
+                    range: { start: { line: 1, character: 3 }, end: { line: 1, character: 3 } },
+                    rangeOffset: 7,
+                    rangeLength: 0,
+                    text: '\n',
+                },
+            ])
+        );
+        const current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(current.startOffset, 4);
+        assert.strictEqual(current.endOffset, 7, 'newline insert at EOL must stay outside the annotation');
+        assert.strictEqual(current.lineHash, hashLine('bbb'));
+    });
+
+    test('multi-cursor edit (two changes, one event): hash binds to the correct final line', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('aaa\nbbb\nccc\n');
+        const ann = store.add(defaultDraft(), { line: 2 }, asDoc(doc0)); // 'ccc' [8, 11]
+
+        // Single event, changes in reverse document order (VS Code contract):
+        //   c1: insert 'Z' at start of 'ccc' (offset 8)
+        //   c2: insert 'Q\n' at offset 0
+        const docFinal = makeDoc('Q\naaa\nbbb\nZccc\n');
+        store.applyDocumentChange(
+            makeEvent(docFinal, [
+                {
+                    range: { start: { line: 2, character: 0 }, end: { line: 2, character: 0 } },
+                    rangeOffset: 8,
+                    rangeLength: 0,
+                    text: 'Z',
+                },
+                {
+                    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                    rangeOffset: 0,
+                    rangeLength: 0,
+                    text: 'Q\n',
+                },
+            ])
+        );
+        const current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(docFinal.positionAt(current.startOffset).line, 3, 'annotation must land on "Zccc"');
+        assert.strictEqual(
+            current.lineHash,
+            hashLine('Zcc' + 'c'),
+            'deferred refresh must bind the hash to the final line, not a mid-event neighbour'
+        );
+    });
+});
+
+suite('AnnotationStore — reanchorDocument (external edits: git pull / branch switch)', () => {
+    test('relocates an annotation after lines were inserted above while the file was closed', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('function a() {}\nfunction b() {}\nconst TARGET = 42;\nfunction c() {}');
+        const ann = store.add(defaultDraft(), { line: 2 }, asDoc(doc0));
+
+        // Simulate git pull: three lines prepended outside the editor.
+        const docNew = makeDoc(
+            '// new header\n// more\n// even more\nfunction a() {}\nfunction b() {}\nconst TARGET = 42;\nfunction c() {}'
+        );
+        let changeEvents = 0;
+        const sub = store.onDidChange(() => changeEvents++);
+        const moved = store.reanchorDocument(asDoc(docNew));
+        sub.dispose();
+
+        assert.strictEqual(moved, 1);
+        assert.strictEqual(changeEvents, 1, 'exactly one onDidChange batch for persistence/mirror');
+        const current = store.get(ann.id);
+        assert.ok(current);
+        assert.strictEqual(docNew.positionAt(current.startOffset).line, 5, 'reanchored to the shifted TARGET line');
+        assert.strictEqual(current.lineHash, hashLine('const TARGET = 42;'));
+    });
+
+    test('leaves the annotation untouched when the content cannot be found (orphan, no data loss)', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('function a() {}\nconst TARGET = 42;\nfunction c() {}');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc0));
+
+        const docNew = makeDoc('completely\ndifferent\ncontent');
+        const moved = store.reanchorDocument(asDoc(docNew));
+        assert.strictEqual(moved, 0);
+        const current = store.get(ann.id);
+        assert.ok(current, 'annotation must survive as data even when unresolvable');
+        assert.strictEqual(current.lineHash, hashLine('const TARGET = 42;'), 'stale anchor kept for later recovery');
+    });
+});
+
+suite('AnnotationStore — applyFileRename', () => {
+    test('patches fileUri/file of active AND suspended annotations in one batch', () => {
+        const store = new AnnotationStore();
+        const docA = makeDoc('aaa\nbbb\nccc', 'file:///a.ts');
+        const active = store.add(defaultDraft('file:///a.ts', 'a.ts'), { line: 0 }, asDoc(docA));
+        const toSuspend = store.add(defaultDraft('file:///a.ts', 'a.ts'), { line: 1 }, asDoc(docA));
+        store.suspend(toSuspend.id, toSuspend.lineHash);
+        const docB = makeDoc('xxx', 'file:///b.ts');
+        const other = store.add(defaultDraft('file:///b.ts', 'b.ts'), { line: 0 }, asDoc(docB));
+
+        let changeEvents = 0;
+        const sub = store.onDidChange(() => changeEvents++);
+        const patched = store.applyFileRename('file:///a.ts', 'file:///a2.ts', 'a2.ts');
+        sub.dispose();
+
+        assert.strictEqual(patched, 2);
+        assert.strictEqual(changeEvents, 1, 'single transaction batch');
+        assert.strictEqual(store.get(active.id)?.fileUri, 'file:///a2.ts');
+        assert.strictEqual(store.get(active.id)?.file, 'a2.ts');
+        assert.strictEqual(store.get(toSuspend.id)?.fileUri, 'file:///a2.ts', 'suspended entries must be patched too');
+        assert.strictEqual(store.get(other.id)?.fileUri, 'file:///b.ts', 'unrelated files untouched');
+    });
+
+    test('returns 0 and fires nothing when no annotation references the old uri', () => {
+        const store = new AnnotationStore();
+        let changeEvents = 0;
+        const sub = store.onDidChange(() => changeEvents++);
+        assert.strictEqual(store.applyFileRename('file:///nope.ts', 'file:///new.ts'), 0);
+        sub.dispose();
+        assert.strictEqual(changeEvents, 0);
+    });
+});
+
+suite('AnnotationStore — updateSuspendTtl', () => {
+    test('a shortened TTL applies to entries already suspended', async () => {
+        const store = new AnnotationStore({ suspendTtlMs: 60_000 });
+        const doc = makeDoc('abc\nfg\n');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc));
+        store.suspend(ann.id, ann.lineHash);
+
+        store.updateSuspendTtl(5);
+        await new Promise((r) => setTimeout(r, 20));
+        store.applyDocumentChange(makeEvent(doc, []));
+        assert.strictEqual(store.get(ann.id), undefined, 'entry must expire under the new TTL');
+    });
+
+    test('rejects negative or non-finite values', () => {
+        const store = new AnnotationStore();
+        assert.throws(() => store.updateSuspendTtl(-1), RangeError);
+        assert.throws(() => store.updateSuspendTtl(Number.NaN), RangeError);
+    });
+});
+
 suite('AnnotationStore — cloneAsPaste deep-clones business fields', () => {
     test('mutating the clone thread does not affect the source', () => {
         const store = new AnnotationStore();

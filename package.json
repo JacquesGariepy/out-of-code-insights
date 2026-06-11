@@ -884,6 +884,13 @@
                     "default": true,
                     "description": "Use Claude Code SDK with automatic fallback to REST API if SDK fails."
                 },
+                "annotation.cutRecoveryWindowSeconds": {
+                    "type": "number",
+                    "default": 30,
+                    "minimum": 5,
+                    "maximum": 600,
+                    "description": "How long (in seconds) an annotation whose code was cut or deleted waits for the content to be pasted back before asking whether to keep or delete the annotation."
+                },
                 "annotation.language": {
                     "type": "string",
                     "enum": [

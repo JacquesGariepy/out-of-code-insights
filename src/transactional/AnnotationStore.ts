@@ -22,7 +22,7 @@
 
 import { randomUUID } from 'crypto';
 import type * as vscode from 'vscode';
-import { captureAnchor, EMPTY_LINE_HASH, hashLine, type TextDocumentLike } from '../anchoring/anchor';
+import { captureAnchor, EMPTY_LINE_HASH, findAnchor, hashLine, type TextDocumentLike } from '../anchoring/anchor';
 import { TypedEventEmitter } from './internal/event-emitter';
 import {
     ANNOTATION_SCHEMA_VERSION,
@@ -105,7 +105,8 @@ export class AnnotationStore {
     private readonly map = new Map<string, AnnotationV2>();
     private readonly journal: OpEntry[] = [];
     private readonly capacity: number;
-    private readonly suspendTtlMs: number;
+    /** Mutable: `updateSuspendTtl` follows the user setting live. */
+    private suspendTtlMs: number;
 
     /** Pending ops collected between beginTransaction/commit. */
     private activeTransaction: { ops: OpEntry[]; transactionId: string } | null = null;
@@ -455,6 +456,14 @@ export class AnnotationStore {
         const docUri = event.document.uri.toString();
 
         // 1. Per-change Cas A/B/C/D classification on active annotations.
+        //
+        // OFFSETS ONLY in this loop. Anchor-context refreshes are deferred to
+        // step 2: refreshAnchorContext reads the POST-change document at the
+        // annotation's CURRENT offset, so calling it mid-loop — before the
+        // remaining changes of a multi-change event (multi-cursor edits,
+        // find-and-replace-all, rename-symbol) have shifted the offsets —
+        // can bind the lineHash to a neighbouring line.
+        const pendingRefresh = new Set<string>();
         for (const change of event.contentChanges) {
             const r0 = change.rangeOffset;
             const r1 = change.rangeOffset + change.rangeLength;
@@ -482,48 +491,48 @@ export class AnnotationStore {
                     continue;
                 }
 
+                // Sticky end boundary: a pure single-line insert flush at the
+                // end of the annotated range EXTENDS it instead of falling
+                // into Cas B. This is every keystroke at the end of the
+                // annotated line once endOffset tracks the line end — without
+                // it, endOffset desyncs from the line on the first append and
+                // later edits stop registering as touching the annotation.
+                // Also covers typing on an annotated blank line (a0 == a1):
+                // the annotation grows over the typed text and the deferred
+                // refresh upgrades EMPTY_LINE_HASH to a real content hash.
+                // Newline inserts are excluded so Enter at the end of the
+                // line stays Cas B (the annotation must not absorb the next
+                // line).
+                if (r0 === a1 && change.rangeLength === 0 && change.text.length > 0 && !change.text.includes('\n')) {
+                    ann.endOffset = a1 + delta;
+                    pendingRefresh.add(ann.id);
+                    continue;
+                }
+
                 if (r1 <= a0) {
-                    // Cas A — strictly before.
+                    // Cas A — strictly before. Mark for refresh when the line
+                    // structure changed (the annotation's line index moved)
+                    // or when the change ends flush at the annotation start
+                    // (typing/deleting at the start of the annotated line
+                    // rewrites the line content the hash is bound to).
                     ann.startOffset = a0 + delta;
                     ann.endOffset = a1 + delta;
-                    // Refresh on structural changes (the annotation's line
-                    // index moved) AND on same-line edits before the anchor:
-                    // typing at the start of the annotated line is Cas A by
-                    // offsets (r1 == a0) yet rewrites the very line content
-                    // the lineHash is bound to. A stale hash makes the
-                    // render-side resolver orphan the annotation (decoration
-                    // disappears while the CodeLens stays).
-                    if (
-                        this.changeAffectsLineStructure(change) ||
-                        this.changeTouchesAnnotationLine(change, ann, event.document)
-                    ) {
-                        this.refreshAnchorContext(ann, event.document);
+                    if (this.changeAffectsLineStructure(change) || r1 === a0) {
+                        pendingRefresh.add(ann.id);
                     }
                 } else if (r0 >= a1) {
-                    // Cas B — strictly after by offsets. Same-line guard: an
-                    // insert at exactly r0 == a1 (e.g. retyping the last
-                    // character of the line right after a deletion shrank
-                    // endOffset) edits the annotated line's content without
-                    // entering the [a0, a1] range. The offsets stay valid but
-                    // the lineHash must rebind to the new line content.
-                    if (this.changeTouchesAnnotationLine(change, ann, event.document)) {
-                        this.refreshAnchorContext(ann, event.document);
+                    // Cas B — strictly after. A replace/delete starting flush
+                    // at the end (r0 == a1, e.g. deleting the trailing
+                    // newline merges the next line up into the annotated
+                    // line) rewrites the line content: mark for refresh.
+                    if (r0 === a1) {
+                        pendingRefresh.add(ann.id);
                     }
-                    continue;
                 } else if (r0 >= a0 && r1 <= a1) {
-                    // Cas C — strictly inside.
+                    // Cas C — strictly inside: the annotation's own content
+                    // changed; the hash must rebind to the edited text.
                     ann.endOffset = a1 + delta;
-                    // Always refresh: a Cas C change modified the annotation's
-                    // own content (single-char typing, replacement, or
-                    // multi-line edit). Without this, ann.lineHash stays bound
-                    // to the pre-edit text; a later cut would suspend with the
-                    // stale hash, and detectPaste's hashLine on the post-edit
-                    // pasted content would not match -- the annotation
-                    // disappears (suspended, then TTL-disposed). Keep the
-                    // structural-change gate for Cas A/B (offsets shift but
-                    // content is unchanged) -- only Cas C needs unconditional
-                    // refresh.
-                    this.refreshAnchorContext(ann, event.document);
+                    pendingRefresh.add(ann.id);
                 } else {
                     // Cas D — boundary crossing.
                     //
@@ -534,18 +543,14 @@ export class AnnotationStore {
                     // edit in-place — the boundary overshoot is just the
                     // formatter rewriting indentation or appending/altering
                     // the trailing newline. Re-anchor at the surviving line
-                    // rather than suspending; this keeps the annotation
-                    // active inside the v2 store without depending on the
-                    // v1 reanchor rescue (AnnotationManager.ts:4155), which
-                    // is best-effort and may miss when the v1 line index
-                    // disagrees with the v2 offset.
+                    // rather than suspending.
                     if (change.text.length > 0 && change.rangeLength > 0) {
                         const survivor = this.findLineHashInText(change.text, ann.lineHash);
                         if (survivor !== null) {
                             const length = ann.endOffset - ann.startOffset;
                             ann.startOffset = change.rangeOffset + survivor.lineStart;
                             ann.endOffset = ann.startOffset + length;
-                            this.refreshAnchorContext(ann, event.document);
+                            pendingRefresh.add(ann.id);
                             continue;
                         }
                     }
@@ -557,13 +562,107 @@ export class AnnotationStore {
             }
         }
 
-        // 2. Detect paste-resume / paste-clone for pure inserts.
+        // 2. Deferred anchor refresh — final offsets against the final text.
+        for (const id of pendingRefresh) {
+            const ann = this.map.get(id);
+            if (ann && ann.state === 'active') {
+                this.refreshAnchorContext(ann, event.document);
+            }
+        }
+
+        // 3. Detect paste-resume / paste-clone for pure inserts.
         const resumedThisCall = new Set<string>();
         for (const change of event.contentChanges) {
             if (change.text.length > 0 && change.rangeLength === 0) {
                 this.detectPaste(change, event.document, resumedThisCall);
             }
         }
+
+        // 4. Rescue net: any active annotation of this file whose lineHash no
+        // longer matches the line under its (final) startOffset gets one
+        // conservative context-based relocation attempt. Catches event
+        // shapes the per-change arithmetic mis-models (unusual editor
+        // operations, extensions issuing exotic WorkspaceEdits). findAnchor
+        // relocates by OLD hash + context, so a line legitimately edited in
+        // place (already refreshed in step 2) never matches this predicate.
+        for (const ann of this.map.values()) {
+            if (ann.fileUri !== docUri || ann.state !== 'active') {
+                continue;
+            }
+            this.tryRelocateByAnchor(ann, event.document);
+        }
+    }
+
+    /**
+     * Re-anchor every active annotation of `document` whose stored lineHash
+     * no longer matches the line at its startOffset. Used when a document
+     * (re)opens after the file changed outside the editor's edit stream:
+     * git pull / branch switch / external tools rewriting the file while it
+     * was closed. Relocation is conservative (hash + context voting via
+     * findAnchor); annotations that cannot be confidently relocated are left
+     * untouched — the render side shows them as orphaned, the data survives.
+     *
+     * Returns the number of annotations that moved. Fires a single empty
+     * onDidChange batch when at least one moved, so the mirror and the
+     * debounced persistence pick up the new offsets.
+     */
+    reanchorDocument(document: vscode.TextDocument): number {
+        const docUri = document.uri.toString();
+        let moved = 0;
+        for (const ann of this.map.values()) {
+            if (ann.fileUri !== docUri || ann.state !== 'active') {
+                continue;
+            }
+            if (this.tryRelocateByAnchor(ann, document)) {
+                moved++;
+            }
+        }
+        if (moved > 0) {
+            this._onDidChange.fire([]);
+        }
+        return moved;
+    }
+
+    /**
+     * Rewrite `fileUri` (and optionally the workspace-relative `file`) of
+     * every annotation — active AND suspended — that referenced `oldUri`.
+     * One transaction, one onDidChange batch. Returns the number patched.
+     */
+    applyFileRename(oldUri: string, newUri: string, newRelativePath?: string): number {
+        const activeIds: string[] = [];
+        for (const ann of this.map.values()) {
+            if (ann.fileUri === oldUri) {
+                activeIds.push(ann.id);
+            }
+        }
+        const suspendedIds: string[] = [];
+        for (const [id, rec] of this.suspendedById) {
+            if (rec.annotation.fileUri === oldUri) {
+                suspendedIds.push(id);
+            }
+        }
+        if (activeIds.length === 0 && suspendedIds.length === 0) {
+            return 0;
+        }
+        this.beginTransaction();
+        try {
+            for (const id of [...activeIds, ...suspendedIds]) {
+                this.update(id, newRelativePath ? { fileUri: newUri, file: newRelativePath } : { fileUri: newUri });
+            }
+            this.commit();
+        } catch (err) {
+            this.rollback();
+            throw err;
+        }
+        return activeIds.length + suspendedIds.length;
+    }
+
+    /** Adjust the suspended-buffer TTL live (follows the user setting). */
+    updateSuspendTtl(ms: number): void {
+        if (ms < 0 || !Number.isFinite(ms)) {
+            throw new RangeError(`AnnotationStore.updateSuspendTtl: invalid TTL ${String(ms)}`);
+        }
+        this.suspendTtlMs = ms;
     }
 
     // ── Suspended buffer (Lot 4) ─────────────────────────────────────────
@@ -1286,20 +1385,47 @@ export class AnnotationStore {
     }
 
     /**
-     * True when the change's post-edit region shares a line with the
-     * annotation's anchor line. Both sides are evaluated against the
-     * POST-change document (`positionAt` on the already-mutated text), and
-     * the annotation offsets must already be shifted by the caller.
+     * Conservative relocation: when the line under `ann.startOffset` no
+     * longer hashes to `ann.lineHash`, look the old content up elsewhere in
+     * the document via findAnchor (hash candidates scored by context; NO
+     * unique-hash fallback — a lone identical line elsewhere is not enough
+     * evidence to move a possibly-corrupted anchor). On a confident match
+     * the annotation moves there (length preserved) and its anchor context
+     * is recaptured. Returns true when the annotation moved.
+     *
+     * Mutations are silent (no journal entry): like the Cas A/B/C offset
+     * shifts, relocation is a document-driven projection, not a user
+     * mutation — journaling it would desync the best-effort undo mirroring
+     * (limit L1) which pairs journal transactions with editor undo events.
      */
-    private changeTouchesAnnotationLine(
-        change: vscode.TextDocumentContentChangeEvent,
-        ann: AnnotationV2,
-        document: vscode.TextDocument
-    ): boolean {
-        const annLine = document.positionAt(ann.startOffset).line;
-        const changeStartLine = document.positionAt(change.rangeOffset).line;
-        const changeEndLine = document.positionAt(change.rangeOffset + change.text.length).line;
-        return annLine >= changeStartLine && annLine <= changeEndLine;
+    private tryRelocateByAnchor(ann: AnnotationV2, document: vscode.TextDocument): boolean {
+        let lineIdx = this.offsetToLine(ann.startOffset, document);
+        if (lineIdx < 0) {
+            lineIdx = 0;
+        }
+        if (lineIdx >= document.lineCount) {
+            lineIdx = document.lineCount - 1;
+        }
+        if (hashLine(document.lineAt(lineIdx).text) === ann.lineHash) {
+            return false;
+        }
+        const found = findAnchor(
+            document as unknown as TextDocumentLike,
+            {
+                lineHash: ann.lineHash,
+                contextBefore: ann.contextBefore ?? [],
+                contextAfter: ann.contextAfter ?? [],
+            },
+            lineIdx
+        );
+        if (found === null || found === lineIdx) {
+            return false;
+        }
+        const length = ann.endOffset - ann.startOffset;
+        ann.startOffset = this.lineToOffset(found, document);
+        ann.endOffset = ann.startOffset + length;
+        this.refreshAnchorContext(ann, document);
+        return true;
     }
 
     /**

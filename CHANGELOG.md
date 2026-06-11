@@ -7,6 +7,25 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- Deleting a file (or folder) that still has annotations now asks whether
+  to keep or delete them, instead of silently purging them.
+- Annotations re-anchor automatically when a file changed outside the
+  editor (git pull, branch switch, external tools) and is reopened.
+- New setting `annotation.cutRecoveryWindowSeconds` (default 30, range
+  5–600) controls how long a cut/deleted annotation waits for its content
+  to be pasted back before the keep-or-delete prompt.
+
+### Fixed
+- Typing several characters in a row at the end of an annotated line, or
+  at its very start, no longer detaches the annotation (the anchored range
+  now extends with the typed text and the hash rebinds on every edit of
+  the line, including multi-cursor edits).
+- Typing on an annotated blank line now grows the annotation over the
+  typed text instead of leaving a degenerate blank-line anchor.
+- File rename now updates suspended annotations too (previously only
+  active ones followed the rename).
+
 ## [1.0.21] - 2026-06-11
 
 ### Added
