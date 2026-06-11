@@ -975,7 +975,7 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.commands.registerCommand(
             'annotations.add',
-            async (args?: { line?: number; offset?: number; message?: string }) => {
+            async (args?: { line?: number; offset?: number; message?: string; tags?: string[] }) => {
                 if (!annotationStore) {
                     vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
                     return;
@@ -999,32 +999,21 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 const document = editor.document;
                 const fileUri = document.uri.toString();
                 const file = vscode.workspace.asRelativePath(document.uri);
+                const draft = {
+                    fileUri,
+                    file,
+                    origin: { kind: 'manual' } as const,
+                    message,
+                    timestamp: new Date().toISOString(),
+                    languageId: document.languageId,
+                    ...(args?.tags && args.tags.length > 0 ? { tags: args.tags } : {}),
+                };
                 try {
                     if (typeof args?.offset === 'number') {
-                        annotationStore.add(
-                            {
-                                fileUri,
-                                file,
-                                origin: { kind: 'manual' },
-                                message,
-                                timestamp: new Date().toISOString(),
-                            },
-                            { offset: args.offset },
-                            document
-                        );
+                        annotationStore.add(draft, { offset: args.offset }, document);
                     } else {
                         const line = args?.line ?? editor.selection.active.line;
-                        annotationStore.add(
-                            {
-                                fileUri,
-                                file,
-                                origin: { kind: 'manual' },
-                                message,
-                                timestamp: new Date().toISOString(),
-                            },
-                            { line },
-                            document
-                        );
+                        annotationStore.add(draft, { line }, document);
                     }
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
@@ -1054,6 +1043,45 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             for (const ann of annotationStore.list()) {
                 annotationStore.remove(ann.id);
             }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.addDocBlock', async () => {
+            const roles: { label: string; description: string; tag: string }[] = [
+                {
+                    label: '$(symbol-namespace) Module',
+                    description: loc('docRoleModule', 'File-level header — opens the API page for this file'),
+                    tag: 'doc:module',
+                },
+                {
+                    label: '$(symbol-class) Class',
+                    description: loc('docRoleClass', 'Class section — owns the functions documented below it'),
+                    tag: 'doc:class',
+                },
+                {
+                    label: '$(symbol-method) Function',
+                    description: loc('docRoleFunction', 'Function/method entry — nests under the preceding class'),
+                    tag: 'doc:function',
+                },
+                {
+                    label: '$(beaker) Example',
+                    description: loc('docRoleExample', 'Example block — attaches to the entity documented above'),
+                    tag: 'doc:example',
+                },
+                {
+                    label: '$(book) Guide',
+                    description: loc('docRoleGuide', 'Free-standing guide content assembled into guide.md'),
+                    tag: 'doc:guide',
+                },
+            ];
+            const picked = await vscode.window.showQuickPick(roles, {
+                placeHolder: loc('docRolePlaceholder', 'Documentation role for this annotation'),
+            });
+            if (!picked) {
+                return;
+            }
+            await vscode.commands.executeCommand('annotations.add', { tags: [picked.tag] });
         })
     );
 
@@ -1093,6 +1121,7 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 // closed files; failures degrade to line -1 (link without
                 // a line fragment).
                 const lineByAnnotationId = new Map<string, number>();
+                const anchorTextByAnnotationId = new Map<string, string>();
                 const byUri = new Map<string, typeof all>();
                 for (const a of all) {
                     const bucket = byUri.get(a.fileUri);
@@ -1106,7 +1135,9 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     try {
                         const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uriStr));
                         for (const a of anns) {
-                            lineByAnnotationId.set(a.id, doc.positionAt(a.startOffset).line);
+                            const line = doc.positionAt(a.startOffset).line;
+                            lineByAnnotationId.set(a.id, line);
+                            anchorTextByAnnotationId.set(a.id, doc.lineAt(line).text);
                         }
                     } catch {
                         for (const a of anns) {
@@ -1131,6 +1162,8 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     thread: a.thread,
                     linkedAnnotations: a.linkedAnnotations,
                     snippet: a.snippet,
+                    anchorText: anchorTextByAnnotationId.get(a.id),
+                    language: a.languageId,
                 }));
 
                 const depth = outDirSetting.split(/[\\/]/).filter((s) => s.length > 0).length;

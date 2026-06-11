@@ -111,4 +111,63 @@ suite('Lot 10 — annotations.generateDocs produces a DocFX site', () => {
         assert.ok(byFile.includes('lot10 second annotation'));
         assert.ok(byFile.includes('#L3>'), 'source link must carry the resolved 1-based line');
     });
+
+    test('doc:* tagged annotations assemble an authored API page with signatures and wiki-links', async function () {
+        this.timeout(30000);
+
+        const uri = vscode.Uri.file(path.join(workspaceRoot(), 'lot10-svc.ts'));
+        const source =
+            '// module header line\n' +
+            'export class UserService {\n' +
+            '    async createUser(name: string): Promise<string> {\n' +
+            "        return name + '-id';\n" +
+            '    }\n' +
+            '}\n';
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(source, 'utf8'));
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document);
+        await delay(300);
+
+        await vscode.commands.executeCommand('annotations.add', {
+            line: 0,
+            message: '# User module\n\nEverything about users. See [[UserService]].',
+            tags: ['doc:module'],
+        });
+        await delay(200);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: 1,
+            message: '# UserService\n\nManages user accounts.',
+            tags: ['doc:class'],
+        });
+        await delay(200);
+        await vscode.commands.executeCommand('annotations.add', {
+            line: 2,
+            message: '# createUser\n\nCreates a user.',
+            tags: ['doc:function'],
+        });
+        await delay(600);
+
+        const original = vscode.window.showInformationMessage;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (vscode.window as any).showInformationMessage = async () => undefined;
+        try {
+            await vscode.commands.executeCommand('annotations.generateDocs');
+        } finally {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (vscode.window as any).showInformationMessage = original;
+        }
+        await delay(300);
+
+        const apiPage = path.join(docsDir(), 'api', 'lot10-svc-ts.md');
+        assert.ok(fs.existsSync(apiPage), 'api page must be generated for the documented file');
+        const api = fs.readFileSync(apiPage, 'utf8');
+        assert.ok(api.startsWith('# User module'), 'module annotation heads the page');
+        assert.ok(api.includes('## UserService'), 'class section');
+        assert.ok(api.includes('### createUser'), 'function nested under the class');
+        assert.ok(api.includes('export class UserService {'), 'class signature extracted from the anchored line');
+        assert.ok(api.includes('[UserService](lot10-svc-ts.md#ann-'), 'wiki-link resolved to the class anchor');
+
+        const toc = fs.readFileSync(path.join(docsDir(), 'toc.yml'), 'utf8');
+        assert.ok(toc.includes('href: api/lot10-svc-ts.md'), 'toc must reference the api page');
+    });
 });

@@ -16,6 +16,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   snippets, discussion threads, and a links page mapping annotation
   relationships. Output folder is configurable via
   `annotation.docs.outputPath` (default `docs/annotations`).
+- Authored documentation from `doc:*` tags: annotations tagged
+  `doc:module`, `doc:class`, `doc:function`/`doc:method`, `doc:example` or
+  `doc:guide` are assembled into API pages (one per source file, with
+  signatures extracted from the anchored line, class→function→example
+  nesting by code proximity, full-Markdown bodies with heading demotion)
+  and a guide page. `[[Title]]` wiki-links resolve across pages;
+  unresolved links and structural issues are reported in a Generation
+  warnings section. New command **Add Documentation Annotation** picks the
+  role and pre-tags the annotation.
 - Deleting a file (or folder) that still has annotations now asks whether
   to keep or delete them, instead of silently purging them.
 - Annotations re-anchor automatically when a file changed outside the

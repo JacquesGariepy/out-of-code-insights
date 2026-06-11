@@ -3,7 +3,14 @@
  * No vscode dependency — runs in the fast `test:unit` pass.
  */
 import * as assert from 'assert';
-import { generateDocSet, type DocAnnotation } from '../../../docs/AnnotationDocGenerator';
+import {
+    demoteHeadings,
+    docRoleOf,
+    extractTitle,
+    fileSlug,
+    generateDocSet,
+    type DocAnnotation,
+} from '../../../docs/AnnotationDocGenerator';
 
 function makeAnn(overrides: Partial<DocAnnotation> = {}): DocAnnotation {
     return {
@@ -146,5 +153,155 @@ suite('AnnotationDocGenerator — by-type.md and links.md', () => {
     test('links.md degrades gracefully when nothing is linked', () => {
         const links = generateDocSet([makeAnn()]).get('links.md') ?? '';
         assert.ok(links.includes('_No linked annotations._'));
+    });
+});
+
+suite('AnnotationDocGenerator — doc:* role parsing and helpers', () => {
+    test('docRoleOf recognizes roles case-insensitively, doc:method aliases doc:function', () => {
+        assert.strictEqual(docRoleOf({ tags: ['doc:module'] }), 'module');
+        assert.strictEqual(docRoleOf({ tags: ['Doc:Class'] }), 'class');
+        assert.strictEqual(docRoleOf({ tags: ['doc:method'] }), 'function');
+        assert.strictEqual(docRoleOf({ tags: ['api', 'doc:example'] }), 'example');
+        assert.strictEqual(docRoleOf({ tags: ['api'] }), null);
+        assert.strictEqual(docRoleOf({ tags: undefined }), null);
+    });
+
+    test('extractTitle prefers a leading heading and strips it from the body', () => {
+        const r = extractTitle('# UserService\n\nManages accounts.');
+        assert.strictEqual(r.title, 'UserService');
+        assert.strictEqual(r.body, 'Manages accounts.');
+    });
+
+    test('extractTitle falls back to the first line', () => {
+        const r = extractTitle('UserService\nManages accounts.');
+        assert.strictEqual(r.title, 'UserService');
+        assert.strictEqual(r.body, 'Manages accounts.');
+    });
+
+    test('demoteHeadings shifts headings but never past h6 and skips fenced code', () => {
+        const input = '# T\n```md\n# code heading\n```\n###### deep';
+        const out = demoteHeadings(input, 2);
+        assert.ok(out.includes('### T'));
+        assert.ok(out.includes('# code heading'), 'fenced content untouched');
+        assert.ok(out.includes('###### deep'), 'h6 stays h6');
+    });
+
+    test('fileSlug produces url-safe page names', () => {
+        assert.strictEqual(fileSlug('src/managers/Foo.Bar.ts'), 'src-managers-Foo-Bar-ts');
+    });
+});
+
+suite('AnnotationDocGenerator — authored documentation (doc:* tags)', () => {
+    function docSet(): DocAnnotation[] {
+        return [
+            makeAnn({
+                id: 'mod',
+                file: 'src/user.ts',
+                line: 0,
+                tags: ['doc:module'],
+                message: '# User module\n\nEverything about users. See [[UserService]].',
+            }),
+            makeAnn({
+                id: 'cls',
+                file: 'src/user.ts',
+                line: 4,
+                tags: ['doc:class'],
+                message: '# UserService\n\nManages user accounts.\n\n# Notes\n\nThread-safe.',
+                anchorText: 'export class UserService {',
+                language: 'typescript',
+            }),
+            makeAnn({
+                id: 'fn',
+                file: 'src/user.ts',
+                line: 9,
+                tags: ['doc:function'],
+                message: '# createUser\n\nCreates a user. See [[Creating users]].',
+                anchorText: '    async createUser(name: string): Promise<User> {',
+                language: 'typescript',
+            }),
+            makeAnn({
+                id: 'ex',
+                file: 'src/user.ts',
+                line: 10,
+                tags: ['doc:example'],
+                message: '# Basic usage\n\nCall it like this:',
+                snippet: { code: "await svc.createUser('ada');", language: 'typescript' },
+            }),
+            makeAnn({
+                id: 'guide',
+                file: 'docs-notes.md',
+                line: 0,
+                tags: ['doc:guide'],
+                message: '# Creating users\n\nStep by step. Back to [[UserService]].',
+            }),
+        ];
+    }
+
+    test('produces an api page per documented file plus guide.md, all referenced by toc.yml', () => {
+        const files = generateDocSet(docSet());
+        assert.ok(files.has('api/src-user-ts.md'), 'api page for src/user.ts');
+        assert.ok(files.has('guide.md'));
+        const toc = files.get('toc.yml') ?? '';
+        assert.ok(toc.includes('- name: API'));
+        assert.ok(toc.includes('href: api/src-user-ts.md'));
+        assert.ok(toc.includes('- name: Guide'));
+        assert.ok(toc.includes('href: guide.md'));
+    });
+
+    test('api page nests function under class and example under function, with signatures', () => {
+        const api = generateDocSet(docSet()).get('api/src-user-ts.md') ?? '';
+        assert.ok(api.startsWith('# User module'), 'module title heads the page');
+        assert.ok(api.includes('## UserService'), 'class is h2');
+        assert.ok(api.includes('### createUser'), 'member function is h3 under the class');
+        assert.ok(api.includes('#### Example — Basic usage'), 'example is h4 under the function');
+        assert.ok(api.includes('```typescript\nexport class UserService {\n```'), 'class signature');
+        assert.ok(api.includes("await svc.createUser('ada');"), 'example snippet rendered');
+        assert.ok(api.includes('### Notes'), 'authored h1 inside class body demoted below the class heading');
+    });
+
+    test('wiki-links resolve across pages and into guide.md', () => {
+        const files = generateDocSet(docSet());
+        const api = files.get('api/src-user-ts.md') ?? '';
+        assert.ok(api.includes('[UserService](src-user-ts.md#ann-cls)'), 'module → class same-folder link');
+        assert.ok(api.includes('[Creating users](../guide.md#ann-guide)'), 'api → guide crosses up one folder');
+        const guide = files.get('guide.md') ?? '';
+        assert.ok(guide.includes('[UserService](api/src-user-ts.md#ann-cls)'), 'guide → api link');
+    });
+
+    test('unresolved wiki-links are reported in the index warnings', () => {
+        const anns = [makeAnn({ id: 'g', tags: ['doc:guide'], message: '# Lonely\n\nSee [[Does Not Exist]].' })];
+        const files = generateDocSet(anns);
+        const index = files.get('index.md') ?? '';
+        assert.ok(index.includes('## Generation warnings'));
+        assert.ok(index.includes('Unresolved wiki-link [[Does Not Exist]]'));
+        const guide = files.get('guide.md') ?? '';
+        assert.ok(guide.includes('[[Does Not Exist]]'), 'unresolved link kept verbatim');
+    });
+
+    test('orphan example and duplicate module produce warnings without losing content', () => {
+        const anns = [
+            makeAnn({ id: 'e1', file: 'a.ts', line: 1, tags: ['doc:example'], message: '# Floating example' }),
+            makeAnn({ id: 'm1', file: 'a.ts', line: 3, tags: ['doc:module'], message: '# A' }),
+            makeAnn({ id: 'm2', file: 'a.ts', line: 5, tags: ['doc:module'], message: '# B' }),
+        ];
+        const files = generateDocSet(anns);
+        const api = files.get('api/a-ts.md') ?? '';
+        assert.ok(api.includes('Example — Floating example'), 'orphan example still rendered');
+        const index = files.get('index.md') ?? '';
+        assert.ok(index.includes('doc:example without a preceding documented entity'));
+        assert.ok(index.includes('Extra doc:module annotation ignored'));
+    });
+
+    test('without doc tags the site stays inventory-only with a tagging tip', () => {
+        const files = generateDocSet([makeAnn()]);
+        assert.deepStrictEqual([...files.keys()].sort(), [
+            'by-file.md',
+            'by-type.md',
+            'index.md',
+            'links.md',
+            'toc.yml',
+        ]);
+        const index = files.get('index.md') ?? '';
+        assert.ok(index.includes('Tip: tag annotations with `doc:module`'));
     });
 });

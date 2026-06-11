@@ -100,6 +100,11 @@
                 "icon": "$(book)"
             },
             {
+                "command": "annotations.addDocBlock",
+                "title": "Add Documentation Annotation",
+                "icon": "$(note)"
+            },
+            {
                 "command": "annotations.importJSON",
                 "title": "Import Annotations from JSON",
                 "icon": "$(cloud-download)"
