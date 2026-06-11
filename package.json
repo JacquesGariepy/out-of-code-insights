@@ -80,6 +80,11 @@
                 "icon": "$(edit)"
             },
             {
+                "command": "annotations.editMessageMarkdown",
+                "title": "Edit Annotation Message (Markdown)",
+                "icon": "$(edit)"
+            },
+            {
                 "command": "annotations.toggleDisplay",
                 "title": "Toggle Annotations Display",
                 "icon": "$(eye)"
@@ -1005,6 +1010,11 @@
                     "type": "string",
                     "default": "untagged",
                     "description": "Bucket label used for annotations without tags in the inventory pages."
+                },
+                "annotation.docs.watch": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Regenerate the annotation documentation automatically when annotations change."
                 },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",
