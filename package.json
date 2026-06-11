@@ -906,6 +906,46 @@
                     "default": "docs/annotations",
                     "description": "Workspace-relative folder where 'Generate Annotation Documentation' writes the DocFX-compatible Markdown site (toc.yml, index.md, by-type.md, by-file.md, links.md)."
                 },
+                "annotation.docs.siteTitle": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Title of the generated documentation site. Empty = 'Annotations — <workspace name>'."
+                },
+                "annotation.docs.tagPrefix": {
+                    "type": "string",
+                    "default": "doc:",
+                    "description": "Tag prefix that marks documentation roles (module/class/function/method/example/guide)."
+                },
+                "annotation.docs.apiFolder": {
+                    "type": "string",
+                    "default": "api",
+                    "description": "Subfolder (single path segment) of the output folder where authored API pages are written."
+                },
+                "annotation.docs.guideFile": {
+                    "type": "string",
+                    "default": "guide.md",
+                    "description": "File name of the assembled guide page."
+                },
+                "annotation.docs.includeInventory": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Generate the inventory pages (by-type.md, by-file.md, links.md) alongside the authored documentation."
+                },
+                "annotation.docs.includeAuthored": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Assemble authored API/guide pages from annotations carrying documentation-role tags."
+                },
+                "annotation.docs.includeTimestamp": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Stamp each generated page with the generation date. Disable for fully diffable output."
+                },
+                "annotation.docs.untaggedLabel": {
+                    "type": "string",
+                    "default": "untagged",
+                    "description": "Bucket label used for annotations without tags in the inventory pages."
+                },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",
                     "default": 30,

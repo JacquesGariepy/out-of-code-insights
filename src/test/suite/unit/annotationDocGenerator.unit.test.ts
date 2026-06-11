@@ -305,3 +305,88 @@ suite('AnnotationDocGenerator — authored documentation (doc:* tags)', () => {
         assert.ok(index.includes('Tip: tag annotations with `doc:module`'));
     });
 });
+
+suite('AnnotationDocGenerator — configurable output (no hardcoded layout)', () => {
+    test('custom tagPrefix drives role detection and the index tip', () => {
+        const files = generateDocSet(
+            [makeAnn({ id: 'g', tags: ['note/guide'], message: '# Custom prefix guide\n\nBody.' })],
+            { tagPrefix: 'note/' }
+        );
+        assert.ok(files.has('guide.md'), 'note/guide must be recognized as a guide role');
+        const inventoryOnly = generateDocSet([makeAnn()], { tagPrefix: 'note/' }).get('index.md') ?? '';
+        assert.ok(inventoryOnly.includes('`note/module`'), 'tip must reflect the configured prefix');
+    });
+
+    test('custom apiFolder and guideFile flow through pages, toc and wiki-links', () => {
+        const files = generateDocSet(
+            [
+                makeAnn({
+                    id: 'cls',
+                    file: 'src/user.ts',
+                    line: 1,
+                    tags: ['doc:class'],
+                    message: '# UserService\n\nSee [[HowTo]].',
+                }),
+                makeAnn({
+                    id: 'g',
+                    file: 'notes.md',
+                    line: 0,
+                    tags: ['doc:guide'],
+                    message: '# HowTo\n\n[[UserService]]',
+                }),
+            ],
+            { apiFolder: 'reference', guideFile: 'howto.md' }
+        );
+        assert.ok(files.has('reference/src-user-ts.md'), 'api page lands in the configured folder');
+        assert.ok(files.has('howto.md'), 'guide page uses the configured file name');
+        const toc = files.get('toc.yml') ?? '';
+        assert.ok(toc.includes('href: reference/src-user-ts.md'));
+        assert.ok(toc.includes('href: howto.md'));
+        const api = files.get('reference/src-user-ts.md') ?? '';
+        assert.ok(api.includes('[HowTo](../howto.md#ann-g)'), 'api → guide link crosses the configured folder');
+        const guide = files.get('howto.md') ?? '';
+        assert.ok(guide.includes('[UserService](reference/src-user-ts.md#ann-cls)'), 'guide → api link');
+    });
+
+    test('includeInventory=false drops inventory pages and their toc/index sections', () => {
+        const files = generateDocSet([makeAnn({ tags: ['doc:guide'], message: '# G\n\nBody.' })], {
+            includeInventory: false,
+        });
+        assert.deepStrictEqual([...files.keys()].sort(), ['guide.md', 'index.md', 'toc.yml']);
+        const index = files.get('index.md') ?? '';
+        assert.ok(!index.includes('## By type'), 'no inventory sections on the index');
+        const toc = files.get('toc.yml') ?? '';
+        assert.ok(!toc.includes('by-type.md'));
+    });
+
+    test('includeAuthored=false treats doc tags as plain inventory tags', () => {
+        const files = generateDocSet([makeAnn({ tags: ['doc:class'], message: '# C\n\nBody.' })], {
+            includeAuthored: false,
+        });
+        assert.deepStrictEqual([...files.keys()].sort(), [
+            'by-file.md',
+            'by-type.md',
+            'index.md',
+            'links.md',
+            'toc.yml',
+        ]);
+        const index = files.get('index.md') ?? '';
+        assert.ok(!index.includes('Tip: tag annotations'), 'no authored tip when authored output is disabled');
+    });
+
+    test('omitting generatedAt produces stamp-free, fully diffable pages', () => {
+        const files = generateDocSet([makeAnn()]);
+        for (const [name, content] of files) {
+            if (name.endsWith('.md')) {
+                assert.ok(!content.includes('Generated on'), `${name} must not carry a timestamp`);
+            }
+        }
+    });
+
+    test('custom untaggedLabel replaces the default bucket name', () => {
+        const index =
+            generateDocSet([makeAnn({ tags: undefined })], { untaggedLabel: 'sans-tag' }).get('index.md') ?? '';
+        assert.ok(index.includes('| [sans-tag](by-type.md) | 1 |'));
+        assert.ok(!index.includes('untagged'));
+    });
+});

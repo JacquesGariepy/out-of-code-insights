@@ -1099,10 +1099,8 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 return;
             }
             try {
-                const outDirSetting = vscode.workspace
-                    .getConfiguration('annotation')
-                    .get<string>('docs.outputPath', 'docs/annotations')
-                    .trim();
+                const docsConfig = vscode.workspace.getConfiguration('annotation');
+                const outDirSetting = docsConfig.get<string>('docs.outputPath', 'docs/annotations').trim();
                 // Same traversal contract as the annotations file path: the
                 // docs always land inside the workspace.
                 if (path.isAbsolute(outDirSetting) || outDirSetting.split(/[\\/]/).includes('..')) {
@@ -1114,6 +1112,14 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     );
                     return;
                 }
+                const sanitizeSegment = (value: string, fallback: string): string => {
+                    const v = value.trim();
+                    return v.length === 0 || v.includes('..') || /[\\/]/.test(v) || path.isAbsolute(v) ? fallback : v;
+                };
+                const apiFolder = sanitizeSegment(docsConfig.get<string>('docs.apiFolder', 'api'), 'api');
+                const guideFile = sanitizeSegment(docsConfig.get<string>('docs.guideFile', 'guide.md'), 'guide.md');
+                const includeTimestamp = docsConfig.get<boolean>('docs.includeTimestamp', true);
+                const siteTitle = docsConfig.get<string>('docs.siteTitle', '').trim();
 
                 const all = annotationStore.serialize().annotations;
                 // Resolve display lines per file. openTextDocument loads the
@@ -1168,9 +1174,18 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
 
                 const depth = outDirSetting.split(/[\\/]/).filter((s) => s.length > 0).length;
                 const files = generateDocSet(docAnnotations, {
-                    title: localize('docsTitle', 'Annotations — {0}', workspaceFolder.name),
+                    title:
+                        siteTitle.length > 0
+                            ? siteTitle
+                            : localize('docsTitle', 'Annotations — {0}', workspaceFolder.name),
                     sourceLinkPrefix: '../'.repeat(depth),
-                    generatedAt: new Date().toISOString(),
+                    generatedAt: includeTimestamp ? new Date().toISOString() : undefined,
+                    tagPrefix: docsConfig.get<string>('docs.tagPrefix', 'doc:'),
+                    apiFolder,
+                    guideFile,
+                    includeInventory: docsConfig.get<boolean>('docs.includeInventory', true),
+                    includeAuthored: docsConfig.get<boolean>('docs.includeAuthored', true),
+                    untaggedLabel: docsConfig.get<string>('docs.untaggedLabel', 'untagged'),
                 });
 
                 const outDir = vscode.Uri.joinPath(workspaceFolder.uri, ...outDirSetting.split(/[\\/]/));

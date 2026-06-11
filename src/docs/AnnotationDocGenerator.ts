@@ -61,19 +61,67 @@ export interface DocGenOptions {
      * source links (e.g. "../../" when the docs land in docs/annotations/).
      */
     sourceLinkPrefix?: string;
-    /** ISO timestamp stamped on every page. Caller-provided for determinism. */
+    /**
+     * ISO timestamp stamped on every page. Omit (or disable the
+     * `annotation.docs.includeTimestamp` setting) for fully diffable output.
+     */
     generatedAt?: string;
+    /** Tag prefix that marks documentation roles. Default: "doc:". */
+    tagPrefix?: string;
+    /** Folder (single path segment) for authored API pages. Default: "api". */
+    apiFolder?: string;
+    /** File name of the assembled guide page. Default: "guide.md". */
+    guideFile?: string;
+    /** Generate the inventory pages (by-type/by-file/links). Default: true. */
+    includeInventory?: boolean;
+    /** Assemble authored pages from doc-role tags. Default: true. */
+    includeAuthored?: boolean;
+    /** Bucket label for annotations without tags. Default: "untagged". */
+    untaggedLabel?: string;
+}
+
+/** DocGenOptions with every default applied. */
+interface ResolvedOptions extends DocGenOptions {
+    tagPrefix: string;
+    apiFolder: string;
+    guideFile: string;
+    includeInventory: boolean;
+    includeAuthored: boolean;
+    untaggedLabel: string;
+}
+
+function resolveOptions(options: DocGenOptions): ResolvedOptions {
+    return {
+        ...options,
+        tagPrefix: options.tagPrefix && options.tagPrefix.trim().length > 0 ? options.tagPrefix.trim() : 'doc:',
+        apiFolder: options.apiFolder && options.apiFolder.trim().length > 0 ? options.apiFolder.trim() : 'api',
+        guideFile: options.guideFile && options.guideFile.trim().length > 0 ? options.guideFile.trim() : 'guide.md',
+        includeInventory: options.includeInventory ?? true,
+        includeAuthored: options.includeAuthored ?? true,
+        untaggedLabel:
+            options.untaggedLabel && options.untaggedLabel.trim().length > 0
+                ? options.untaggedLabel.trim()
+                : 'untagged',
+    };
 }
 
 export type DocRole = 'module' | 'class' | 'function' | 'example' | 'guide';
 
-const UNTAGGED = 'untagged';
-const ROLE_PATTERN = /^doc:(module|class|function|method|example|guide)$/i;
+const ROLE_NAMES = /^(module|class|function|method|example|guide)$/i;
 
-/** Extract the documentation role from the `doc:*` tag, if any. */
-export function docRoleOf(a: Pick<DocAnnotation, 'tags'>): DocRole | null {
+function escapeRegExp(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Extract the documentation role from the role tag, if any. */
+export function docRoleOf(a: Pick<DocAnnotation, 'tags'>, tagPrefix = 'doc:'): DocRole | null {
+    const prefixPattern = new RegExp(`^${escapeRegExp(tagPrefix)}(.+)$`, 'i');
     for (const tag of a.tags ?? []) {
-        const m = ROLE_PATTERN.exec(tag.trim());
+        const prefixed = prefixPattern.exec(tag.trim());
+        if (!prefixed) {
+            continue;
+        }
+        const m = ROLE_NAMES.exec(prefixed[1].trim());
         if (m) {
             const role = m[1].toLowerCase();
             return role === 'method' ? 'function' : (role as DocRole);
@@ -186,8 +234,8 @@ function pageHeader(title: string, generatedAt: string | undefined): string {
     return `# ${title}\n${stamp}\n`;
 }
 
-function tagsOf(a: DocAnnotation): string[] {
-    return a.tags && a.tags.length > 0 ? a.tags : [UNTAGGED];
+function tagsOf(a: DocAnnotation, untaggedLabel: string): string[] {
+    return a.tags && a.tags.length > 0 ? a.tags : [untaggedLabel];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -200,13 +248,14 @@ interface WikiTarget {
 }
 
 /**
- * Path from `fromPage` to `toPage` for the flat root + api/ subfolder layout.
+ * Path from `fromPage` to `toPage` for the flat root + api subfolder layout.
  */
-function relativePage(fromPage: string, toPage: string): string {
-    const fromInApi = fromPage.startsWith('api/');
-    const toInApi = toPage.startsWith('api/');
+function relativePage(fromPage: string, toPage: string, apiFolder: string): string {
+    const apiPrefix = apiFolder + '/';
+    const fromInApi = fromPage.startsWith(apiPrefix);
+    const toInApi = toPage.startsWith(apiPrefix);
     if (fromInApi && toInApi) {
-        return toPage.slice('api/'.length);
+        return toPage.slice(apiPrefix.length);
     }
     if (fromInApi && !toInApi) {
         return '../' + toPage;
@@ -223,7 +272,8 @@ export function resolveWikiLinks(
     content: string,
     currentPage: string,
     targets: Map<string, WikiTarget>,
-    warnings: string[]
+    warnings: string[],
+    apiFolder = 'api'
 ): string {
     let inFence = false;
     return content
@@ -242,7 +292,7 @@ export function resolveWikiLinks(
                     warnings.push(`Unresolved wiki-link [[${rawTitle.trim()}]] on page ${currentPage}`);
                     return whole;
                 }
-                return `[${rawTitle.trim()}](${relativePage(currentPage, target.page)}#${target.anchor})`;
+                return `[${rawTitle.trim()}](${relativePage(currentPage, target.page, apiFolder)}#${target.anchor})`;
             });
         })
         .join('\n');
@@ -285,18 +335,20 @@ function toEntry(a: DocAnnotation, role: DocRole): DocEntry {
 /** Build the per-file API model from doc-tagged annotations. */
 export function buildApiModel(
     annotations: DocAnnotation[],
-    warnings: string[]
+    warnings: string[],
+    tagPrefix = 'doc:',
+    apiFolder = 'api'
 ): { pages: ApiPageModel[]; guides: DocEntry[] } {
-    const docAnnotations = sortedAnnotations(annotations).filter((a) => docRoleOf(a) !== null);
+    const docAnnotations = sortedAnnotations(annotations).filter((a) => docRoleOf(a, tagPrefix) !== null);
     const guides: DocEntry[] = [];
     const pages: ApiPageModel[] = [];
     const byFile = groupBy(
-        docAnnotations.filter((a) => docRoleOf(a) !== 'guide'),
+        docAnnotations.filter((a) => docRoleOf(a, tagPrefix) !== 'guide'),
         (a) => a.file
     );
 
     for (const a of docAnnotations) {
-        if (docRoleOf(a) === 'guide') {
+        if (docRoleOf(a, tagPrefix) === 'guide') {
             guides.push(toEntry(a, 'guide'));
         }
     }
@@ -304,7 +356,7 @@ export function buildApiModel(
     for (const [file, anns] of byFile) {
         const model: ApiPageModel = {
             file,
-            page: `api/${fileSlug(file)}.md`,
+            page: `${apiFolder}/${fileSlug(file)}.md`,
             module: null,
             classes: [],
             functions: [],
@@ -313,12 +365,12 @@ export function buildApiModel(
         let lastEntity: DocEntry | null = null;
         let currentClass: DocEntry | null = null;
         for (const a of anns) {
-            const role = docRoleOf(a) as DocRole;
+            const role = docRoleOf(a, tagPrefix) as DocRole;
             if (role === 'module') {
                 if (model.module === null) {
                     model.module = toEntry(a, 'module');
                 } else {
-                    warnings.push(`Extra doc:module annotation ignored in ${file} (line ${a.line + 1})`);
+                    warnings.push(`Extra ${tagPrefix}module annotation ignored in ${file} (line ${a.line + 1})`);
                 }
                 continue;
             }
@@ -347,7 +399,9 @@ export function buildApiModel(
                 model.module.examples.push(entry);
             } else {
                 model.orphanExamples.push(entry);
-                warnings.push(`doc:example without a preceding documented entity in ${file} (line ${a.line + 1})`);
+                warnings.push(
+                    `${tagPrefix}example without a preceding documented entity in ${file} (line ${a.line + 1})`
+                );
             }
         }
         pages.push(model);
@@ -356,7 +410,12 @@ export function buildApiModel(
 }
 
 /** Wiki-link target registry: entry title (lower-cased) → page + anchor. */
-function collectWikiTargets(pages: ApiPageModel[], guides: DocEntry[], warnings: string[]): Map<string, WikiTarget> {
+function collectWikiTargets(
+    pages: ApiPageModel[],
+    guides: DocEntry[],
+    warnings: string[],
+    guideFile: string
+): Map<string, WikiTarget> {
     const targets = new Map<string, WikiTarget>();
     const register = (entry: DocEntry, page: string): void => {
         const key = entry.title.toLowerCase();
@@ -389,7 +448,7 @@ function collectWikiTargets(pages: ApiPageModel[], guides: DocEntry[], warnings:
         model.orphanExamples.forEach((e) => register(e, model.page));
     }
     for (const guide of guides) {
-        register(guide, 'guide.md');
+        register(guide, guideFile);
     }
     return targets;
 }
@@ -399,7 +458,7 @@ function collectWikiTargets(pages: ApiPageModel[], guides: DocEntry[], warnings:
 // ───────────────────────────────────────────────────────────────────────────
 
 interface RenderContext {
-    options: DocGenOptions;
+    options: ResolvedOptions;
     targets: Map<string, WikiTarget>;
     warnings: string[];
 }
@@ -418,7 +477,7 @@ function renderBody(entry: DocEntry, page: string, delta: number, ctx: RenderCon
         return [];
     }
     const demoted = demoteHeadings(entry.body, delta);
-    return [resolveWikiLinks(demoted, page, ctx.targets, ctx.warnings), ''];
+    return [resolveWikiLinks(demoted, page, ctx.targets, ctx.warnings, ctx.options.apiFolder), ''];
 }
 
 function renderExample(example: DocEntry, page: string, level: number, ctx: RenderContext): string[] {
@@ -499,7 +558,7 @@ function renderGuidePage(guides: DocEntry[], ctx: RenderContext): string {
         out.push('');
         out.push(`## ${guide.title}`);
         out.push('');
-        out.push(...renderBody(guide, 'guide.md', 2, ctx));
+        out.push(...renderBody(guide, ctx.options.guideFile, 2, ctx));
     }
     return out.join('\n');
 }
@@ -510,7 +569,7 @@ function renderGuidePage(guides: DocEntry[], ctx: RenderContext): string {
 
 function renderIndex(
     annotations: DocAnnotation[],
-    options: DocGenOptions,
+    options: ResolvedOptions,
     pages: ApiPageModel[],
     guides: DocEntry[],
     warnings: string[]
@@ -532,51 +591,54 @@ function renderIndex(
             out.push(`- [${escapeCell(label)}](${model.page})`);
         }
         if (guides.length > 0) {
-            out.push('- [Guide](guide.md)');
+            out.push(`- [Guide](${options.guideFile})`);
         }
         out.push('');
-    } else {
+    } else if (options.includeAuthored) {
+        const p = options.tagPrefix;
         out.push(
-            '> Tip: tag annotations with `doc:module`, `doc:class`, `doc:function`, ' +
-                '`doc:example` or `doc:guide` to assemble authored documentation pages here.'
+            `> Tip: tag annotations with \`${p}module\`, \`${p}class\`, \`${p}function\`, ` +
+                `\`${p}example\` or \`${p}guide\` to assemble authored documentation pages here.`
         );
         out.push('');
     }
 
-    out.push('## By type');
-    out.push('');
-    out.push('| Type | Count |');
-    out.push('| --- | ---: |');
-    const byTag = new Map<string, number>();
-    for (const a of annotations) {
-        for (const t of tagsOf(a)) {
-            byTag.set(t, (byTag.get(t) ?? 0) + 1);
+    if (options.includeInventory) {
+        out.push('## By type');
+        out.push('');
+        out.push('| Type | Count |');
+        out.push('| --- | ---: |');
+        const byTag = new Map<string, number>();
+        for (const a of annotations) {
+            for (const t of tagsOf(a, options.untaggedLabel)) {
+                byTag.set(t, (byTag.get(t) ?? 0) + 1);
+            }
         }
-    }
-    for (const [tag, count] of [...byTag.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
-        out.push(`| [${escapeCell(tag)}](by-type.md) | ${count} |`);
-    }
-    out.push('');
+        for (const [tag, count] of [...byTag.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+            out.push(`| [${escapeCell(tag)}](by-type.md) | ${count} |`);
+        }
+        out.push('');
 
-    out.push('## By severity');
-    out.push('');
-    out.push('| Severity | Count |');
-    out.push('| --- | ---: |');
-    const bySeverity = groupBy(annotations, (a) => a.severity ?? 'none');
-    for (const [severity, items] of [...bySeverity.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
-        out.push(`| ${escapeCell(severity)} | ${items.length} |`);
-    }
-    out.push('');
+        out.push('## By severity');
+        out.push('');
+        out.push('| Severity | Count |');
+        out.push('| --- | ---: |');
+        const bySeverity = groupBy(annotations, (a) => a.severity ?? 'none');
+        for (const [severity, items] of [...bySeverity.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+            out.push(`| ${escapeCell(severity)} | ${items.length} |`);
+        }
+        out.push('');
 
-    out.push('## By file');
-    out.push('');
-    out.push('| File | Count |');
-    out.push('| --- | ---: |');
-    const byFile = groupBy(annotations, (a) => a.file);
-    for (const [file, items] of [...byFile.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
-        out.push(`| [${escapeCell(file)}](by-file.md) | ${items.length} |`);
+        out.push('## By file');
+        out.push('');
+        out.push('| File | Count |');
+        out.push('| --- | ---: |');
+        const byFile = groupBy(annotations, (a) => a.file);
+        for (const [file, items] of [...byFile.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+            out.push(`| [${escapeCell(file)}](by-file.md) | ${items.length} |`);
+        }
+        out.push('');
     }
-    out.push('');
 
     if (warnings.length > 0) {
         out.push('## Generation warnings');
@@ -589,7 +651,7 @@ function renderIndex(
     return out.join('\n');
 }
 
-function renderAnnotationDetail(a: DocAnnotation, prefix: string): string {
+function renderAnnotationDetail(a: DocAnnotation, prefix: string, untaggedLabel: string): string {
     const lines: string[] = [];
     lines.push(`<a id="${anchorId(a)}"></a>`);
     lines.push('');
@@ -600,7 +662,7 @@ function renderAnnotationDetail(a: DocAnnotation, prefix: string): string {
     if (a.severity) {
         facts.push(`**Severity**: ${escapeCell(a.severity)}`);
     }
-    facts.push(`**Type**: ${tagsOf(a).map(escapeCell).join(', ')}`);
+    facts.push(`**Type**: ${tagsOf(a, untaggedLabel).map(escapeCell).join(', ')}`);
     if (a.kanbanColumn) {
         facts.push(`**Board**: ${escapeCell(a.kanbanColumn)}`);
     }
@@ -649,11 +711,11 @@ function renderAnnotationDetail(a: DocAnnotation, prefix: string): string {
     return lines.join('\n');
 }
 
-function renderByType(annotations: DocAnnotation[], options: DocGenOptions): string {
+function renderByType(annotations: DocAnnotation[], options: ResolvedOptions): string {
     const out: string[] = [pageHeader('Annotations by type', options.generatedAt)];
     const expanded: { tag: string; a: DocAnnotation }[] = [];
     for (const a of annotations) {
-        for (const tag of tagsOf(a)) {
+        for (const tag of tagsOf(a, options.untaggedLabel)) {
             expanded.push({ tag, a });
         }
     }
@@ -675,14 +737,14 @@ function renderByType(annotations: DocAnnotation[], options: DocGenOptions): str
     return out.join('\n');
 }
 
-function renderByFile(annotations: DocAnnotation[], options: DocGenOptions): string {
+function renderByFile(annotations: DocAnnotation[], options: ResolvedOptions): string {
     const out: string[] = [pageHeader('Annotations by file', options.generatedAt)];
     const byFile = groupBy(sortedAnnotations(annotations), (a) => a.file);
     for (const [file, items] of byFile) {
         out.push(`## ${escapeCell(file)}`);
         out.push('');
         for (const a of items) {
-            out.push(renderAnnotationDetail(a, options.sourceLinkPrefix ?? ''));
+            out.push(renderAnnotationDetail(a, options.sourceLinkPrefix ?? '', options.untaggedLabel));
         }
     }
     return out.join('\n');
@@ -710,7 +772,7 @@ function renderLinks(annotations: DocAnnotation[], options: DocGenOptions): stri
     return out.join('\n');
 }
 
-function renderToc(pages: ApiPageModel[], guides: DocEntry[]): string {
+function renderToc(pages: ApiPageModel[], guides: DocEntry[], options: ResolvedOptions): string {
     const out: string[] = ['- name: Overview', '  href: index.md'];
     if (pages.length > 0) {
         out.push('- name: API');
@@ -723,14 +785,16 @@ function renderToc(pages: ApiPageModel[], guides: DocEntry[]): string {
     }
     if (guides.length > 0) {
         out.push('- name: Guide');
-        out.push('  href: guide.md');
+        out.push(`  href: ${options.guideFile}`);
     }
-    out.push('- name: By type');
-    out.push('  href: by-type.md');
-    out.push('- name: By file');
-    out.push('  href: by-file.md');
-    out.push('- name: Links');
-    out.push('  href: links.md');
+    if (options.includeInventory) {
+        out.push('- name: By type');
+        out.push('  href: by-type.md');
+        out.push('- name: By file');
+        out.push('  href: by-file.md');
+        out.push('- name: Links');
+        out.push('  href: links.md');
+    }
     out.push('');
     return out.join('\n');
 }
@@ -741,23 +805,28 @@ function renderToc(pages: ApiPageModel[], guides: DocEntry[]): string {
  * Deterministic for a given input (stable ordering, caller-supplied stamp).
  */
 export function generateDocSet(annotations: DocAnnotation[], options: DocGenOptions = {}): Map<string, string> {
+    const resolved = resolveOptions(options);
     const warnings: string[] = [];
-    const { pages, guides } = buildApiModel(annotations, warnings);
-    const targets = collectWikiTargets(pages, guides, warnings);
-    const ctx: RenderContext = { options, targets, warnings };
+    const { pages, guides } = resolved.includeAuthored
+        ? buildApiModel(annotations, warnings, resolved.tagPrefix, resolved.apiFolder)
+        : { pages: [], guides: [] };
+    const targets = collectWikiTargets(pages, guides, warnings, resolved.guideFile);
+    const ctx: RenderContext = { options: resolved, targets, warnings };
 
     const files = new Map<string, string>();
     for (const model of pages) {
         files.set(model.page, renderApiPage(model, ctx));
     }
     if (guides.length > 0) {
-        files.set('guide.md', renderGuidePage(guides, ctx));
+        files.set(resolved.guideFile, renderGuidePage(guides, ctx));
     }
-    files.set('toc.yml', renderToc(pages, guides));
+    files.set('toc.yml', renderToc(pages, guides, resolved));
+    if (resolved.includeInventory) {
+        files.set('by-type.md', renderByType(annotations, resolved));
+        files.set('by-file.md', renderByFile(annotations, resolved));
+        files.set('links.md', renderLinks(annotations, resolved));
+    }
     // index LAST: it reports the warnings accumulated by every other page.
-    files.set('by-type.md', renderByType(annotations, options));
-    files.set('by-file.md', renderByFile(annotations, options));
-    files.set('links.md', renderLinks(annotations, options));
-    files.set('index.md', renderIndex(annotations, options, pages, guides, warnings));
+    files.set('index.md', renderIndex(annotations, resolved, pages, guides, warnings));
     return files;
 }

@@ -8,6 +8,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- The documentation generator is fully configurable — nothing hardcoded:
+  `annotation.docs.siteTitle`, `tagPrefix`, `apiFolder`, `guideFile`,
+  `includeInventory`, `includeAuthored`, `includeTimestamp` (disable for
+  fully diffable output) and `untaggedLabel`, alongside the existing
+  `outputPath`.
 - New command **Generate Annotation Documentation** (book icon in the
   Annotations view, also in the command palette): builds a DocFX-compatible
   Markdown site from all annotations — `toc.yml`, overview with counts by
