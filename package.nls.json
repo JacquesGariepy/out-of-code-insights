@@ -522,5 +522,13 @@
     "licenseValidationFailed": "License validation failed",
     "licenseServerNotConfigured": "License key stored. It will be validated once a license server is configured (annotation.pro.licenseServerUrl).",
     "proFeatureLocked": "\"{0}\" is a Pro feature — enter your license key to unlock it.",
-    "enterLicense": "Enter license"
+    "enterLicense": "Enter license",
+    "commentsImported": "{0} annotation(s) created from code comments.",
+    "noCommentsToImport": "No importable comment markers found in this file.",
+    "mcpNotBundled": "The MCP server ships with the source repository (mcp-server/), not with the Marketplace build. Clone the repository and run \"npm install && npm run build\" inside mcp-server/.",
+    "openRepository": "Open repository",
+    "mcpCopyClaudeCode": "Copy the \"claude mcp add\" command",
+    "mcpCopyDesktop": "Copy the claude_desktop_config.json snippet",
+    "mcpSetupPlaceholder": "MCP client to configure (the config is copied to the clipboard)",
+    "mcpConfigCopied": "MCP configuration copied to the clipboard."
 }

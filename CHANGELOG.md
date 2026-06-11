@@ -8,6 +8,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- New command **Import Code Comments as Annotations**: scans the active
+  document for better-comments-style markers (`// !`, `// ?`, `// *`,
+  `TODO`, `FIXME`/`BUG`, `HACK`/`XXX` — also `#`, `--` and `<!-- -->`
+  comment syntaxes) and creates tagged, severity-mapped annotations;
+  already-annotated lines are skipped so the command is rerunnable.
+- New command **MCP Server Setup**: copies a ready-to-paste MCP client
+  configuration (Claude Code `claude mcp add` command or
+  `claude_desktop_config.json` snippet) pointing at the bundled
+  `mcp-server/` with the current workspace pre-filled; explains how to get
+  the server when running a Marketplace build (it ships with the source
+  repository).
 - Standalone MCP server under `mcp-server/`: exposes the annotation store
   to AI agents outside VS Code over stdio — list/get/add/update/remove/link
   annotations, a code-graph projection of annotation links, and Markdown

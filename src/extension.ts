@@ -27,6 +27,7 @@ import { VisibilityFilter } from './transactional/VisibilityFilter';
 import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
 import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerator';
+import { scanLineComments } from './comments/commentScanner';
 import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
 import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
 import { createDebounced } from './utils/debounce';
@@ -1177,6 +1178,143 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('annotations.generateDocs', async () => {
             await generateDocumentationNow(false);
+        })
+    );
+
+    // Better-comments bridge: import marker comments (`// !`, `// ?`,
+    // `// *`, TODO/FIXME/HACK) from the active document as annotations,
+    // tagged and severity-mapped per marker. Line-based scan — markers
+    // inside string literals may match; the user reviews the result.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.importComments', async () => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return;
+            }
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showErrorMessage(localize('noActiveEditor', 'No active editor found.'));
+                return;
+            }
+            const document = editor.document;
+            const lines: string[] = [];
+            for (let i = 0; i < document.lineCount; i++) {
+                lines.push(document.lineAt(i).text);
+            }
+            const matches = scanLineComments(lines, document.languageId);
+            const fileUri = document.uri.toString();
+            const occupiedLines = new Set<number>();
+            for (const existing of store.getByFile(fileUri)) {
+                occupiedLines.add(document.positionAt(existing.startOffset).line);
+            }
+            let created = 0;
+            for (const match of matches) {
+                if (occupiedLines.has(match.line)) {
+                    continue;
+                }
+                store.add(
+                    {
+                        fileUri,
+                        file: vscode.workspace.asRelativePath(document.uri),
+                        origin: { kind: 'manual' },
+                        message: match.text,
+                        timestamp: new Date().toISOString(),
+                        languageId: document.languageId,
+                        tags: [match.tag, 'imported-comment'],
+                        severity: match.severity,
+                    },
+                    { line: match.line },
+                    document
+                );
+                occupiedLines.add(match.line);
+                created++;
+            }
+            if (created > 0) {
+                vscode.window.showInformationMessage(
+                    loc('commentsImported', '{0} annotation(s) created from code comments.', created)
+                );
+            } else {
+                vscode.window.showInformationMessage(
+                    loc('noCommentsToImport', 'No importable comment markers found in this file.')
+                );
+            }
+        })
+    );
+
+    // MCP surface: the server is a standalone process (mcp-server/), so the
+    // only UI it needs inside VS Code is a setup helper that hands the user
+    // a ready-to-paste client configuration.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.mcpSetup', async () => {
+            const serverUri = vscode.Uri.joinPath(
+                context.extensionUri,
+                'mcp-server',
+                'bin',
+                'out-of-code-insights-mcp.js'
+            );
+            let serverAvailable = true;
+            try {
+                await vscode.workspace.fs.stat(serverUri);
+            } catch {
+                serverAvailable = false;
+            }
+            if (!serverAvailable) {
+                const openRepo = loc('openRepository', 'Open repository');
+                const choice = await vscode.window.showInformationMessage(
+                    loc(
+                        'mcpNotBundled',
+                        'The MCP server ships with the source repository (mcp-server/), not with the Marketplace build. Clone the repository and run "npm install && npm run build" inside mcp-server/.'
+                    ),
+                    openRepo
+                );
+                if (choice === openRepo) {
+                    void vscode.env.openExternal(
+                        vscode.Uri.parse('https://github.com/JacquesGariepy/out-of-code-insights/tree/main/mcp-server')
+                    );
+                }
+                return;
+            }
+            const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '<your-project>';
+            const claudeCodeCmd = `claude mcp add out-of-code-insights -- node "${serverUri.fsPath}" --workspace "${wsPath}"`;
+            const desktopJson = JSON.stringify(
+                {
+                    mcpServers: {
+                        'out-of-code-insights': {
+                            command: 'node',
+                            args: [serverUri.fsPath, '--workspace', wsPath],
+                        },
+                    },
+                },
+                null,
+                2
+            );
+            const picked = await vscode.window.showQuickPick(
+                [
+                    {
+                        label: '$(terminal) Claude Code',
+                        description: loc('mcpCopyClaudeCode', 'Copy the "claude mcp add" command'),
+                        value: claudeCodeCmd,
+                    },
+                    {
+                        label: '$(json) Claude Desktop',
+                        description: loc('mcpCopyDesktop', 'Copy the claude_desktop_config.json snippet'),
+                        value: desktopJson,
+                    },
+                ],
+                {
+                    placeHolder: loc(
+                        'mcpSetupPlaceholder',
+                        'MCP client to configure (the config is copied to the clipboard)'
+                    ),
+                }
+            );
+            if (picked) {
+                await vscode.env.clipboard.writeText(picked.value);
+                vscode.window.showInformationMessage(
+                    loc('mcpConfigCopied', 'MCP configuration copied to the clipboard.')
+                );
+            }
         })
     );
 

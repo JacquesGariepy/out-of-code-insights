@@ -59,3 +59,4 @@ test-fixtures/lot10-*.ts
 
 # Agent worktrees
 .claude/worktrees/
+test-fixtures/lot11-*.ts

@@ -110,6 +110,16 @@
                 "icon": "$(note)"
             },
             {
+                "command": "annotations.importComments",
+                "title": "Import Code Comments as Annotations",
+                "icon": "$(comment)"
+            },
+            {
+                "command": "annotations.mcpSetup",
+                "title": "MCP Server Setup",
+                "icon": "$(plug)"
+            },
+            {
                 "command": "annotations.importJSON",
                 "title": "Import Annotations from JSON",
                 "icon": "$(cloud-download)"
