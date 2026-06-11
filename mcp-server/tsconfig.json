@@ -1,0 +1,29 @@
+{
+    "compilerOptions": {
+        "target": "ES2022",
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "lib": ["ES2022"],
+        // The store reuses pure sources from ../src (anchoring, doc
+        // generator); rootDir therefore spans the repository root and the
+        // emitted layout is dist/mcp-server/src/** + dist/src/**.
+        "rootDir": "..",
+        "outDir": "dist",
+        "strict": true,
+        "noImplicitReturns": true,
+        "noFallthroughCasesInSwitch": true,
+        "esModuleInterop": true,
+        "skipLibCheck": true,
+        "forceConsistentCasingInFileNames": true,
+        "sourceMap": true,
+        "types": ["node"],
+        "baseUrl": ".",
+        // `diff` is imported by ../src/anchoring/anchor.ts; map it to this
+        // package's own node_modules first so a standalone `npm install`
+        // inside mcp-server/ is sufficient (repo-root install as fallback).
+        "paths": {
+            "diff": ["./node_modules/diff", "../node_modules/diff"]
+        }
+    },
+    "include": ["src/**/*.ts"]
+}

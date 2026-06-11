@@ -7,6 +7,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- Standalone MCP server under `mcp-server/`: exposes the annotation store
+  to AI agents outside VS Code over stdio — list/get/add/update/remove/link
+  annotations, a code-graph projection of annotation links, and Markdown
+  documentation generation — all against the same v2 `annotations.json`
+  envelope, with atomic writes and shared anchoring logic. External changes
+  are picked up by the extension on window reload (no file watcher yet).
+
 ## [1.0.22] - 2026-06-11
 
 ### Added

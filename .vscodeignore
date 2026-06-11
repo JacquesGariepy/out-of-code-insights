@@ -2,6 +2,7 @@
 src/**
 out/**
 test-fixtures/**
+mcp-server/**
 **/*.ts
 !out/**/*.d.ts
 **/*.map

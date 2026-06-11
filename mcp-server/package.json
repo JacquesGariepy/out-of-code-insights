@@ -1,0 +1,27 @@
+{
+    "name": "out-of-code-insights-mcp",
+    "version": "0.1.0",
+    "description": "MCP server exposing the Out-of-Code Insights annotation store to AI agents outside VS Code.",
+    "license": "MPL-2.0",
+    "private": true,
+    "main": "dist/mcp-server/src/server.js",
+    "bin": {
+        "out-of-code-insights-mcp": "bin/out-of-code-insights-mcp.js"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "scripts": {
+        "build": "tsc -p ./",
+        "start": "node bin/out-of-code-insights-mcp.js"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.17.0",
+        "diff": "^9.0.0",
+        "zod": "^3.25.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.17.0",
+        "typescript": "^5.6.0"
+    }
+}
