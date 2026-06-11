@@ -1229,9 +1229,7 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
         }, DOCS_WATCH_DEBOUNCE_MS);
         context.subscriptions.push(
             annotationStore.onDidChange(() => {
-                const watchEnabled = vscode.workspace
-                    .getConfiguration('annotation')
-                    .get<boolean>('docs.watch', false);
+                const watchEnabled = vscode.workspace.getConfiguration('annotation').get<boolean>('docs.watch', false);
                 if (!watchEnabled) {
                     return;
                 }

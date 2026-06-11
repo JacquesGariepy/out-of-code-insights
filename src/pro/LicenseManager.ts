@@ -56,6 +56,9 @@ export class LicenseManager {
     readonly onDidChangeEntitlements = this._onDidChangeEntitlements.event;
 
     constructor(private readonly context: vscode.ExtensionContext) {
+        // Module-level registration, not a `const self = this` alias: it lets
+        // requireEntitlement() find the live instance without an import cycle.
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
         activeLicenseManager = this;
     }
 
@@ -148,7 +151,9 @@ export class LicenseManager {
         try {
             return await this.validate(key);
         } catch (err) {
-            getLogger().warn('LicenseManager.refresh: validation failed; relying on cached entitlements', err);
+            getLogger().warn('LicenseManager.refresh: validation failed; relying on cached entitlements', {
+                error: err instanceof Error ? err.message : String(err),
+            });
             return undefined;
         }
     }
