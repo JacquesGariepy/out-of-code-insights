@@ -880,6 +880,66 @@
                     "default": "info",
                     "description": "Default severity level for new annotations."
                 },
+                "annotation.severityStyles": {
+                    "type": "object",
+                    "default": {
+                        "info": {},
+                        "warning": {},
+                        "error": {}
+                    },
+                    "description": "Decoration style per severity (better-comments style). Each entry overrides the theme defaults from annotation.colors; tag styles (annotation.tagStyles) take precedence over severity styles.",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "annotationColor": {
+                                "type": "string",
+                                "description": "Color of the inline annotation text (CSS color, e.g. '#ff8800' or 'orange')."
+                            },
+                            "backgroundColor": {
+                                "type": "string",
+                                "description": "Background color of the annotated line (CSS color)."
+                            },
+                            "border": {
+                                "type": "string",
+                                "description": "Color of the left border of the annotated line (CSS color)."
+                            },
+                            "gutterIcon": {
+                                "type": "boolean",
+                                "default": true,
+                                "description": "Show the gutter icon for matching annotations."
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "annotation.tagStyles": {
+                    "type": "object",
+                    "default": {},
+                    "description": "Decoration style per tag (better-comments style). The first tag of an annotation (in tag order) that has an entry here overrides the severity style and the theme defaults from annotation.colors.",
+                    "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                            "annotationColor": {
+                                "type": "string",
+                                "description": "Color of the inline annotation text (CSS color, e.g. '#ff8800' or 'orange')."
+                            },
+                            "backgroundColor": {
+                                "type": "string",
+                                "description": "Background color of the annotated line (CSS color)."
+                            },
+                            "border": {
+                                "type": "string",
+                                "description": "Color of the left border of the annotated line (CSS color)."
+                            },
+                            "gutterIcon": {
+                                "type": "boolean",
+                                "default": true,
+                                "description": "Show the gutter icon for matching annotations."
+                            }
+                        },
+                        "additionalProperties": false
+                    }
+                },
                 "annotation.userProfile": {
                     "type": "string",
                     "enum": [

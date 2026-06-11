@@ -14,6 +14,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   documentation generation — all against the same v2 `annotations.json`
   envelope, with atomic writes and shared anchoring logic. External changes
   are picked up by the extension on window reload (no file watcher yet).
+- Configurable annotation styling (better-comments style): new settings
+  `annotation.severityStyles` and `annotation.tagStyles` map a severity or
+  tag to a decoration style (`annotationColor`, `backgroundColor`, `border`,
+  `gutterIcon`). The first styled tag of an annotation (in tag order)
+  overrides the severity style, which overrides the theme defaults from
+  `annotation.colors`.
 
 ## [1.0.22] - 2026-06-11
 
