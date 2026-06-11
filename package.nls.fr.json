@@ -504,5 +504,14 @@
     "valueRequired": "La valeur est requise",
     "viewAnnotations": "Voir les annotations",
     "wrongFile": "Veuillez ouvrir le fichier cible dans l'éditeur",
-    "editAnnotationPrompt": "Modifier le message de l'annotation"
+    "editAnnotationPrompt": "Modifier le message de l'annotation",
+    "storeNotReady": "Le magasin d'annotations n'est pas encore prêt.",
+    "editMessageTitle": "Modifier le message de l'annotation",
+    "editMessageHint": "Le format Markdown est pris en charge.",
+    "save": "Enregistrer",
+    "annotationMessageUpdated": "Message de l'annotation mis à jour.",
+    "updateMessageError": "Échec de la mise à jour du message de l'annotation",
+    "annotationNotFound": "Annotation introuvable : {0}",
+    "noAnnotationsToEdit": "Aucune annotation à modifier.",
+    "pickAnnotationToEdit": "Sélectionnez une annotation à modifier"
 }

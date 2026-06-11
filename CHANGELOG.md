@@ -7,6 +7,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- New command **Edit Annotation Message (Markdown)**: opens a multiline
+  Markdown editor panel for an annotation message, with Save/Cancel
+  (Ctrl/Cmd+Enter saves, Escape cancels). Invoked with an annotation id or,
+  without one, through a QuickPick listing every annotation with its
+  `file:line` location.
+- New setting `annotation.docs.watch` (default `false`): regenerates the
+  annotation documentation automatically (2 s debounce, silent) whenever
+  annotations change.
+
 ## [1.0.22] - 2026-06-11
 
 ### Added

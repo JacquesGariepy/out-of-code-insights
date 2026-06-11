@@ -504,5 +504,14 @@
     "valueRequired": "Value is required",
     "viewAnnotations": "View Annotations",
     "wrongFile": "Please open the target file in the editor",
-    "editAnnotationPrompt": "Edit annotation message"
+    "editAnnotationPrompt": "Edit annotation message",
+    "storeNotReady": "Annotation store is not ready yet.",
+    "editMessageTitle": "Edit Annotation Message",
+    "editMessageHint": "Markdown is supported.",
+    "save": "Save",
+    "annotationMessageUpdated": "Annotation message updated.",
+    "updateMessageError": "Failed to update annotation message",
+    "annotationNotFound": "Annotation not found: {0}",
+    "noAnnotationsToEdit": "No annotations to edit.",
+    "pickAnnotationToEdit": "Select an annotation to edit"
 }

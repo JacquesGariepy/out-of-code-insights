@@ -27,6 +27,9 @@ import { VisibilityFilter } from './transactional/VisibilityFilter';
 import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
 import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerator';
+import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
+import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
+import { createDebounced } from './utils/debounce';
 
 let annotationManager: AnnotationManager | undefined;
 let profileManager: UserProfileManager | undefined;
@@ -41,6 +44,12 @@ let annotationStore: AnnotationStore | undefined;
 let annotationPersistence: AnnotationPersistence | undefined;
 let visibilityFilter: VisibilityFilter | undefined;
 let kanbanColumnStore: KanbanColumnStore | undefined;
+
+/** Reentrancy guard for {@link generateDocumentationNow}. */
+let docsGenerationInProgress = false;
+
+/** Quiet period between the last annotation change and a watch-mode regeneration. */
+const DOCS_WATCH_DEBOUNCE_MS = 2000;
 
 /**
  * Lookup hook for the in-process AnnotationStore.
@@ -1087,136 +1096,238 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('annotations.generateDocs', async () => {
-            if (!annotationStore) {
+            await generateDocumentationNow(false);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.editMessageMarkdown', async (annotationId?: string) => {
+            const store = annotationStore;
+            if (!store) {
                 vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
                 return;
             }
-            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-            if (!workspaceFolder) {
-                vscode.window.showErrorMessage(
-                    localize('noWorkspaceDocs', 'Open a workspace to generate documentation.')
-                );
-                return;
-            }
-            try {
-                const docsConfig = vscode.workspace.getConfiguration('annotation');
-                const outDirSetting = docsConfig.get<string>('docs.outputPath', 'docs/annotations').trim();
-                // Same traversal contract as the annotations file path: the
-                // docs always land inside the workspace.
-                if (path.isAbsolute(outDirSetting) || outDirSetting.split(/[\\/]/).includes('..')) {
-                    vscode.window.showErrorMessage(
-                        localize(
-                            'docsPathInvalid',
-                            'annotation.docs.outputPath must be a relative path inside the workspace.'
-                        )
-                    );
+            // Context-menu invocations may pass tree items or other objects;
+            // only a plain string is accepted as a direct id.
+            let id = typeof annotationId === 'string' ? annotationId : undefined;
+            if (!id) {
+                const annotations = store.list();
+                if (annotations.length === 0) {
+                    vscode.window.showInformationMessage(loc('noAnnotationsToEdit', 'No annotations to edit.'));
                     return;
                 }
-                const sanitizeSegment = (value: string, fallback: string): string => {
-                    const v = value.trim();
-                    return v.length === 0 || v.includes('..') || /[\\/]/.test(v) || path.isAbsolute(v) ? fallback : v;
-                };
-                const apiFolder = sanitizeSegment(docsConfig.get<string>('docs.apiFolder', 'api'), 'api');
-                const guideFile = sanitizeSegment(docsConfig.get<string>('docs.guideFile', 'guide.md'), 'guide.md');
-                const includeTimestamp = docsConfig.get<boolean>('docs.includeTimestamp', true);
-                const siteTitle = docsConfig.get<string>('docs.siteTitle', '').trim();
-
-                const all = annotationStore.serialize().annotations;
-                // Resolve display lines per file. openTextDocument loads the
-                // file into memory without showing it — cheap and works for
-                // closed files; failures degrade to line -1 (link without
-                // a line fragment).
-                const lineByAnnotationId = new Map<string, number>();
-                const anchorTextByAnnotationId = new Map<string, string>();
-                const byUri = new Map<string, typeof all>();
-                for (const a of all) {
-                    const bucket = byUri.get(a.fileUri);
-                    if (bucket) {
-                        bucket.push(a);
-                    } else {
-                        byUri.set(a.fileUri, [a]);
-                    }
-                }
-                for (const [uriStr, anns] of byUri) {
-                    try {
-                        const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uriStr));
-                        for (const a of anns) {
-                            const line = doc.positionAt(a.startOffset).line;
-                            lineByAnnotationId.set(a.id, line);
-                            anchorTextByAnnotationId.set(a.id, doc.lineAt(line).text);
-                        }
-                    } catch {
-                        for (const a of anns) {
-                            lineByAnnotationId.set(a.id, -1);
-                        }
-                    }
-                }
-
-                const docAnnotations: DocAnnotation[] = all.map((a) => ({
+                const openDocs = vscode.workspace.textDocuments;
+                const items = annotations.map((a) => ({
+                    label: firstMessageLine(a.message) || a.id,
+                    description: formatAnnotationLocation(a.file, store.getLineForAnnotation(a.id, openDocs)),
                     id: a.id,
-                    file: a.file,
-                    line: lineByAnnotationId.get(a.id) ?? -1,
-                    state: a.state,
-                    message: a.message,
-                    author: a.author,
-                    timestamp: a.timestamp,
-                    tags: a.tags,
-                    severity: a.severity,
-                    resolved: a.resolved,
-                    priority: a.priority,
-                    kanbanColumn: a.kanbanColumn,
-                    thread: a.thread,
-                    linkedAnnotations: a.linkedAnnotations,
-                    snippet: a.snippet,
-                    anchorText: anchorTextByAnnotationId.get(a.id),
-                    language: a.languageId,
                 }));
-
-                const depth = outDirSetting.split(/[\\/]/).filter((s) => s.length > 0).length;
-                const files = generateDocSet(docAnnotations, {
-                    title:
-                        siteTitle.length > 0
-                            ? siteTitle
-                            : localize('docsTitle', 'Annotations — {0}', workspaceFolder.name),
-                    sourceLinkPrefix: '../'.repeat(depth),
-                    generatedAt: includeTimestamp ? new Date().toISOString() : undefined,
-                    tagPrefix: docsConfig.get<string>('docs.tagPrefix', 'doc:'),
-                    apiFolder,
-                    guideFile,
-                    includeInventory: docsConfig.get<boolean>('docs.includeInventory', true),
-                    includeAuthored: docsConfig.get<boolean>('docs.includeAuthored', true),
-                    untaggedLabel: docsConfig.get<string>('docs.untaggedLabel', 'untagged'),
+                const picked = await vscode.window.showQuickPick(items, {
+                    placeHolder: loc('pickAnnotationToEdit', 'Select an annotation to edit'),
                 });
-
-                const outDir = vscode.Uri.joinPath(workspaceFolder.uri, ...outDirSetting.split(/[\\/]/));
-                await vscode.workspace.fs.createDirectory(outDir);
-                for (const [name, content] of files) {
-                    await vscode.workspace.fs.writeFile(
-                        vscode.Uri.joinPath(outDir, name),
-                        Buffer.from(content, 'utf8')
-                    );
+                if (!picked) {
+                    return;
                 }
-
-                const openLabel = localize('openDocs', 'Open');
-                const choice = await vscode.window.showInformationMessage(
-                    localize(
-                        'docsGenerated',
-                        'Annotation documentation generated ({0} annotation(s)) in {1}.',
-                        docAnnotations.length,
-                        outDirSetting
-                    ),
-                    openLabel
-                );
-                if (choice === openLabel) {
-                    const indexDoc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(outDir, 'index.md'));
-                    await vscode.window.showTextDocument(indexDoc);
-                }
-            } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                vscode.window.showErrorMessage(localize('docsFailed', 'Failed to generate documentation') + `: ${msg}`);
+                id = picked.id;
             }
+            const annotation = store.get(id);
+            if (!annotation) {
+                vscode.window.showErrorMessage(loc('annotationNotFound', 'Annotation not found: {0}', id));
+                return;
+            }
+            MarkdownMessageEditor.createOrShow(context, annotation, store);
         })
     );
+
+    // ── Docs watch mode (`annotation.docs.watch`) ────────────────────────
+    // Regenerate the documentation silently after annotation changes settle
+    // (trailing-edge debounce). The setting is read on every event so a
+    // toggle takes effect without reload.
+    if (annotationStore) {
+        const docsWatchDebounce = createDebounced(() => {
+            void generateDocumentationNow(true);
+        }, DOCS_WATCH_DEBOUNCE_MS);
+        context.subscriptions.push(
+            annotationStore.onDidChange(() => {
+                const watchEnabled = vscode.workspace
+                    .getConfiguration('annotation')
+                    .get<boolean>('docs.watch', false);
+                if (!watchEnabled) {
+                    return;
+                }
+                docsWatchDebounce.schedule();
+            }),
+            { dispose: () => docsWatchDebounce.cancel() }
+        );
+    }
+}
+
+/**
+ * Generate the annotation documentation site. Single implementation shared
+ * by the `annotations.generateDocs` command (`silent === false`, surfaces
+ * toasts and the Open prompt) and the docs watch mode (`silent === true`,
+ * logs only — no UI noise on auto-regeneration).
+ *
+ * Reentrancy-guarded: a call made while a generation is already running is
+ * skipped (logged). Watch-mode calls additionally skip when the store holds
+ * no annotation at all.
+ */
+async function generateDocumentationNow(silent: boolean): Promise<void> {
+    const store = annotationStore;
+    if (!store) {
+        if (silent) {
+            getLogger().warn('generateDocumentationNow: annotation store not ready, skipping');
+        } else {
+            vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+        }
+        return;
+    }
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+        if (silent) {
+            getLogger().warn('generateDocumentationNow: no workspace folder, skipping');
+        } else {
+            vscode.window.showErrorMessage(localize('noWorkspaceDocs', 'Open a workspace to generate documentation.'));
+        }
+        return;
+    }
+    if (docsGenerationInProgress) {
+        getLogger().info('generateDocumentationNow: a generation is already running, skipping');
+        return;
+    }
+
+    const all = store.serialize().annotations;
+    if (silent && all.length === 0) {
+        getLogger().info('generateDocumentationNow: store is empty, skipping watch regeneration');
+        return;
+    }
+
+    docsGenerationInProgress = true;
+    try {
+        const docsConfig = vscode.workspace.getConfiguration('annotation');
+        const outDirSetting = docsConfig.get<string>('docs.outputPath', 'docs/annotations').trim();
+        // Same traversal contract as the annotations file path: the
+        // docs always land inside the workspace.
+        if (path.isAbsolute(outDirSetting) || outDirSetting.split(/[\\/]/).includes('..')) {
+            const invalidPathMessage = localize(
+                'docsPathInvalid',
+                'annotation.docs.outputPath must be a relative path inside the workspace.'
+            );
+            if (silent) {
+                getLogger().warn(`generateDocumentationNow: ${invalidPathMessage}`);
+            } else {
+                vscode.window.showErrorMessage(invalidPathMessage);
+            }
+            return;
+        }
+        const sanitizeSegment = (value: string, fallback: string): string => {
+            const v = value.trim();
+            return v.length === 0 || v.includes('..') || /[\\/]/.test(v) || path.isAbsolute(v) ? fallback : v;
+        };
+        const apiFolder = sanitizeSegment(docsConfig.get<string>('docs.apiFolder', 'api'), 'api');
+        const guideFile = sanitizeSegment(docsConfig.get<string>('docs.guideFile', 'guide.md'), 'guide.md');
+        const includeTimestamp = docsConfig.get<boolean>('docs.includeTimestamp', true);
+        const siteTitle = docsConfig.get<string>('docs.siteTitle', '').trim();
+
+        // Resolve display lines per file. openTextDocument loads the
+        // file into memory without showing it — cheap and works for
+        // closed files; failures degrade to line -1 (link without
+        // a line fragment).
+        const lineByAnnotationId = new Map<string, number>();
+        const anchorTextByAnnotationId = new Map<string, string>();
+        const byUri = new Map<string, typeof all>();
+        for (const a of all) {
+            const bucket = byUri.get(a.fileUri);
+            if (bucket) {
+                bucket.push(a);
+            } else {
+                byUri.set(a.fileUri, [a]);
+            }
+        }
+        for (const [uriStr, anns] of byUri) {
+            try {
+                const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(uriStr));
+                for (const a of anns) {
+                    const line = doc.positionAt(a.startOffset).line;
+                    lineByAnnotationId.set(a.id, line);
+                    anchorTextByAnnotationId.set(a.id, doc.lineAt(line).text);
+                }
+            } catch {
+                for (const a of anns) {
+                    lineByAnnotationId.set(a.id, -1);
+                }
+            }
+        }
+
+        const docAnnotations: DocAnnotation[] = all.map((a) => ({
+            id: a.id,
+            file: a.file,
+            line: lineByAnnotationId.get(a.id) ?? -1,
+            state: a.state,
+            message: a.message,
+            author: a.author,
+            timestamp: a.timestamp,
+            tags: a.tags,
+            severity: a.severity,
+            resolved: a.resolved,
+            priority: a.priority,
+            kanbanColumn: a.kanbanColumn,
+            thread: a.thread,
+            linkedAnnotations: a.linkedAnnotations,
+            snippet: a.snippet,
+            anchorText: anchorTextByAnnotationId.get(a.id),
+            language: a.languageId,
+        }));
+
+        const depth = outDirSetting.split(/[\\/]/).filter((s) => s.length > 0).length;
+        const files = generateDocSet(docAnnotations, {
+            title: siteTitle.length > 0 ? siteTitle : localize('docsTitle', 'Annotations — {0}', workspaceFolder.name),
+            sourceLinkPrefix: '../'.repeat(depth),
+            generatedAt: includeTimestamp ? new Date().toISOString() : undefined,
+            tagPrefix: docsConfig.get<string>('docs.tagPrefix', 'doc:'),
+            apiFolder,
+            guideFile,
+            includeInventory: docsConfig.get<boolean>('docs.includeInventory', true),
+            includeAuthored: docsConfig.get<boolean>('docs.includeAuthored', true),
+            untaggedLabel: docsConfig.get<string>('docs.untaggedLabel', 'untagged'),
+        });
+
+        const outDir = vscode.Uri.joinPath(workspaceFolder.uri, ...outDirSetting.split(/[\\/]/));
+        await vscode.workspace.fs.createDirectory(outDir);
+        for (const [name, content] of files) {
+            await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(outDir, name), Buffer.from(content, 'utf8'));
+        }
+
+        if (silent) {
+            const count = String(docAnnotations.length);
+            getLogger().info(`docs watch: regenerated docs for ${count} annotation(s) in ${outDirSetting}`);
+            return;
+        }
+
+        const openLabel = localize('openDocs', 'Open');
+        const choice = await vscode.window.showInformationMessage(
+            localize(
+                'docsGenerated',
+                'Annotation documentation generated ({0} annotation(s)) in {1}.',
+                docAnnotations.length,
+                outDirSetting
+            ),
+            openLabel
+        );
+        if (choice === openLabel) {
+            const indexDoc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(outDir, 'index.md'));
+            await vscode.window.showTextDocument(indexDoc);
+        }
+    } catch (err) {
+        if (silent) {
+            getLogger().error('generateDocumentationNow: watch regeneration failed', err);
+        } else {
+            const msg = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage(localize('docsFailed', 'Failed to generate documentation') + `: ${msg}`);
+        }
+    } finally {
+        docsGenerationInProgress = false;
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
