@@ -7,6 +7,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+- New `desktop/` Tauri v2 application: a team-facing annotation manager that
+  works on workspace annotation stores without VS Code — corpus scanning,
+  annotation table/editing/creation (reusing the extension's anchoring
+  module), documentation generation via `generateDocSet`, AI-suggested
+  annotations through curl-template providers (OpenAI, Claude, Gemini, Grok,
+  Ollama), and team onboarding helpers (CLAUDE.md/AGENTS.md AI instructions,
+  MCP config snippets, git status). See `desktop/README.md`.
+
 ## [1.0.22] - 2026-06-11
 
 ### Added

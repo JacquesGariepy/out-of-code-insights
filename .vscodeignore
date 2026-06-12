@@ -10,6 +10,9 @@ webpack.config.js
 esbuild.js
 node_modules/**
 
+# Desktop app (not part of the extension package)
+desktop/**
+
 # VS Code workspace + tests
 .vscode/**
 .vscode-test/**
