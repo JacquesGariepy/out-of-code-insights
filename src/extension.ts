@@ -6,6 +6,7 @@ if (typeof globalThis.AbortController === 'undefined') {
 }
 
 import * as path from 'path';
+import { TextDecoder } from 'util';
 import * as vscode from 'vscode';
 import { AnnotationManager } from './managers/AnnotationManager';
 import type { Annotation } from './common/types';
@@ -28,10 +29,15 @@ import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
 import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerator';
 import { scanLineComments } from './comments/commentScanner';
+import { languageOfPath } from './comments/languageOfPath';
+import { captureAnchor } from './anchoring/anchor';
+import { TextBuffer } from './anchoring/textBuffer';
+import { toFileUriString } from './common/fileUri';
 import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
 import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
 import { createDebounced } from './utils/debounce';
-import { LicenseManager, requireEntitlement } from './pro/LicenseManager';
+import { LicenseManager, getLicenseManager, requireEntitlement } from './pro/LicenseManager';
+import { PRO_FEATURE_IDS, localizedFeatureName } from './pro/features';
 import { AnnotationSyncService, SYNC_FEATURE_ID } from './sync/AnnotationSyncService';
 
 let annotationManager: AnnotationManager | undefined;
@@ -54,6 +60,24 @@ let docsGenerationInProgress = false;
 
 /** Quiet period between the last annotation change and a watch-mode regeneration. */
 const DOCS_WATCH_DEBOUNCE_MS = 2000;
+
+/**
+ * One-shot toast guard for the docs-watch Pro gate: the first denied
+ * watch-triggered regeneration shows the unlock toast, later denials only
+ * log and skip. Reset as soon as the feature is entitled again.
+ */
+let docsWatchDenialNotified = false;
+
+// `annotations.importCommentsWorkspace` scan bounds.
+/** Include glob: every comment syntax the scanner knows how to read. */
+const WORKSPACE_IMPORT_INCLUDE_GLOB =
+    '**/*.{ts,tsx,js,jsx,py,rb,go,rs,java,c,cpp,h,cs,sh,ps1,sql,lua,yaml,yml,toml,html,vue,md}';
+/** Exclude glob: dependency, VCS and build-output folders. */
+const WORKSPACE_IMPORT_EXCLUDE_GLOB = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/coverage/**}';
+/** Hard cap on the number of files visited per run. */
+const WORKSPACE_IMPORT_MAX_FILES = 2000;
+/** Files larger than this are skipped (likely generated/minified). */
+const WORKSPACE_IMPORT_MAX_FILE_BYTES = 1024 * 1024;
 
 // Pro licensing scaffold — fully free by default (no gated features, no
 // license server configured). The module-level getter mirrors
@@ -1262,6 +1286,79 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
         })
     );
 
+    // Workspace-wide variant of the better-comments bridge: scan every
+    // matching file in the workspace through the filesystem API (no editors
+    // opened) and import marker comments as annotations via the store's raw
+    // add path. Pro-gateable as `comments.importWorkspace` (free by default).
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.importCommentsWorkspace', async () => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return;
+            }
+            if (
+                !requireEntitlement(
+                    PRO_FEATURE_IDS.workspaceCommentImport,
+                    localizedFeatureName(PRO_FEATURE_IDS.workspaceCommentImport)
+                )
+            ) {
+                return;
+            }
+            const uris = await vscode.workspace.findFiles(
+                WORKSPACE_IMPORT_INCLUDE_GLOB,
+                WORKSPACE_IMPORT_EXCLUDE_GLOB,
+                WORKSPACE_IMPORT_MAX_FILES
+            );
+            if (uris.length === 0) {
+                vscode.window.showInformationMessage(
+                    loc('workspaceImportNoFiles', 'No matching source files found in the workspace.')
+                );
+                return;
+            }
+            const decoder = new TextDecoder();
+            let scanned = 0;
+            let created = 0;
+            await vscode.window.withProgress(
+                {
+                    location: vscode.ProgressLocation.Notification,
+                    title: loc('workspaceImportProgressTitle', 'Importing code comments from the workspace…'),
+                    cancellable: true,
+                },
+                async (progress, token) => {
+                    const increment = 100 / uris.length;
+                    for (const uri of uris) {
+                        if (token.isCancellationRequested) {
+                            break;
+                        }
+                        try {
+                            const stat = await vscode.workspace.fs.stat(uri);
+                            if (stat.size <= WORKSPACE_IMPORT_MAX_FILE_BYTES) {
+                                const content = decoder.decode(await vscode.workspace.fs.readFile(uri));
+                                created += importCommentsFromContent(store, uri, content);
+                            }
+                        } catch (err) {
+                            getLogger().warn(`importCommentsWorkspace: skipping ${uri.toString()}`, err);
+                        }
+                        scanned++;
+                        progress.report({
+                            increment,
+                            message: loc('workspaceImportProgress', '{0}/{1} file(s) scanned', scanned, uris.length),
+                        });
+                    }
+                }
+            );
+            vscode.window.showInformationMessage(
+                loc(
+                    'workspaceCommentsImported',
+                    '{0} annotation(s) created from {1} file(s) scanned.',
+                    created,
+                    scanned
+                )
+            );
+        })
+    );
+
     // MCP surface: the server is a standalone process (mcp-server/), so the
     // only UI it needs inside VS Code is a setup helper that hands the user
     // a ready-to-paste client configuration.
@@ -1418,11 +1515,94 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 if (!watchEnabled) {
                     return;
                 }
+                if (!checkDocsWatchEntitlement()) {
+                    return;
+                }
                 docsWatchDebounce.schedule();
             }),
             { dispose: () => docsWatchDebounce.cancel() }
         );
     }
+}
+
+/**
+ * Entitlement gate for watch-triggered documentation regeneration (Pro
+ * feature id `docs.watch`). Free by default: with the stock empty
+ * `annotation.pro.gatedFeatures` this always returns true. When the feature
+ * is gated and not entitled, the first denial surfaces the standard unlock
+ * toast through requireEntitlement(); subsequent denials only log and skip
+ * so a busy store does not spam notifications.
+ */
+function checkDocsWatchEntitlement(): boolean {
+    const featureId = PRO_FEATURE_IDS.docsWatch;
+    if (docsWatchDenialNotified) {
+        const manager = getLicenseManager();
+        if (manager && !manager.isEntitled(featureId)) {
+            getLogger().info('docs watch: regeneration skipped — feature not entitled');
+            return false;
+        }
+        docsWatchDenialNotified = false;
+        return true;
+    }
+    if (!requireEntitlement(featureId, localizedFeatureName(featureId))) {
+        docsWatchDenialNotified = true;
+        getLogger().info('docs watch: regeneration blocked by Pro gating; further denials will be silent');
+        return false;
+    }
+    return true;
+}
+
+/**
+ * Per-file unit of `annotations.importCommentsWorkspace`: scan `content`
+ * for comment markers and add one annotation per unannotated matching line
+ * through the store's raw add path (no TextDocument involved — anchoring is
+ * computed over a TextBuffer with the exact options used by
+ * AnnotationStore.addWithDocument). Returns the number of annotations
+ * created.
+ */
+function importCommentsFromContent(store: AnnotationStore, uri: vscode.Uri, content: string): number {
+    const languageId = languageOfPath(uri.fsPath);
+    const buffer = new TextBuffer(content);
+    const lines: string[] = [];
+    for (let i = 0; i < buffer.lineCount; i++) {
+        lines.push(buffer.lineAt(i).text);
+    }
+    const matches = scanLineComments(lines, languageId);
+    if (matches.length === 0) {
+        return 0;
+    }
+    const fileUri = toFileUriString(uri.fsPath);
+    const file = vscode.workspace.asRelativePath(uri);
+    const occupiedLines = new Set<number>();
+    for (const existing of store.getByFile(fileUri)) {
+        occupiedLines.add(buffer.lineAtOffset(existing.startOffset));
+    }
+    let created = 0;
+    for (const match of matches) {
+        if (occupiedLines.has(match.line)) {
+            continue;
+        }
+        const startOffset = buffer.offsetAt(match.line);
+        const anchor = captureAnchor(buffer, match.line, { walkForward: 0, walkBackward: 0 });
+        store.add({
+            fileUri,
+            file,
+            startOffset,
+            endOffset: startOffset + buffer.lineAt(match.line).text.length,
+            lineHash: anchor.lineHash,
+            contextBefore: anchor.contextBefore,
+            contextAfter: anchor.contextAfter,
+            origin: { kind: 'manual' },
+            message: match.text,
+            timestamp: new Date().toISOString(),
+            languageId,
+            tags: [match.tag, 'imported-comment'],
+            severity: match.severity,
+        });
+        occupiedLines.add(match.line);
+        created++;
+    }
+    return created;
 }
 
 /**
