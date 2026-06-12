@@ -1,4 +1,8 @@
 {
+    "commentsAnnotationNotFound": "Annotation not found for this comment thread.",
+    "noWorkspaceAiInstructions": "Open a workspace to set up AI agent instructions.",
+    "aiInstructionsUpserted": "AI agent instructions updated in {0}.",
+    "aiInstructionsFailed": "Failed to set up AI agent instructions",
     "annotatedCodeDeleted": "The code for annotation \"{0}\" was deleted. Keep the annotation?",
     "keepOrphanedAnnotation": "Keep annotation",
     "discardAnnotation": "Delete",

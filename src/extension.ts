@@ -39,6 +39,12 @@ import { createDebounced } from './utils/debounce';
 import { LicenseManager, getLicenseManager, requireEntitlement } from './pro/LicenseManager';
 import { PRO_FEATURE_IDS, localizedFeatureName } from './pro/features';
 import { AnnotationSyncService, SYNC_FEATURE_ID } from './sync/AnnotationSyncService';
+import { AnnotationCommentsController } from './comments/AnnotationCommentsController';
+import {
+    AGENT_INSTRUCTION_FILES,
+    buildAgentInstructionsBlock,
+    upsertAgentInstructionsBlock,
+} from './ai/agentInstructions';
 
 let annotationManager: AnnotationManager | undefined;
 let profileManager: UserProfileManager | undefined;
@@ -479,6 +485,51 @@ function registerEssentialCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.commands.registerCommand('annotations.openSettings', () => {
             vscode.commands.executeCommand('workbench.action.openSettings', 'annotation');
+        })
+    );
+
+    // Upsert the marked AI-agent instruction block into CLAUDE.md and
+    // AGENTS.md at the workspace root. Idempotent: an existing block is
+    // replaced in place, surrounding content is preserved.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.setupAiInstructions', async () => {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                vscode.window.showErrorMessage(
+                    loc('noWorkspaceAiInstructions', 'Open a workspace to set up AI agent instructions.')
+                );
+                return;
+            }
+            try {
+                const docsConfig = vscode.workspace.getConfiguration('annotation');
+                const outputPath = docsConfig.get<string>('docs.outputPath', 'docs/annotations');
+                const block = buildAgentInstructionsBlock(outputPath);
+                for (const fileName of AGENT_INSTRUCTION_FILES) {
+                    const uri = vscode.Uri.joinPath(workspaceFolder.uri, fileName);
+                    let existing = '';
+                    try {
+                        existing = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
+                    } catch {
+                        // File absent — it will be created below.
+                    }
+                    const next = upsertAgentInstructionsBlock(existing, block);
+                    if (next !== existing) {
+                        await vscode.workspace.fs.writeFile(uri, Buffer.from(next, 'utf8'));
+                    }
+                }
+                void vscode.window.showInformationMessage(
+                    loc(
+                        'aiInstructionsUpserted',
+                        'AI agent instructions updated in {0}.',
+                        AGENT_INSTRUCTION_FILES.join(', ')
+                    )
+                );
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(
+                    loc('aiInstructionsFailed', 'Failed to set up AI agent instructions') + `: ${message}`
+                );
+            }
         })
     );
 
@@ -939,6 +990,14 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
         vscode.languages.registerCodeLensProvider({ scheme: 'file' }, codeLensProvider),
         codeLensProvider
     );
+
+    // ── Comments API controller ─────────────────────────────────────────
+    // Renders annotations as native editor comment threads. Gated by
+    // `annotation.commentsView`; the setting is read once at activation
+    // (documented in its description — changes apply on the next reload).
+    if (vscode.workspace.getConfiguration('annotation').get<boolean>('commentsView', true)) {
+        context.subscriptions.push(new AnnotationCommentsController(annotationStore));
+    }
 
     // The save-timer flush helper is reachable through the closure above; the
     // variable declaration here keeps lint happy without a leaked unused-var.

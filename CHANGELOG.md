@@ -7,7 +7,6 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-<<<<<<< HEAD
 ### Security
 - All 11 npm audit findings resolved (1 critical `shell-quote`, high
   `tmp`/`serialize-javascript`, DoS-range `diff`, `qs`, `uuid`, and their
@@ -125,6 +124,23 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   annotations through curl-template providers (OpenAI, Claude, Gemini, Grok,
   Ollama), and team onboarding helpers (CLAUDE.md/AGENTS.md AI instructions,
   MCP config snippets, git status). See `desktop/README.md`.
+- Annotations now render as native editor comment threads (VS Code Comments
+  API): the comment gutter "+" creates a new annotation at that line,
+  replies typed in the comment widget are appended to the annotation's
+  discussion thread, and the thread title bar offers resolve / unresolve /
+  delete actions backed by the annotation itself. The thread label shows
+  the annotation severity and tags. Controlled by the new
+  `annotation.commentsView` setting (default on; changes take effect on
+  the next activation).
+- New command **Set Up AI Agent Instructions** (robot icon, command
+  palette): upserts a marked instruction block into both `CLAUDE.md` and
+  `AGENTS.md` at the workspace root (files are created when absent). The
+  block tells AI agents to annotate code through the out-of-code-insights
+  MCP tools instead of writing comments into source files, to tag
+  documentation annotations with `doc:module` / `doc:class` /
+  `doc:function` / `doc:example` / `doc:guide`, and where the generated
+  documentation lives (`annotation.docs.outputPath`). Re-running the
+  command replaces the block in place — never duplicates it.
 
 ## [1.0.22] - 2026-06-11
 
