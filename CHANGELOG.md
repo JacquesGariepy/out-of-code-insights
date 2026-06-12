@@ -14,6 +14,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   license contract), stores per-workspace schema-v2 annotation envelopes with
   optimistic concurrency (`GET`/`PUT /v1/workspaces/:id/annotations` with
   `If-Match` versioning), and ships a CLI to issue, revoke and list keys.
+- Cloud annotation sync (team sharing): new commands **Configure Annotation
+  Sync** (stores the bearer token in Secret Storage) and **Sync Annotations
+  Now**, backed by the license server's `/v1/workspaces/<id>/annotations`
+  API with optimistic concurrency (`If-Match` versioning). New settings
+  `annotation.sync.serverUrl`, `annotation.sync.workspaceId` and
+  `annotation.sync.auto` (pull once on activation, debounced push 5 s after
+  annotation changes). A status bar item (hidden until a server URL is set)
+  shows the sync state and last sync time; clicking it syncs. On divergence
+  a non-modal prompt offers "Keep local (overwrite remote)" or "Take
+  remote". Syncing can be gated as a Pro feature by adding `sync` to
+  `annotation.pro.gatedFeatures` (free by default).
 - New command **Import Code Comments as Annotations**: scans the active
   document for better-comments-style markers (`// !`, `// ?`, `// *`,
   `TODO`, `FIXME`/`BUG`, `HACK`/`XXX` — also `#`, `--` and `<!-- -->`

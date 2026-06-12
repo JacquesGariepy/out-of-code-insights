@@ -31,7 +31,8 @@ import { scanLineComments } from './comments/commentScanner';
 import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
 import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
 import { createDebounced } from './utils/debounce';
-import { LicenseManager } from './pro/LicenseManager';
+import { LicenseManager, requireEntitlement } from './pro/LicenseManager';
+import { AnnotationSyncService, SYNC_FEATURE_ID } from './sync/AnnotationSyncService';
 
 let annotationManager: AnnotationManager | undefined;
 let profileManager: UserProfileManager | undefined;
@@ -46,6 +47,7 @@ let annotationStore: AnnotationStore | undefined;
 let annotationPersistence: AnnotationPersistence | undefined;
 let visibilityFilter: VisibilityFilter | undefined;
 let kanbanColumnStore: KanbanColumnStore | undefined;
+let annotationSyncService: AnnotationSyncService | undefined;
 
 /** Reentrancy guard for {@link generateDocumentationNow}. */
 let docsGenerationInProgress = false;
@@ -574,6 +576,10 @@ export function deactivate(): void {
         aiProfileManager.dispose();
         aiProfileManager = undefined;
     }
+    if (annotationSyncService) {
+        annotationSyncService.dispose();
+        annotationSyncService = undefined;
+    }
     if (annotationStore) {
         annotationStore.dispose();
         annotationStore = undefined;
@@ -830,6 +836,20 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     context.subscriptions.push(annotationStore, visibilityFilter, kanbanColumnStore);
     if (annotationPersistence) {
         context.subscriptions.push(annotationPersistence);
+    }
+
+    // ── Cloud annotation sync ───────────────────────────────────────────
+    // Constructed only when a workspace folder (and therefore persistence)
+    // exists: the client pulls into / pushes from the same v2 envelope. The
+    // service stays inert (hidden status bar item, no network) while
+    // `annotation.sync.serverUrl` is empty. `start()` performs the one-time
+    // activation pull when `annotation.sync.auto` is enabled.
+    if (annotationStore && annotationPersistence) {
+        annotationSyncService = new AnnotationSyncService(context, annotationStore, annotationPersistence);
+        context.subscriptions.push(annotationSyncService);
+        annotationSyncService.start().catch((err: unknown) => {
+            logger.error('AnnotationSyncService.start failed', err);
+        });
     }
 
     // ── CodeLens provider ───────────────────────────────────────────────
@@ -1315,6 +1335,33 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     loc('mcpConfigCopied', 'MCP configuration copied to the clipboard.')
                 );
             }
+        })
+    );
+
+    // ── Cloud annotation sync ───────────────────────────────────────────
+    // Token entry (SecretStorage) + settings reminder. The token prompt is
+    // always available; the sync itself is gated below.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.syncConfigure', async () => {
+            if (!annotationSyncService) {
+                vscode.window.showErrorMessage(loc('syncNoWorkspace', 'Open a workspace to use annotation sync.'));
+                return;
+            }
+            await annotationSyncService.configureToken();
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.syncNow', async () => {
+            if (!annotationSyncService) {
+                vscode.window.showErrorMessage(loc('syncNoWorkspace', 'Open a workspace to use annotation sync.'));
+                return;
+            }
+            // Free unless 'sync' is listed in annotation.pro.gatedFeatures.
+            if (!requireEntitlement(SYNC_FEATURE_ID, loc('syncFeatureName', 'Cloud annotation sync'))) {
+                return;
+            }
+            await annotationSyncService.syncNow({ interactive: true });
         })
     );
 
