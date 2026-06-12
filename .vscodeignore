@@ -53,6 +53,10 @@ typedoc.json
 .editorconfig
 package-lock.json
 
+# Standalone sub-packages (shipped separately, never inside the VSIX)
+mcp-server/**
+license-server/**
+
 # Workspace-local data
 .out-of-code-insights/**
 
