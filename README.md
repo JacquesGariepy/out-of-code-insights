@@ -356,7 +356,7 @@ This feature allows you to create multiple types of items in a single operation 
 
 ### MCP Server
 
-The repository ships a standalone MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server in [`mcp-server/`](./mcp-server) that exposes your workspace annotations (read, search, create) to any MCP-compatible client.
+The repository ships a standalone MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server in [`mcp-server/`](./mcp-server) that lets AI agents work with your annotations **outside VS Code**: list/get/add/update/remove/link annotations, a `code_graph` projection of annotation links, and `generate_docs` — all against the same `annotations.json` the extension uses, without ever modifying source files. While VS Code is open, external changes are reloaded live by the extension's file watcher.
 
 Quickstart:
 
@@ -365,22 +365,29 @@ Quickstart:
 npm ci && cd mcp-server && npm ci && npm run build
 
 # Register it with an MCP client, e.g. the claude CLI:
-claude mcp add out-of-code-insights -- node /path/to/out-of-code-insights/mcp-server/dist/index.js
+claude mcp add out-of-code-insights -- node /path/to/out-of-code-insights/mcp-server/bin/out-of-code-insights-mcp.js --workspace /path/to/your/project
 ```
 
-Tagged releases (`mcp-v*`) are published to npm; the version always comes from `mcp-server/package.json`.
+Or run the **MCP Server Setup** command in VS Code: it copies a ready-to-paste configuration (Claude Code command or `claude_desktop_config.json` snippet) with the paths pre-filled. Full tool reference: [mcp-server/README.md](./mcp-server/README.md). Tagged releases (`mcp-v*`) are published to npm; the version always comes from `mcp-server/package.json`.
 
 ### Pro licensing
 
-Pro features are unlocked with a license key kept in VS Code Secret Storage:
+Everything is **free by default** — gating only activates for the feature ids you list. The flow:
 
-- `annotation.pro.licenseServerUrl` — validation endpoint the extension POSTs the key to.
-- `annotation.pro.gatedFeatures` — the list of feature ids that actually require an entitlement; everything else stays free.
-- Self-hosting: the [`license-server/`](./license-server) package implements the expected contract (`{ valid, entitlements, expiresAt? }`) and can be deployed on your own infrastructure.
+- **Enter License Key (Pro)** command stores the key in VS Code Secret Storage and validates it against `annotation.pro.licenseServerUrl` (`POST /v1/validate` → `{ valid, entitlements, expiresAt? }`).
+- `annotation.pro.gatedFeatures` — the feature ids that actually require an entitlement (e.g. `sync`, `docs.watch`); anything not listed stays free. Entitlements are cached with an offline grace period (`annotation.pro.offlineGraceDays`, default 7 days).
+- Self-hosting: the [`license-server/`](./license-server) package implements the contract with offline-verifiable HMAC keys, a CLI to issue/revoke keys, the cloud-sync API, an optional Stripe webhook that issues keys on completed checkouts, and a Dockerfile.
 
 ### Cloud sync
 
-The `annotation.sync.*` settings control synchronization of the annotation store with a remote backend (enablement, endpoint, and sync behavior). Search for `annotation.sync` in the VS Code settings UI to see all options.
+Share annotations across a team through the license server: set `annotation.sync.serverUrl` and `annotation.sync.workspaceId`, store the bearer token with **Configure Annotation Sync**, then **Sync Annotations Now** (or click the ☁ status bar item). Optimistic concurrency with a keep-local/take-remote prompt on divergence; `annotation.sync.auto` pulls on activation and pushes (debounced) after changes. Gate it as a Pro feature by adding `sync` to `annotation.pro.gatedFeatures`.
+
+### Comment import & styling
+
+- **Import Code Comments as Annotations** (active file) and **Import Code Comments from Workspace** turn better-comments-style markers (`// !`, `// ?`, `// *`, `TODO`, `FIXME`, `HACK` — also `#`, `--`, `<!-- -->` syntaxes) into tagged, severity-mapped annotations; reruns never duplicate.
+- `annotation.severityStyles` / `annotation.tagStyles` map severities and tags to decoration colors (inline text, background, border, gutter visibility).
+- **Edit Annotation Message (Markdown)** opens a multiline editor panel; the inline editor decoration shows only the first line of the message.
+- `annotation.watchExternalChanges` (default on) reloads annotations changed on disk by external tools; `annotation.docs.watch` regenerates the documentation on every annotation change.
 
 ### Documentation generator
 
