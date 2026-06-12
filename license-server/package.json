@@ -1,0 +1,26 @@
+{
+    "name": "out-of-code-insights-license-server",
+    "version": "0.1.0",
+    "private": true,
+    "description": "Self-hostable license validation and annotation sync server for the Out-of-Code Insights VS Code extension.",
+    "license": "MPL-2.0",
+    "author": {
+        "name": "Jacques Gariépy",
+        "email": "jacques.gariepy@outlook.com"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "main": "dist/src/server.js",
+    "scripts": {
+        "build": "tsc -p .",
+        "start": "node dist/src/server.js",
+        "cli": "node dist/src/cli.js",
+        "pretest": "npm run build",
+        "test": "node --test dist/test"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.0",
+        "typescript": "^5.5.0"
+    }
+}

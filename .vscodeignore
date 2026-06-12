@@ -60,6 +60,9 @@ package-lock.json
 # Local-only / aux files
 *.vsix
 
+# Standalone self-hostable license/sync server (not part of the extension)
+license-server/**
+
 # Internal AI-agent / orchestrator state and project guidance (do not publish)
 .orchestra/**
 .claude/**

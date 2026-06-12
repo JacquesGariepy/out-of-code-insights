@@ -8,6 +8,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- Self-hostable license + annotation sync server under `license-server/`
+  (standalone package, zero runtime dependencies, Docker-ready): validates
+  offline-signed license keys (`POST /v1/validate`, matching the extension's
+  license contract), stores per-workspace schema-v2 annotation envelopes with
+  optimistic concurrency (`GET`/`PUT /v1/workspaces/:id/annotations` with
+  `If-Match` versioning), and ships a CLI to issue, revoke and list keys.
 - New command **Import Code Comments as Annotations**: scans the active
   document for better-comments-style markers (`// !`, `// ?`, `// *`,
   `TODO`, `FIXME`/`BUG`, `HACK`/`XXX` — also `#`, `--` and `<!-- -->`
