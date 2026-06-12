@@ -352,6 +352,40 @@ This feature allows you to create multiple types of items in a single operation 
 - **With AI**: Generate snippets based on your needs (e.g., "error handling patterns")
 - **Manual input**: Create multiple snippets with custom code and descriptions
 
+## 🧩 Pro & Integrations
+
+### MCP Server
+
+The repository ships a standalone MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server in [`mcp-server/`](./mcp-server) that exposes your workspace annotations (read, search, create) to any MCP-compatible client.
+
+Quickstart:
+
+```bash
+# Build the server (root install first: its tsconfig reaches into ../src)
+npm ci && cd mcp-server && npm ci && npm run build
+
+# Register it with an MCP client, e.g. the claude CLI:
+claude mcp add out-of-code-insights -- node /path/to/out-of-code-insights/mcp-server/dist/index.js
+```
+
+Tagged releases (`mcp-v*`) are published to npm; the version always comes from `mcp-server/package.json`.
+
+### Pro licensing
+
+Pro features are unlocked with a license key kept in VS Code Secret Storage:
+
+- `annotation.pro.licenseServerUrl` — validation endpoint the extension POSTs the key to.
+- `annotation.pro.gatedFeatures` — the list of feature ids that actually require an entitlement; everything else stays free.
+- Self-hosting: the [`license-server/`](./license-server) package implements the expected contract (`{ valid, entitlements, expiresAt? }`) and can be deployed on your own infrastructure.
+
+### Cloud sync
+
+The `annotation.sync.*` settings control synchronization of the annotation store with a remote backend (enablement, endpoint, and sync behavior). Search for `annotation.sync` in the VS Code settings UI to see all options.
+
+### Documentation generator
+
+The **Generate Annotation Documentation** command builds a DocFX-compatible Markdown site from your annotations: overview with counts, by-type and by-file pages with `file:line` links, plus authored API pages assembled from `doc:*` tags (`doc:module`, `doc:class`, `doc:function`, `doc:example`, `doc:guide`) with `[[Title]]` wiki-links. Output and structure are fully configurable through the `annotation.docs.*` settings (default output: `docs/annotations`).
+
 ## 📋 Key Commands
 
 ### AI Commands
