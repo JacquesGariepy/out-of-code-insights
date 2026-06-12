@@ -7,6 +7,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+<<<<<<< HEAD
 ### Security
 - All 11 npm audit findings resolved (1 critical `shell-quote`, high
   `tmp`/`serialize-javascript`, DoS-range `diff`, `qs`, `uuid`, and their
@@ -117,6 +118,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   when the `NPM_TOKEN` secret is absent).
 - The VSIX no longer bundles the standalone `mcp-server/` and
   `license-server/` packages (`.vscodeignore`).
+- New `desktop/` Tauri v2 application: a team-facing annotation manager that
+  works on workspace annotation stores without VS Code — corpus scanning,
+  annotation table/editing/creation (reusing the extension's anchoring
+  module), documentation generation via `generateDocSet`, AI-suggested
+  annotations through curl-template providers (OpenAI, Claude, Gemini, Grok,
+  Ollama), and team onboarding helpers (CLAUDE.md/AGENTS.md AI instructions,
+  MCP config snippets, git status). See `desktop/README.md`.
 
 ## [1.0.22] - 2026-06-11
 
