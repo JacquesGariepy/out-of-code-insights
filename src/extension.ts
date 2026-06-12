@@ -61,6 +61,9 @@ let docsGenerationInProgress = false;
 /** Quiet period between the last annotation change and a watch-mode regeneration. */
 const DOCS_WATCH_DEBOUNCE_MS = 2000;
 
+/** Window after our own annotations.json save during which watcher events are treated as echoes. */
+const EXTERNAL_WATCH_SUPPRESSION_MS = 2000;
+
 /**
  * One-shot toast guard for the docs-watch Pro gate: the first denied
  * watch-triggered regeneration shows the unlock toast, later denials only
@@ -714,15 +717,22 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     // multi-cursor inserts) without racing the typical 500 ms wait used by
     // the EDH integration suite when it reads back the persisted file.
     let saveTimer: NodeJS.Timeout | undefined;
+    let lastSelfWriteAt = 0;
     const flushSave = (): void => {
         saveTimer = undefined;
         if (!annotationStore || !annotationPersistence) {
             return;
         }
         const payload = annotationStore.serialize();
-        annotationPersistence.save(payload).catch((err: unknown) => {
-            logger.error('AnnotationPersistence.save failed', err);
-        });
+        lastSelfWriteAt = Date.now();
+        annotationPersistence
+            .save(payload)
+            .then(() => {
+                lastSelfWriteAt = Date.now();
+            })
+            .catch((err: unknown) => {
+                logger.error('AnnotationPersistence.save failed', err);
+            });
     };
     context.subscriptions.push(
         annotationStore.onDidChange(() => {
@@ -732,6 +742,49 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
             saveTimer = setTimeout(flushSave, 100);
         })
     );
+
+    // Live external-change watcher: the MCP server (or any other tool)
+    // writes the same annotations.json. Reload the store when the file
+    // changes on disk — unless the write was our own (suppression window
+    // after each save; our own watcher echo would otherwise reload and
+    // re-save in a loop). Reloading replaces the in-memory state wholesale
+    // (journal/undo mirroring resets), which is the documented contract for
+    // external edits.
+    if (annotationPersistence && workspaceFolder) {
+        const persistence = annotationPersistence;
+        const watchedFolder = workspaceFolder;
+        const relativeAnnotationsPath = path
+            .relative(watchedFolder.uri.fsPath, persistence.getPath())
+            .split(path.sep)
+            .join('/');
+        const externalReload = async (): Promise<void> => {
+            if (!annotationStore) {
+                return;
+            }
+            if (Date.now() - lastSelfWriteAt < EXTERNAL_WATCH_SUPPRESSION_MS) {
+                return;
+            }
+            if (!vscode.workspace.getConfiguration('annotation').get<boolean>('watchExternalChanges', true)) {
+                return;
+            }
+            try {
+                const payload = await persistence.load();
+                annotationStore.deserialize(payload);
+                annotationStore.notifyChanged();
+                logger.info(
+                    `annotations.json changed externally — reloaded ${String(payload.annotations.length)} annotation(s)`
+                );
+            } catch (err) {
+                logger.warn('external annotations.json change could not be loaded', err);
+            }
+        };
+        const watcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(watchedFolder, relativeAnnotationsPath)
+        );
+        watcher.onDidChange(() => void externalReload());
+        watcher.onDidCreate(() => void externalReload());
+        context.subscriptions.push(watcher);
+    }
 
     // Follow the user's cut-recovery-window setting live.
     context.subscriptions.push(

@@ -51,13 +51,31 @@ function readJsonIfExists(file: string): unknown {
     return JSON.parse(content);
 }
 
+/**
+ * Record of a key issued by the Stripe webhook. The raw key is stored so the
+ * operator can deliver it to the customer (self-hosted deployment — protect
+ * DATA_DIR accordingly; revoke via the key id if it leaks).
+ */
+export interface IssuedKeyRecord {
+    /** Stripe event id — issuance is idempotent per event. */
+    eventId: string;
+    keyId: string;
+    key: string;
+    email: string | null;
+    entitlements: string[];
+    expiresAt?: string;
+    createdAt: string;
+}
+
 export class FileStore {
     private readonly revokedFile: string;
     private readonly workspacesDir: string;
+    private readonly issuedFile: string;
 
     constructor(dataDir: string) {
         this.revokedFile = path.join(dataDir, 'revoked.json');
         this.workspacesDir = path.join(dataDir, 'workspaces');
+        this.issuedFile = path.join(dataDir, 'issued.json');
     }
 
     // ── Revocation ───────────────────────────────────────────────────────
@@ -125,6 +143,37 @@ export class FileStore {
         const record: WorkspaceRecord = { version: currentVersion + 1, envelope };
         atomicWriteJson(this.workspaceFile(workspaceId), record);
         return { ok: true, version: record.version };
+    }
+
+    // ── Webhook-issued keys ──────────────────────────────────────────────
+
+    /** All webhook-issued key records, oldest first. */
+    listIssuedKeys(): IssuedKeyRecord[] {
+        const raw = readJsonIfExists(this.issuedFile);
+        if (raw === undefined) {
+            return [];
+        }
+        if (!Array.isArray(raw)) {
+            throw new Error(`FileStore: ${this.issuedFile} is corrupt — expected a JSON array`);
+        }
+        return raw as IssuedKeyRecord[];
+    }
+
+    /**
+     * Persist a webhook-issued key. Idempotent per Stripe event id: returns
+     * false (and writes nothing) when the event was already processed.
+     */
+    recordIssuedKey(record: IssuedKeyRecord): boolean {
+        if (typeof record.eventId !== 'string' || record.eventId.length === 0) {
+            throw new Error('FileStore.recordIssuedKey: eventId must be a non-empty string');
+        }
+        const issued = this.listIssuedKeys();
+        if (issued.some((r) => r.eventId === record.eventId)) {
+            return false;
+        }
+        issued.push(record);
+        atomicWriteJson(this.issuedFile, issued);
+        return true;
     }
 
     /**

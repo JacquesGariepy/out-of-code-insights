@@ -131,3 +131,22 @@ $DATA_DIR/
 
 Writes are atomic (temp file + rename). Run a single server instance per `DATA_DIR`.
 License keys are never written to logs.
+
+## Stripe payments (optional)
+
+Set `STRIPE_WEBHOOK_SECRET` (the `whsec_...` signing secret of your webhook endpoint) and point a Stripe webhook
+at `POST /v1/webhooks/stripe` listening for `checkout.session.completed`. On each completed checkout the server
+issues a license key (entitlements and lifetime read from the session metadata keys `entitlements` — CSV, default
+`sync,pro` — and `days`, default 365), records it idempotently per event id, and acknowledges every other event
+type so Stripe stops retrying. Deliveries are verified with the official timestamped HMAC scheme (5-minute
+replay tolerance, timing-safe comparison).
+
+Retrieve the issued keys for delivery to customers with:
+
+```bash
+node dist/src/cli.js issued
+```
+
+The raw keys are stored in `DATA_DIR/issued.json` so the operator can deliver them — protect that directory, and
+revoke any leaked key with `node dist/src/cli.js revoke <keyId>`. When `STRIPE_WEBHOOK_SECRET` is unset the
+webhook route does not exist (404).

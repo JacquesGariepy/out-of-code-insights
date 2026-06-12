@@ -21,6 +21,7 @@ const USAGE = `Usage:
   node dist/src/cli.js issue [--entitlements sync,pro] [--days 365] [--id <id>]
   node dist/src/cli.js revoke <keyId>
   node dist/src/cli.js list
+  node dist/src/cli.js issued
 
 Environment:
   LICENSE_SECRET   required for 'issue' (HMAC secret, same value as the server)
@@ -121,6 +122,22 @@ function cmdList(): number {
     return 0;
 }
 
+function cmdIssued(): number {
+    const issued = makeStore().listIssuedKeys();
+    if (issued.length === 0) {
+        console.error('(no webhook-issued keys)');
+        return 0;
+    }
+    for (const record of issued) {
+        console.error(
+            `${record.createdAt}  ${record.keyId}  ${record.email ?? '(no email)'}  ` +
+                `[${record.entitlements.join(', ')}]  expires ${record.expiresAt ?? 'never'}  event ${record.eventId}`
+        );
+        console.log(record.key);
+    }
+    return 0;
+}
+
 function main(argv: string[]): number {
     const [command, ...rest] = argv;
     try {
@@ -131,6 +148,8 @@ function main(argv: string[]): number {
                 return cmdRevoke(rest);
             case 'list':
                 return cmdList();
+            case 'issued':
+                return cmdIssued();
             default:
                 console.error(USAGE);
                 return 1;

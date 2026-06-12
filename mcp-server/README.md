@@ -1,7 +1,7 @@
 # out-of-code-insights-mcp
 
 A standalone [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that lets AI agents read and
-write **Out-of-Code Insights** annotations *outside* VS Code.
+write **Out-of-Code Insights** annotations _outside_ VS Code.
 
 It operates on the exact same file the extension persists — the schema-v2 envelope at
 `<workspace>/.out-of-code-insights/annotations.json`:
@@ -90,16 +90,16 @@ Alternatively, omit `--workspace` and set the environment variable instead:
 
 ## Tools
 
-| Tool                 | Arguments                                                            | Result                                                                             |
-| -------------------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `list_annotations`   | `file?`, `tag?`, `state?` (`active`/`suspended`/`disposed`)           | Annotations with a resolved 0-based `line` (-1 when the file is unreadable)         |
-| `get_annotation`     | `id`                                                                  | One annotation with its resolved `line`                                             |
-| `add_annotation`     | `file`, `line` (0-based), `message`, `tags?`, `severity?`, `author?`  | The created annotation (UUID id, offsets + content anchor captured from the file)   |
-| `update_annotation`  | `id`, `message?`, `tags?`, `severity?`, `resolved?`, `kanbanColumn?`  | The updated annotation                                                              |
-| `remove_annotation`  | `id`                                                                  | `{ id, removed: true }`                                                             |
-| `link_annotations`   | `id`, `targetFile`, `targetLine` (0-based), `relationship`            | The source annotation with the appended link                                        |
-| `code_graph`         | —                                                                     | `{ nodes: [{id,file,line,message,tags}], edges: [{from,toFile,toLine,relationship}] }` |
-| `generate_docs`      | `outputPath?` (default `docs/annotations`)                            | Written file paths under `<workspace>/<outputPath>`                                 |
+| Tool                | Arguments                                                            | Result                                                                                 |
+| ------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `list_annotations`  | `file?`, `tag?`, `state?` (`active`/`suspended`/`disposed`)          | Annotations with a resolved 0-based `line` (-1 when the file is unreadable)            |
+| `get_annotation`    | `id`                                                                 | One annotation with its resolved `line`                                                |
+| `add_annotation`    | `file`, `line` (0-based), `message`, `tags?`, `severity?`, `author?` | The created annotation (UUID id, offsets + content anchor captured from the file)      |
+| `update_annotation` | `id`, `message?`, `tags?`, `severity?`, `resolved?`, `kanbanColumn?` | The updated annotation                                                                 |
+| `remove_annotation` | `id`                                                                 | `{ id, removed: true }`                                                                |
+| `link_annotations`  | `id`, `targetFile`, `targetLine` (0-based), `relationship`           | The source annotation with the appended link                                           |
+| `code_graph`        | —                                                                    | `{ nodes: [{id,file,line,message,tags}], edges: [{from,toFile,toLine,relationship}] }` |
+| `generate_docs`     | `outputPath?` (default `docs/annotations`)                           | Written file paths under `<workspace>/<outputPath>`                                    |
 
 Notes:
 
@@ -110,7 +110,6 @@ Notes:
 
 ## Interop with the VS Code extension
 
-The extension loads the annotations file once at activation and keeps its own in-memory store. There is **no file
-watcher yet**: changes made by this MCP server while VS Code is open are picked up on the next **window reload**
-(`Developer: Reload Window`). The reverse direction is safe at any time — the server re-reads the envelope before
-every operation.
+The extension watches the annotations file: changes made by this MCP server while VS Code is open are reloaded
+automatically within a couple of seconds (disable with the `annotation.watchExternalChanges` setting). The reverse
+direction is safe at any time — the server re-reads the envelope before every operation.

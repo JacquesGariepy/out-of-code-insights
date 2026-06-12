@@ -7,7 +7,24 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Security
+- All 11 npm audit findings resolved (1 critical `shell-quote`, high
+  `tmp`/`serialize-javascript`, DoS-range `diff`, `qs`, `uuid`, and their
+  transitive chains) by upgrading `concurrently` to v10 and `mocha` to v11
+  and pinning targeted `overrides` — every affected package was
+  development tooling; nothing vulnerable ships in the extension bundle.
+
 ### Added
+- Live reload of external `annotations.json` changes: a file watcher picks
+  up writes made outside VS Code (e.g. by the MCP server) within a couple
+  of seconds — no window reload needed. Self-saves are suppressed to avoid
+  loops; disable with `annotation.watchExternalChanges`.
+- Stripe payments for the license server (optional): a signed
+  `checkout.session.completed` webhook issues a license key (entitlements
+  and lifetime from the session metadata), idempotently per event, with
+  timing-safe signature verification and replay tolerance. New CLI
+  subcommand `issued` lists webhook-issued keys for delivery. The route
+  only exists when `STRIPE_WEBHOOK_SECRET` is configured.
 - Self-hostable license + annotation sync server under `license-server/`
   (standalone package, zero runtime dependencies, Docker-ready): validates
   offline-signed license keys (`POST /v1/validate`, matching the extension's

@@ -1080,6 +1080,11 @@
                     "default": false,
                     "description": "Automatically sync annotations: pull once on activation, then push local changes 5 seconds after they settle."
                 },
+                "annotation.watchExternalChanges": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Reload annotations automatically when annotations.json is modified outside VS Code (e.g. by the MCP server or another tool)."
+                },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",
                     "default": 30,
@@ -1173,6 +1178,15 @@
         "coverage:check": "c8 check-coverage --lines 15 --functions 15 --branches 10",
         "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" \"out/transactional/__tests__/**/*.js\" --timeout 5000"
     },
+    "overrides": {
+        "serialize-javascript": "^7.0.5",
+        "mocha": {
+            "diff": "^9.0.0"
+        },
+        "sockjs": {
+            "uuid": "^11.1.1"
+        }
+    },
     "devDependencies": {
         "@types/diff": "^8.0.0",
         "@types/fs-extra": "^11.0.4",
@@ -1186,13 +1200,13 @@
         "@vscode/test-electron": "^2.5.2",
         "@vscode/vsce": "^3.9.1",
         "c8": "^11.0.0",
-        "concurrently": "^9.2.1",
+        "concurrently": "^10.0.3",
         "esbuild": "^0.28.0",
         "eslint": "^8.13.0",
         "eslint-config-prettier": "^10.1.8",
         "eslint-plugin-prettier": "^5.5.5",
         "glob": "^13.0.6",
-        "mocha": "^11.7.5",
+        "mocha": "^11.7.6",
         "prettier": "^3.8.3",
         "terser-webpack-plugin": "^5.3.10",
         "ts-loader": "^9.5.7",

@@ -20,10 +20,12 @@
 // Request bodies are capped at 1 MB. Malformed JSON is a 400. License keys
 // are never logged — error paths only emit static reason codes.
 
+import { randomUUID } from 'node:crypto';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { verifyKey, type LicensePayload } from './keys';
+import { issueKey, verifyKey, type LicensePayload } from './keys';
 import { FileStore } from './store';
+import { parseCheckoutEvent, verifyStripeSignature } from './stripe';
 
 export const DEFAULT_PORT = 8787;
 export const MAX_BODY_BYTES = 1024 * 1024;
@@ -36,6 +38,11 @@ export interface ServerOptions {
     secret: string;
     /** Backing JSON-file store (revocations + workspace envelopes). */
     store: FileStore;
+    /**
+     * Stripe webhook signing secret (env STRIPE_WEBHOOK_SECRET). When unset,
+     * POST /v1/webhooks/stripe does not exist (404) — payments are opt-in.
+     */
+    stripeWebhookSecret?: string;
 }
 
 /** Response shape of POST /v1/validate — must match the extension contract. */
@@ -202,6 +209,54 @@ async function handlePutAnnotations(
     sendJson(res, 200, { version: result.version });
 }
 
+/**
+ * POST /v1/webhooks/stripe — issue a license key when a checkout completes.
+ *
+ * Verifies the Stripe-Signature header over the RAW request bytes, then:
+ *   - non-checkout events → 200 {received, ignored} (stops Stripe retries),
+ *   - replayed event ids → 200 {received, duplicate} (idempotent),
+ *   - otherwise issue a key with the entitlements/lifetime from the session
+ *     metadata and persist it in the issued-keys store for the operator to
+ *     deliver (`cli.js issued`). The key itself is never logged.
+ */
+async function handleStripeWebhook(
+    options: ServerOptions,
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+): Promise<void> {
+    const webhookSecret = options.stripeWebhookSecret;
+    if (webhookSecret === undefined || webhookSecret.length === 0) {
+        throw new HttpError(404, { error: 'not-found' });
+    }
+    const rawBody = (await readBody(req)).toString('utf8');
+    const signatureHeader = req.headers['stripe-signature'];
+    if (typeof signatureHeader !== 'string' || !verifyStripeSignature(rawBody, signatureHeader, webhookSecret)) {
+        throw new HttpError(400, { error: 'invalid-signature' });
+    }
+    const checkout = parseCheckoutEvent(parseJsonBody(Buffer.from(rawBody, 'utf8')));
+    if (checkout === null) {
+        sendJson(res, 200, { received: true, ignored: true });
+        return;
+    }
+    if (options.store.listIssuedKeys().some((r) => r.eventId === checkout.eventId)) {
+        sendJson(res, 200, { received: true, duplicate: true });
+        return;
+    }
+    const keyId = randomUUID();
+    const expiresAt = new Date(Date.now() + checkout.days * 24 * 60 * 60 * 1000).toISOString();
+    const key = issueKey({ id: keyId, entitlements: checkout.entitlements, exp: expiresAt }, options.secret);
+    options.store.recordIssuedKey({
+        eventId: checkout.eventId,
+        keyId,
+        key,
+        email: checkout.email,
+        entitlements: checkout.entitlements,
+        expiresAt,
+        createdAt: new Date().toISOString(),
+    });
+    sendJson(res, 200, { received: true, keyId });
+}
+
 // ── Dispatch ─────────────────────────────────────────────────────────────
 
 const WORKSPACE_ROUTE = /^\/v1\/workspaces\/([^/]+)\/annotations$/;
@@ -218,6 +273,14 @@ async function dispatch(
             throw new HttpError(405, { error: 'method-not-allowed' });
         }
         await handleValidate(options, req, res);
+        return;
+    }
+
+    if (urlPath === '/v1/webhooks/stripe') {
+        if (req.method !== 'POST') {
+            throw new HttpError(405, { error: 'method-not-allowed' });
+        }
+        await handleStripeWebhook(options, req, res);
         return;
     }
 
@@ -298,7 +361,8 @@ function main(): void {
         console.error(`license-server: invalid PORT value: ${process.env.PORT}`);
         process.exit(1);
     }
-    startServer({ secret, store: new FileStore(dataDir) }, port)
+    const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    startServer({ secret, store: new FileStore(dataDir), stripeWebhookSecret }, port)
         .then(({ port: boundPort }) => {
             console.log(`license-server listening on port ${boundPort} (data dir: ${dataDir})`);
         })
