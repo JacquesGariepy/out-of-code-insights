@@ -120,6 +120,16 @@
                 "icon": "$(plug)"
             },
             {
+                "command": "annotations.syncConfigure",
+                "title": "Configure Annotation Sync",
+                "icon": "$(cloud)"
+            },
+            {
+                "command": "annotations.syncNow",
+                "title": "Sync Annotations Now",
+                "icon": "$(sync)"
+            },
+            {
                 "command": "annotations.importJSON",
                 "title": "Import Annotations from JSON",
                 "icon": "$(cloud-download)"
@@ -1049,6 +1059,21 @@
                     },
                     "default": [],
                     "description": "Feature ids that require a valid Pro entitlement. Empty (default): every feature stays free."
+                },
+                "annotation.sync.serverUrl": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Base URL of the annotation sync server (the license server exposing /v1/workspaces). Empty (default): cloud sync is disabled and the sync status bar item is hidden."
+                },
+                "annotation.sync.workspaceId": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Identifier of the shared workspace on the sync server. Annotations are pulled from / pushed to /v1/workspaces/<id>/annotations."
+                },
+                "annotation.sync.auto": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Automatically sync annotations: pull once on activation, then push local changes 5 seconds after they settle."
                 },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",
