@@ -21,6 +21,19 @@
  * `{ "info": {} }`), are treated as unstyled and ignored.
  */
 
+/**
+ * Inline editor label for an annotation message: the first non-empty line,
+ * with a leading Markdown heading marker stripped (documentation annotations
+ * start with `# Title`), capped at `max` characters. Multi-line Markdown
+ * bodies stay readable in the panel and the generated docs — the editor
+ * decoration only carries this summary.
+ */
+export function inlineLabel(message: string, max = 120): string {
+    const firstLine = (message.split('\n').find((l) => l.trim().length > 0) ?? '').trim();
+    const withoutHeading = firstLine.replace(/^#{1,6}\s+/, '');
+    return withoutHeading.length > max ? withoutHeading.slice(0, max - 1) + '…' : withoutHeading;
+}
+
 /** One style entry as written by the user in settings.json. */
 export interface StyleSpec {
     /** Color of the inline annotation text (decoration `after.color`). */

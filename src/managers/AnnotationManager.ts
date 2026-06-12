@@ -27,7 +27,7 @@ import {
     MovedBlock,
     reanchor,
 } from '../anchoring/anchor';
-import { resolveAnnotationStyle, StyleSpec } from '../decorations/annotationStyle';
+import { inlineLabel, resolveAnnotationStyle, StyleSpec } from '../decorations/annotationStyle';
 
 interface CopySourceSnapshot {
     uri: string;
@@ -5160,7 +5160,7 @@ export class AnnotationManager extends EventEmitter {
             isWholeLine: true,
             backgroundColor: style.backgroundColor ?? colors.highlightBackground,
             after: {
-                contentText: ` 💬 ${severityIcon} ${annotation.message}${annotation.pinned ? '📌' : ''}`,
+                contentText: ` 💬 ${severityIcon} ${inlineLabel(annotation.message)}${annotation.pinned ? '📌' : ''}`,
                 color: style.annotationColor ?? colors.annotation,
                 margin: '0 0 0 1em',
             },

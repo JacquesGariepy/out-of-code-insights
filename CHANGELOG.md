@@ -19,6 +19,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   protected from heading demotion and wiki-link rewriting (same treatment
   as code fences), and a new opt-in `annotation.docs.frontMatter` setting
   prepends a DocFX-style YAML `title:` block to every generated page.
+- New `docs/documentation-authoring.md`: user guide for authoring
+  documentation from annotations (roles, message format, wiki-links,
+  display, end-to-end example), linked from the README.
+- The inline editor decoration now shows only the first line of the
+  annotation message (Markdown heading marker stripped, capped at 120
+  chars) — multi-line documentation annotations no longer dump their whole
+  body into the editor; the full content stays in the panel, the Markdown
+  editor and the generated site.
 - New `docs/manual-test-guide.md`: per-version manual test matrix
   (1.0.21, 1.0.22, current) with the automated-coverage mapping and the
   Markdown-compatibility table of the generated documentation.

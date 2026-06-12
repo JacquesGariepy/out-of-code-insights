@@ -386,6 +386,8 @@ The `annotation.sync.*` settings control synchronization of the annotation store
 
 The **Generate Annotation Documentation** command builds a DocFX-compatible Markdown site from your annotations: overview with counts, by-type and by-file pages with `file:line` links, plus authored API pages assembled from `doc:*` tags (`doc:module`, `doc:class`, `doc:function`, `doc:example`, `doc:guide`) with `[[Title]]` wiki-links. Output and structure are fully configurable through the `annotation.docs.*` settings (default output: `docs/annotations`).
 
+**How to write documentation annotations** — roles, message format (titles, GFM, math, Mermaid, wiki-links), display, and an end-to-end example: see [docs/documentation-authoring.md](docs/documentation-authoring.md).
+
 ## 📋 Key Commands
 
 ### AI Commands

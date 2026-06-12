@@ -3,7 +3,32 @@
  * No vscode dependency — runs in the fast `test:unit` pass.
  */
 import * as assert from 'assert';
-import { resolveAnnotationStyle, type StyleConfig, type StyleSpec } from '../../../decorations/annotationStyle';
+import {
+    inlineLabel,
+    resolveAnnotationStyle,
+    type StyleConfig,
+    type StyleSpec,
+} from '../../../decorations/annotationStyle';
+
+suite('annotationStyle — inlineLabel', () => {
+    test('keeps a short single-line message as is', () => {
+        assert.strictEqual(inlineLabel('Validate inputs'), 'Validate inputs');
+    });
+
+    test('shows only the first non-empty line of a multi-line doc message', () => {
+        assert.strictEqual(inlineLabel('\n# UserService\n\nManages accounts.\n'), 'UserService');
+    });
+
+    test('strips the leading Markdown heading marker', () => {
+        assert.strictEqual(inlineLabel('## createUser'), 'createUser');
+    });
+
+    test('caps long labels with an ellipsis', () => {
+        const label = inlineLabel('x'.repeat(300));
+        assert.strictEqual(label.length, 120);
+        assert.ok(label.endsWith('…'));
+    });
+});
 
 function config(overrides: Partial<StyleConfig> = {}): StyleConfig {
     return {
