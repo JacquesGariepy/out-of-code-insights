@@ -1338,7 +1338,9 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                                 created += importCommentsFromContent(store, uri, content);
                             }
                         } catch (err) {
-                            getLogger().warn(`importCommentsWorkspace: skipping ${uri.toString()}`, err);
+                            getLogger().warn(`importCommentsWorkspace: skipping ${uri.toString()}`, {
+                                error: err instanceof Error ? err.message : String(err),
+                            });
                         }
                         scanned++;
                         progress.report({
