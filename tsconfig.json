@@ -13,5 +13,14 @@
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true
     },
-    "exclude": ["node_modules", ".vscode-test", "out", "dist", "test-fixtures", "mcp-server", "license-server", "desktop"]
+    "exclude": [
+        "node_modules",
+        ".vscode-test",
+        "out",
+        "dist",
+        "test-fixtures",
+        "mcp-server",
+        "license-server",
+        "desktop"
+    ]
 }

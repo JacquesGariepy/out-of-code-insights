@@ -1286,7 +1286,12 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             if (confirm !== yes) {
                 return;
             }
-            for (const ann of annotationStore.list()) {
+            // serialize() is the only view that includes SUSPENDED entries:
+            // clearing only list() (active) leaves cut-but-never-pasted
+            // annotations alive in the suspended buffer, where they later
+            // steal paste-resumes from fresh annotations with the same
+            // line hash.
+            for (const ann of annotationStore.serialize().annotations) {
                 annotationStore.remove(ann.id);
             }
         })
