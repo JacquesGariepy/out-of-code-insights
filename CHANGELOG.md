@@ -7,6 +7,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+- CI now builds the `mcp-server/` package and builds + tests the
+  `license-server/` package on Ubuntu; both jobs no-op gracefully while a
+  package has not landed yet, so the pipeline stays green.
+- New `publish-mcp.yml` workflow: pushing an `mcp-v*` tag builds
+  `mcp-server/` and publishes it to npm (version taken from
+  `mcp-server/package.json`; the publish step is skipped with a notice
+  when the `NPM_TOKEN` secret is absent).
+- The VSIX no longer bundles the standalone `mcp-server/` and
+  `license-server/` packages (`.vscodeignore`).
+
 ## [1.0.22] - 2026-06-11
 
 ### Added
