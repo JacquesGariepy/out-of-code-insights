@@ -61,3 +61,4 @@ test-fixtures/lot10-*.ts
 .claude/worktrees/
 test-fixtures/lot11-*.ts
 test-fixtures/lot12-*
+test-fixtures/lot13-*
