@@ -8,6 +8,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- New command **Import Code Comments from Workspace**: scans every matching
+  source file in the workspace (up to 2000 files, 1 MB each;
+  `node_modules`, `.git`, `dist`, `out` and `coverage` excluded) for the
+  same better-comments-style markers as the single-file import and creates
+  tagged, severity-mapped annotations — without opening any editor.
+  Already-annotated lines are skipped so the command is rerunnable;
+  progress is reported in a cancellable notification.
+- Pro feature registry (`docs.watch`, `comments.importWorkspace`): the
+  docs watch regeneration and the workspace comment import now honour
+  `annotation.pro.gatedFeatures` through the standard unlock toast
+  (everything stays free with the default empty setting; watch-mode shows
+  the toast once and then skips silently).
 - New command **Import Code Comments as Annotations**: scans the active
   document for better-comments-style markers (`// !`, `// ?`, `// *`,
   `TODO`, `FIXME`/`BUG`, `HACK`/`XXX` — also `#`, `--` and `<!-- -->`

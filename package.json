@@ -115,6 +115,11 @@
                 "icon": "$(comment)"
             },
             {
+                "command": "annotations.importCommentsWorkspace",
+                "title": "Import Code Comments from Workspace",
+                "icon": "$(checklist)"
+            },
+            {
                 "command": "annotations.mcpSetup",
                 "title": "MCP Server Setup",
                 "icon": "$(plug)"
