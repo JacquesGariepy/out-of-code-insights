@@ -303,6 +303,31 @@
                 "command": "outOfCodeInsights.showLogs",
                 "title": "Out-of-Code Insights: Show Logs",
                 "icon": "$(output)"
+            },
+            {
+                "command": "annotations.commentReply",
+                "title": "Reply",
+                "icon": "$(reply)"
+            },
+            {
+                "command": "annotations.commentResolve",
+                "title": "Resolve Annotation",
+                "icon": "$(pass)"
+            },
+            {
+                "command": "annotations.commentUnresolve",
+                "title": "Unresolve Annotation",
+                "icon": "$(circle-slash)"
+            },
+            {
+                "command": "annotations.commentDelete",
+                "title": "Delete Annotation",
+                "icon": "$(trash)"
+            },
+            {
+                "command": "annotations.setupAiInstructions",
+                "title": "Set Up AI Agent Instructions",
+                "icon": "$(robot)"
             }
         ],
         "submenus": [
@@ -316,6 +341,55 @@
             }
         ],
         "menus": {
+            "commandPalette": [
+                {
+                    "command": "annotations.commentReply",
+                    "when": "false"
+                },
+                {
+                    "command": "annotations.commentResolve",
+                    "when": "false"
+                },
+                {
+                    "command": "annotations.commentUnresolve",
+                    "when": "false"
+                },
+                {
+                    "command": "annotations.commentDelete",
+                    "when": "false"
+                }
+            ],
+            "comments/commentThread/context": [
+                {
+                    "command": "annotations.commentReply",
+                    "group": "inline",
+                    "when": "commentController == outOfCodeInsights.comments"
+                }
+            ],
+            "comments/commentThread/title": [
+                {
+                    "command": "annotations.commentResolve",
+                    "group": "navigation",
+                    "when": "commentController == outOfCodeInsights.comments && commentThread =~ /;unresolved/"
+                },
+                {
+                    "command": "annotations.commentUnresolve",
+                    "group": "navigation",
+                    "when": "commentController == outOfCodeInsights.comments && commentThread =~ /;resolved/"
+                },
+                {
+                    "command": "annotations.commentDelete",
+                    "group": "navigation",
+                    "when": "commentController == outOfCodeInsights.comments && commentThread =~ /^annotation/"
+                }
+            ],
+            "comments/comment/context": [
+                {
+                    "command": "annotations.commentDelete",
+                    "group": "inline",
+                    "when": "commentController == outOfCodeInsights.comments"
+                }
+            ],
             "editor/lineNumber/context": [
                 {
                     "submenu": "outOfCodeInsightsSubMenu",
@@ -945,6 +1019,11 @@
                     "type": "string",
                     "default": "untagged",
                     "description": "Bucket label used for annotations without tags in the inventory pages."
+                },
+                "annotation.commentsView": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Render annotations as native editor comment threads (Comments API): gutter '+' creates an annotation, replies extend its discussion thread. Changing this setting takes effect on the next activation (reload the window)."
                 },
                 "annotation.cutRecoveryWindowSeconds": {
                     "type": "number",

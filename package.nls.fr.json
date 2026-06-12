@@ -1,4 +1,8 @@
 {
+    "commentsAnnotationNotFound": "Annotation introuvable pour ce fil de commentaires.",
+    "noWorkspaceAiInstructions": "Ouvrez un espace de travail pour configurer les instructions des agents IA.",
+    "aiInstructionsUpserted": "Instructions des agents IA mises à jour dans {0}.",
+    "aiInstructionsFailed": "Échec de la configuration des instructions des agents IA",
     "annotatedCodeDeleted": "Le code de l'annotation « {0} » a été supprimé. Conserver l'annotation ?",
     "keepOrphanedAnnotation": "Conserver l'annotation",
     "discardAnnotation": "Supprimer",

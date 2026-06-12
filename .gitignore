@@ -56,3 +56,6 @@ test-fixtures/lot10-*.md
 test-fixtures/docs/
 
 test-fixtures/lot10-*.ts
+test-fixtures/lot15-*.md
+test-fixtures/CLAUDE.md
+test-fixtures/AGENTS.md
