@@ -1036,6 +1036,11 @@
                     "default": true,
                     "description": "Stamp each generated page with the generation date. Disable for fully diffable output."
                 },
+                "annotation.docs.frontMatter": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Prepend a YAML front-matter block (title) to every generated documentation page — used by DocFX and most static site generators. Leave disabled when the docs are read on GitHub (front matter renders as a visible table there)."
+                },
                 "annotation.docs.untaggedLabel": {
                     "type": "string",
                     "default": "untagged",

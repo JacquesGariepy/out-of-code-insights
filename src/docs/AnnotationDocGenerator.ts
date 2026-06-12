@@ -78,6 +78,12 @@ export interface DocGenOptions {
     includeAuthored?: boolean;
     /** Bucket label for annotations without tags. Default: "untagged". */
     untaggedLabel?: string;
+    /**
+     * Prepend a YAML front-matter block (`title:`) to every generated page —
+     * what DocFX (and most static site generators) use for page metadata.
+     * Default: false (GitHub renders front matter as a visible table).
+     */
+    frontMatter?: boolean;
 }
 
 /** DocGenOptions with every default applied. */
@@ -88,6 +94,7 @@ interface ResolvedOptions extends DocGenOptions {
     includeInventory: boolean;
     includeAuthored: boolean;
     untaggedLabel: string;
+    frontMatter: boolean;
 }
 
 function resolveOptions(options: DocGenOptions): ResolvedOptions {
@@ -102,6 +109,7 @@ function resolveOptions(options: DocGenOptions): ResolvedOptions {
             options.untaggedLabel && options.untaggedLabel.trim().length > 0
                 ? options.untaggedLabel.trim()
                 : 'untagged',
+        frontMatter: options.frontMatter ?? false,
     };
 }
 
@@ -165,23 +173,47 @@ export function extractTitle(message: string): { title: string; body: string } {
 }
 
 /**
+ * Stateful detector for "protected" Markdown regions that generator passes
+ * must never rewrite: fenced code blocks (``` / ~~~) and display-math blocks
+ * ($$ ... $$, arXiv/GitHub/DocFX-math style). A single-line `$$ ... $$` does
+ * not open a block.
+ */
+function createProtectedRegionTracker(): (line: string) => boolean {
+    let inFence = false;
+    let inMath = false;
+    return (line: string): boolean => {
+        if (!inMath && /^\s*(```|~~~)/.test(line)) {
+            inFence = !inFence;
+            return true;
+        }
+        if (inFence) {
+            return true;
+        }
+        if (/^\s*\$\$/.test(line)) {
+            const closesOnSameLine = !inMath && /^\s*\$\$.*\$\$\s*$/.test(line) && line.trim() !== '$$';
+            if (!closesOnSameLine) {
+                inMath = !inMath;
+            }
+            return true;
+        }
+        return inMath;
+    };
+}
+
+/**
  * Demote Markdown headings by `delta` levels (capped at h6) so authored
- * content nests under its generated section. Lines inside fenced code
- * blocks are left untouched.
+ * content nests under its generated section. Fenced code blocks and display
+ * math ($$ blocks) are left untouched.
  */
 export function demoteHeadings(content: string, delta: number): string {
     if (delta <= 0) {
         return content;
     }
-    let inFence = false;
+    const isProtected = createProtectedRegionTracker();
     return content
         .split('\n')
         .map((line) => {
-            if (/^\s*(```|~~~)/.test(line)) {
-                inFence = !inFence;
-                return line;
-            }
-            if (inFence) {
+            if (isProtected(line)) {
                 return line;
             }
             const m = /^(#{1,6})(\s+.*)$/.exec(line);
@@ -229,9 +261,12 @@ function sortedAnnotations(annotations: DocAnnotation[]): DocAnnotation[] {
     return [...annotations].sort((x, y) => x.file.localeCompare(y.file) || x.line - y.line || x.id.localeCompare(y.id));
 }
 
-function pageHeader(title: string, generatedAt: string | undefined): string {
-    const stamp = generatedAt ? `\n> Generated on ${generatedAt} by Out-of-Code Insights.\n` : '\n';
-    return `# ${title}\n${stamp}\n`;
+function pageHeader(title: string, options: Pick<ResolvedOptions, 'generatedAt' | 'frontMatter'>): string {
+    const stamp = options.generatedAt ? `\n> Generated on ${options.generatedAt} by Out-of-Code Insights.\n` : '\n';
+    const yaml = options.frontMatter
+        ? `---\ntitle: "${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\n---\n\n`
+        : '';
+    return `${yaml}# ${title}\n${stamp}\n`;
 }
 
 function tagsOf(a: DocAnnotation, untaggedLabel: string): string[] {
@@ -275,15 +310,11 @@ export function resolveWikiLinks(
     warnings: string[],
     apiFolder = 'api'
 ): string {
-    let inFence = false;
+    const isProtected = createProtectedRegionTracker();
     return content
         .split('\n')
         .map((line) => {
-            if (/^\s*(```|~~~)/.test(line)) {
-                inFence = !inFence;
-                return line;
-            }
-            if (inFence) {
+            if (isProtected(line)) {
                 return line;
             }
             return line.replace(/\[\[([^[\]\n]+)\]\]/g, (whole, rawTitle: string) => {
@@ -522,7 +553,7 @@ function renderEntity(entry: DocEntry, page: string, level: number, ctx: RenderC
 
 function renderApiPage(model: ApiPageModel, ctx: RenderContext): string {
     const title = model.module ? model.module.title : model.file;
-    const out: string[] = [pageHeader(title, ctx.options.generatedAt)];
+    const out: string[] = [pageHeader(title, ctx.options)];
     out.push(`*File*: \`${model.file}\``);
     out.push('');
     if (model.module) {
@@ -552,7 +583,7 @@ function renderApiPage(model: ApiPageModel, ctx: RenderContext): string {
 }
 
 function renderGuidePage(guides: DocEntry[], ctx: RenderContext): string {
-    const out: string[] = [pageHeader('Guide', ctx.options.generatedAt)];
+    const out: string[] = [pageHeader('Guide', ctx.options)];
     for (const guide of guides) {
         out.push(`<a id="${anchorId(guide.annotation)}"></a>`);
         out.push('');
@@ -575,7 +606,7 @@ function renderIndex(
     warnings: string[]
 ): string {
     const title = options.title ?? 'Annotations';
-    const out: string[] = [pageHeader(title, options.generatedAt)];
+    const out: string[] = [pageHeader(title, options)];
 
     const total = annotations.length;
     const resolved = annotations.filter((a) => a.resolved).length;
@@ -712,7 +743,7 @@ function renderAnnotationDetail(a: DocAnnotation, prefix: string, untaggedLabel:
 }
 
 function renderByType(annotations: DocAnnotation[], options: ResolvedOptions): string {
-    const out: string[] = [pageHeader('Annotations by type', options.generatedAt)];
+    const out: string[] = [pageHeader('Annotations by type', options)];
     const expanded: { tag: string; a: DocAnnotation }[] = [];
     for (const a of annotations) {
         for (const tag of tagsOf(a, options.untaggedLabel)) {
@@ -738,7 +769,7 @@ function renderByType(annotations: DocAnnotation[], options: ResolvedOptions): s
 }
 
 function renderByFile(annotations: DocAnnotation[], options: ResolvedOptions): string {
-    const out: string[] = [pageHeader('Annotations by file', options.generatedAt)];
+    const out: string[] = [pageHeader('Annotations by file', options)];
     const byFile = groupBy(sortedAnnotations(annotations), (a) => a.file);
     for (const [file, items] of byFile) {
         out.push(`## ${escapeCell(file)}`);
@@ -750,8 +781,8 @@ function renderByFile(annotations: DocAnnotation[], options: ResolvedOptions): s
     return out.join('\n');
 }
 
-function renderLinks(annotations: DocAnnotation[], options: DocGenOptions): string {
-    const out: string[] = [pageHeader('Annotation links', options.generatedAt)];
+function renderLinks(annotations: DocAnnotation[], options: ResolvedOptions): string {
+    const out: string[] = [pageHeader('Annotation links', options)];
     const linked = sortedAnnotations(annotations).filter((a) => a.linkedAnnotations && a.linkedAnnotations.length > 0);
     if (linked.length === 0) {
         out.push('_No linked annotations._');

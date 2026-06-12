@@ -1788,6 +1788,7 @@ async function generateDocumentationNow(silent: boolean): Promise<void> {
             includeInventory: docsConfig.get<boolean>('docs.includeInventory', true),
             includeAuthored: docsConfig.get<boolean>('docs.includeAuthored', true),
             untaggedLabel: docsConfig.get<string>('docs.untaggedLabel', 'untagged'),
+            frontMatter: docsConfig.get<boolean>('docs.frontMatter', false),
         });
 
         const outDir = vscode.Uri.joinPath(workspaceFolder.uri, ...outDirSetting.split(/[\\/]/));

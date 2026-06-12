@@ -383,6 +383,35 @@ suite('AnnotationDocGenerator — configurable output (no hardcoded layout)', ()
         }
     });
 
+    test('display-math blocks are protected from demotion and wiki-link rewriting', () => {
+        const guideMessage = '# Math guide\n\n$$\n# not a heading\n[[NotALink]]\n$$\n\nSee [[Math guide]].';
+        const files = generateDocSet([makeAnn({ id: 'g', tags: ['doc:guide'], message: guideMessage })]);
+        const guide = files.get('guide.md') ?? '';
+        assert.ok(guide.includes('\n# not a heading\n'), 'heading-like line inside $$ must not be demoted');
+        assert.ok(guide.includes('[[NotALink]]'), 'wiki-link syntax inside $$ must stay verbatim');
+        assert.ok(guide.includes('[Math guide](guide.md#ann-g)'), 'wiki-links outside the block still resolve');
+        const index = files.get('index.md') ?? '';
+        assert.ok(!index.includes('NotALink'), 'no unresolved-link warning for the protected block');
+    });
+
+    test('demoteHeadings treats single-line $$...$$ as inline, not a block opener', () => {
+        const out = demoteHeadings('$$ E = mc^2 $$\n# real heading', 1);
+        assert.ok(out.includes('## real heading'), 'heading after inline math must still be demoted');
+    });
+
+    test('frontMatter=true prepends a DocFX YAML title block to every page', () => {
+        const files = generateDocSet([makeAnn({ tags: ['doc:guide'], message: '# G "quoted"\n\nBody.' })], {
+            frontMatter: true,
+            title: 'My Site',
+        });
+        const index = files.get('index.md') ?? '';
+        assert.ok(index.startsWith('---\ntitle: "My Site"\n---\n\n# My Site'), 'index carries front matter');
+        const guide = files.get('guide.md') ?? '';
+        assert.ok(guide.startsWith('---\ntitle: "Guide"\n---'), 'guide page carries front matter');
+        const offByDefault = generateDocSet([makeAnn()]).get('index.md') ?? '';
+        assert.ok(offByDefault.startsWith('# '), 'no front matter unless requested');
+    });
+
     test('custom untaggedLabel replaces the default bucket name', () => {
         const index =
             generateDocSet([makeAnn({ tags: undefined })], { untaggedLabel: 'sans-tag' }).get('index.md') ?? '';

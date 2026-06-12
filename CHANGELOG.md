@@ -15,6 +15,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   development tooling; nothing vulnerable ships in the extension bundle.
 
 ### Added
+- Documentation generator: display-math blocks (`$$ … $$`) are now
+  protected from heading demotion and wiki-link rewriting (same treatment
+  as code fences), and a new opt-in `annotation.docs.frontMatter` setting
+  prepends a DocFX-style YAML `title:` block to every generated page.
+- New `docs/manual-test-guide.md`: per-version manual test matrix
+  (1.0.21, 1.0.22, current) with the automated-coverage mapping and the
+  Markdown-compatibility table of the generated documentation.
 - Live reload of external `annotations.json` changes: a file watcher picks
   up writes made outside VS Code (e.g. by the MCP server) within a couple
   of seconds — no window reload needed. Self-saves are suppressed to avoid
