@@ -125,6 +125,11 @@ jobs:
         run: npm run build
         working-directory: desktop
 
+      - name: Test desktop pure libs (vitest)
+        if: hashFiles('desktop/package.json') != ''
+        run: npm test
+        working-directory: desktop
+
       - name: Install Tauri system dependencies
         if: hashFiles('desktop/src-tauri/Cargo.toml') != ''
         run: |
