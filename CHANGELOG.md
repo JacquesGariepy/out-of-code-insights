@@ -38,6 +38,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   button opening a large scrollable overlay centered on the annotated line;
   and a **Start corpus** action initializes an annotation store in any folder
   so a new workspace can be annotated entirely from the app.
+- Desktop app: **syntax highlighting** in every code preview (highlight.js,
+  per file language), a new **Explorer** view with a collapsible tree across
+  **all** scanned corpora (corpus → folders → files → annotations) whose
+  leaves open the full annotation manager, and a tree filter.
 - Desktop app: a full-screen **annotation manager** (Expand from the
   Annotations drawer, or click a Kanban card — Jira-style) showing the code in
   a large centered preview beside the complete editor (message with Markdown
