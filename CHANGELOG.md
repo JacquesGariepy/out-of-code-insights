@@ -38,6 +38,14 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   button opening a large scrollable overlay centered on the annotated line;
   and a **Start corpus** action initializes an annotation store in any folder
   so a new workspace can be annotated entirely from the app.
+- Desktop app: the AI view can **analyze a whole file** (with the existing
+  annotations as context) and return **multiple** review suggestions — each
+  editable (line/severity/tags/message) and creatable individually or all at
+  once — alongside the existing single-line suggestion; its target file is
+  picked through the corpus file browser + click-to-target preview.
+- Desktop app: the Annotations table and the Dashboard list now have
+  **column sorting** and **pagination** (50/page) on top of the existing
+  search/filters.
 - Desktop app: **syntax highlighting** in every code preview (highlight.js,
   per file language), a new **Explorer** view with a collapsible tree across
   **all** scanned corpora (corpus → folders → files → annotations) whose
