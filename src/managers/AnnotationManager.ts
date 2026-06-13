@@ -2782,11 +2782,13 @@ export class AnnotationManager extends EventEmitter {
             const vscode = acquireVsCodeApi();
             const state = vscode.getState() || {};
             
-            // Localized strings
+            // Localized strings. JSON.stringify produces a fully-escaped JS
+            // string literal (quotes, backslashes, newlines) so a translated
+            // value can never break out of the webview script.
             const localizedStrings = {
-                foundResults: "${loc('foundResults', "Found {0} result{1} for '{2}'").replace(/'/g, "\\'")}",
-                resultPosition: "${loc('resultPosition', 'Result {0}/{1}').replace(/'/g, "\\'")}",
-                noResultsFound: "${loc('noResultsFound', "No results found for '{0}'").replace(/'/g, "\\'")}"
+                foundResults: ${JSON.stringify(loc('foundResults', "Found {0} result{1} for '{2}'"))},
+                resultPosition: ${JSON.stringify(loc('resultPosition', 'Result {0}/{1}'))},
+                noResultsFound: ${JSON.stringify(loc('noResultsFound', "No results found for '{0}'"))}
             };
             
             // Retrieve DOM elements

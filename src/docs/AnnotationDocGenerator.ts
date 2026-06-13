@@ -140,7 +140,10 @@ export function docRoleOf(a: Pick<DocAnnotation, 'tags'>, tagPrefix = 'doc:'): D
 
 /** Escape characters that break Markdown table cells. */
 function escapeCell(text: string): string {
-    return text.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+    // Escape the backslash first so the escape character itself cannot be
+    // reinterpreted (complete sanitization), then pipes, then collapse
+    // newlines which would split the table row.
+    return text.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 }
 
 /** One-line summary of an annotation message (first line, capped). */

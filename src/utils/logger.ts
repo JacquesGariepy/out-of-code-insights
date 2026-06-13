@@ -110,7 +110,15 @@ class ExtensionLogger implements Logger {
 
     private appendToFile(filePath: string, line: string): void {
         try {
-            if (fs.existsSync(filePath) && fs.statSync(filePath).size >= MAX_FILE_SIZE) {
+            // Stat-with-catch instead of existsSync-then-statSync: avoids the
+            // check-then-act race (a missing file simply reads as size 0).
+            let size = 0;
+            try {
+                size = fs.statSync(filePath).size;
+            } catch {
+                size = 0; // not created yet
+            }
+            if (size >= MAX_FILE_SIZE) {
                 this.rotateFile(filePath);
             }
             fs.appendFileSync(filePath, line, 'utf8');

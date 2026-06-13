@@ -8,6 +8,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Security
+- Resolved all open CodeQL alerts: the annotations search webview now builds
+  its localized strings with `JSON.stringify` (a translated value can no
+  longer break out of the script — incomplete-sanitization, high severity);
+  the file logger replaces the `existsSync`+`statSync` check-then-act with a
+  stat-with-catch (no file-system race); and the documentation table-cell
+  escaper now escapes the backslash first (complete sanitization).
 - All 11 npm audit findings resolved (1 critical `shell-quote`, high
   `tmp`/`serialize-javascript`, DoS-range `diff`, `qs`, `uuid`, and their
   transitive chains) by upgrading `concurrently` to v10 and `mocha` to v11
