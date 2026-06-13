@@ -38,6 +38,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   button opening a large scrollable overlay centered on the annotated line;
   and a **Start corpus** action initializes an annotation store in any folder
   so a new workspace can be annotated entirely from the app.
+- Desktop app: a full-screen **annotation manager** (Expand from the
+  Annotations drawer, or click a Kanban card — Jira-style) showing the code in
+  a large centered preview beside the complete editor (message with Markdown
+  preview, tags, severity, kanban column, resolved, threaded replies, links,
+  save, delete). The AI view now picks the target file through the same
+  in-app file browser and click-to-target code preview as the create flow,
+  instead of a raw path field.
 - Documentation generator: display-math blocks (`$$ … $$`) are now
   protected from heading demotion and wiki-link rewriting (same treatment
   as code fences), and a new opt-in `annotation.docs.frontMatter` setting
