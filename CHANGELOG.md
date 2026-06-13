@@ -38,6 +38,11 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   button opening a large scrollable overlay centered on the annotated line;
   and a **Start corpus** action initializes an annotation store in any folder
   so a new workspace can be annotated entirely from the app.
+- Desktop app: the Annotations view has a **Table / Tree** toggle — the tree
+  shows the directory/file arborescence of the corpus with annotation leaves
+  that open the full manager. Removed the duplicate Open/Expand buttons in
+  the edit drawer (the code preview no longer repeats the header actions) and
+  fixed the unstyled view toggle.
 - Desktop app: the AI view can **analyze a whole file** (with the existing
   annotations as context) and return **multiple** review suggestions — each
   editable (line/severity/tags/message) and creatable individually or all at
