@@ -15,6 +15,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   development tooling; nothing vulnerable ships in the extension bundle.
 
 ### Added
+- Desktop app: in-app code preview with the annotated line highlighted, open
+  file in the OS or VS Code, Kanban board, global dashboard/search across all
+  corpora, threaded replies and annotation links, and a generated-docs browser.
 - Documentation generator: display-math blocks (`$$ … $$`) are now
   protected from heading demotion and wiki-link rewriting (same treatment
   as code fences), and a new opt-in `annotation.docs.frontMatter` setting
