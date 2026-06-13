@@ -31,6 +31,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - Desktop app: in-app code preview with the annotated line highlighted, open
   file in the OS or VS Code, Kanban board, global dashboard/search across all
   corpora, threaded replies and annotation links, and a generated-docs browser.
+- Desktop app fixes/UX: Kanban drag-and-drop now works (the window no longer
+  intercepts drags via Tauri's OS file-drop); "Open in VS Code" works on
+  Windows (runs `code` through `cmd /C` and falls back to the `vscode://`
+  protocol handler when the CLI is absent); the code preview has an **Expand**
+  button opening a large scrollable overlay centered on the annotated line;
+  and a **Start corpus** action initializes an annotation store in any folder
+  so a new workspace can be annotated entirely from the app.
 - Documentation generator: display-math blocks (`$$ … $$`) are now
   protected from heading demotion and wiki-link rewriting (same treatment
   as code fences), and a new opt-in `annotation.docs.frontMatter` setting
