@@ -261,11 +261,7 @@ async function handleStripeWebhook(
 
 const WORKSPACE_ROUTE = /^\/v1\/workspaces\/([^/]+)\/annotations$/;
 
-async function dispatch(
-    options: ServerOptions,
-    req: http.IncomingMessage,
-    res: http.ServerResponse
-): Promise<void> {
+async function dispatch(options: ServerOptions, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const urlPath = (req.url ?? '/').split('?')[0];
 
     if (urlPath === '/v1/validate') {
@@ -320,8 +316,11 @@ export function createServer(options: ServerOptions): http.Server {
                     sendJson(res, err.status, err.body);
                 }
             } else {
-                // Never include request data (keys, bodies) in the log line.
-                console.error('license-server: request failed:', err instanceof Error ? err.message : String(err));
+                // Never include request data (keys, bodies) in the log line,
+                // and strip CR/LF so an error message can never forge extra
+                // log entries (log injection).
+                const reason = (err instanceof Error ? err.message : String(err)).replace(/[\r\n]+/g, ' ');
+                console.error('license-server: request failed:', reason);
                 if (!res.headersSent) {
                     sendJson(res, 500, { error: 'internal' });
                 }

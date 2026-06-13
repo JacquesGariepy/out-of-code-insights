@@ -103,7 +103,12 @@ class ExtensionLogger implements Logger {
                       ? `\n  ${String(err)}`
                       : '';
             const metaStr = meta ? ` ${JSON.stringify(meta)}` : '';
-            const line = `[${new Date().toISOString()}] [${level.toUpperCase().padEnd(5)}] [${this.name}] ${msg}${metaStr}${errStr}\n`;
+            // Sanitize the caller-provided message so an embedded newline can
+            // never forge an additional log record (the error stack below is
+            // deliberately multi-line and indented, which keeps continuation
+            // lines distinguishable).
+            const safeMsg = msg.replace(/[\r\n]+/g, ' ');
+            const line = `[${new Date().toISOString()}] [${level.toUpperCase().padEnd(5)}] [${this.name}] ${safeMsg}${metaStr}${errStr}\n`;
             this.appendToFile(this.logFilePath, line);
         }
     }
