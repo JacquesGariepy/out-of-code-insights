@@ -115,6 +115,13 @@ jobs:
 
       # Same step-level guard as the other standalone packages: hashFiles() is
       # empty in a job-level `if`, so each step is skipped until desktop/ lands.
+      # The desktop tsconfig pulls in extension sources via the @ext alias, and
+      # those import `diff`, which resolves from the ROOT node_modules — so the
+      # root install is required before the desktop build (mirrors mcp-server).
+      - name: Install root dependencies (desktop @ext sources import from ../src)
+        if: hashFiles('desktop/package.json') != ''
+        run: npm ci
+
       - name: Install desktop dependencies
         if: hashFiles('desktop/package.json') != ''
         run: npm ci
