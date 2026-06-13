@@ -15,6 +15,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   development tooling; nothing vulnerable ships in the extension bundle.
 
 ### Added
+- CI now also builds the `desktop/` Tauri app (frontend `tsc + vite` build
+  and a Rust `cargo check`), guarded the same way as the other standalone
+  packages so the pipeline stays green until the folder lands.
+- New `docs/team-workflow.md` (using annotations across every workspace —
+  extension, MCP, desktop, sync) and `docs/desktop.md` (the desktop manager),
+  linked from the README.
 - Desktop app: in-app code preview with the annotated line highlighted, open
   file in the OS or VS Code, Kanban board, global dashboard/search across all
   corpora, threaded replies and annotation links, and a generated-docs browser.

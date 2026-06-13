@@ -101,6 +101,40 @@ jobs:
         run: npm test
         working-directory: license-server
 
+  desktop:
+    name: Desktop app (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: '20.x'
+          cache: npm
+
+      # Same step-level guard as the other standalone packages: hashFiles() is
+      # empty in a job-level `if`, so each step is skipped until desktop/ lands.
+      - name: Install desktop dependencies
+        if: hashFiles('desktop/package.json') != ''
+        run: npm ci
+        working-directory: desktop
+
+      - name: Build desktop frontend (tsc + vite)
+        if: hashFiles('desktop/package.json') != ''
+        run: npm run build
+        working-directory: desktop
+
+      - name: Install Tauri system dependencies
+        if: hashFiles('desktop/src-tauri/Cargo.toml') != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Check desktop Rust backend (cargo check)
+        if: hashFiles('desktop/src-tauri/Cargo.toml') != ''
+        run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+
   test:
     name: Integration tests (${{ matrix.os }})
     needs: build
