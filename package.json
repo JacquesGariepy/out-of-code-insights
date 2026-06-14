@@ -1285,7 +1285,7 @@
         "@vscode/vsce": "^3.9.1",
         "c8": "^11.0.0",
         "concurrently": "^10.0.3",
-        "esbuild": "^0.28.0",
+        "esbuild": "^0.28.1",
         "eslint": "^8.13.0",
         "eslint-config-prettier": "^10.1.8",
         "eslint-plugin-prettier": "^5.5.5",
