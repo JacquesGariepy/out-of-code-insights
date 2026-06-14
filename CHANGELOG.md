@@ -7,6 +7,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-06-13
+
 ### Security
 - Resolved all open CodeQL alerts: the annotations search webview now builds
   its localized strings with `JSON.stringify` (a translated value can no
