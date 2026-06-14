@@ -39,12 +39,6 @@ Thumbs.db
 !.vscode/settings.json
 !.vscode/extensions.json
 
-# Desktop app (Tauri) build artifacts
-desktop/node_modules/
-desktop/dist/
-desktop/src-tauri/target/
-desktop/src-tauri/gen/
-
 # Orchestrator runtime state
 .orchestra/
 data/

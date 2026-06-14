@@ -21,47 +21,8 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   development tooling; nothing vulnerable ships in the extension bundle.
 
 ### Added
-- CI now also builds and tests the `desktop/` Tauri app (frontend
-  `tsc + vite` build, a Vitest unit suite over the pure libs, and a Rust
-  `cargo check`), guarded the same way as the other standalone packages so
-  the pipeline stays green until the folder lands.
 - New `docs/team-workflow.md` (using annotations across every workspace —
-  extension, MCP, desktop, sync) and `docs/desktop.md` (the desktop manager),
-  linked from the README.
-- Desktop app: in-app code preview with the annotated line highlighted, open
-  file in the OS or VS Code, Kanban board, global dashboard/search across all
-  corpora, threaded replies and annotation links, and a generated-docs browser.
-- Desktop app fixes/UX: Kanban drag-and-drop now works (the window no longer
-  intercepts drags via Tauri's OS file-drop); "Open in VS Code" works on
-  Windows (runs `code` through `cmd /C` and falls back to the `vscode://`
-  protocol handler when the CLI is absent); the code preview has an **Expand**
-  button opening a large scrollable overlay centered on the annotated line;
-  and a **Start corpus** action initializes an annotation store in any folder
-  so a new workspace can be annotated entirely from the app.
-- Desktop app: the Annotations view has a **Table / Tree** toggle — the tree
-  shows the directory/file arborescence of the corpus with annotation leaves
-  that open the full manager. Removed the duplicate Open/Expand buttons in
-  the edit drawer (the code preview no longer repeats the header actions) and
-  fixed the unstyled view toggle.
-- Desktop app: the AI view can **analyze a whole file** (with the existing
-  annotations as context) and return **multiple** review suggestions — each
-  editable (line/severity/tags/message) and creatable individually or all at
-  once — alongside the existing single-line suggestion; its target file is
-  picked through the corpus file browser + click-to-target preview.
-- Desktop app: the Annotations table and the Dashboard list now have
-  **column sorting** and **pagination** (50/page) on top of the existing
-  search/filters.
-- Desktop app: **syntax highlighting** in every code preview (highlight.js,
-  per file language), a new **Explorer** view with a collapsible tree across
-  **all** scanned corpora (corpus → folders → files → annotations) whose
-  leaves open the full annotation manager, and a tree filter.
-- Desktop app: a full-screen **annotation manager** (Expand from the
-  Annotations drawer, or click a Kanban card — Jira-style) showing the code in
-  a large centered preview beside the complete editor (message with Markdown
-  preview, tags, severity, kanban column, resolved, threaded replies, links,
-  save, delete). The AI view now picks the target file through the same
-  in-app file browser and click-to-target code preview as the create flow,
-  instead of a raw path field.
+  extension, MCP, and sync), linked from the README.
 - Documentation generator: display-math blocks (`$$ … $$`) are now
   protected from heading demotion and wiki-link rewriting (same treatment
   as code fences), and a new opt-in `annotation.docs.frontMatter` setting
@@ -164,13 +125,6 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   when the `NPM_TOKEN` secret is absent).
 - The VSIX no longer bundles the standalone `mcp-server/` and
   `license-server/` packages (`.vscodeignore`).
-- New `desktop/` Tauri v2 application: a team-facing annotation manager that
-  works on workspace annotation stores without VS Code — corpus scanning,
-  annotation table/editing/creation (reusing the extension's anchoring
-  module), documentation generation via `generateDocSet`, AI-suggested
-  annotations through curl-template providers (OpenAI, Claude, Gemini, Grok,
-  Ollama), and team onboarding helpers (CLAUDE.md/AGENTS.md AI instructions,
-  MCP config snippets, git status). See `desktop/README.md`.
 - Annotations now render as native editor comment threads (VS Code Comments
   API): the comment gutter "+" creates a new annotation at that line,
   replies typed in the comment widget are appended to the annotation's

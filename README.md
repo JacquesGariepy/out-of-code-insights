@@ -1011,8 +1011,7 @@ In-depth documentation lives in [`docs/`](./docs/README.md):
 - [**ai-features.md**](./docs/ai-features.md): end-to-end guide for every AI-powered command.
 - [**llm-providers.md**](./docs/llm-providers.md): supported providers, model selection, API-key setup.
 - [**architecture.md**](./docs/architecture.md): high-level architecture for contributors.
-- [**team-workflow.md**](./docs/team-workflow.md): using annotations across all your workspaces (extension + MCP + desktop + sync).
-- [**desktop.md**](./docs/desktop.md): the cross-workspace Tauri desktop manager.
+- [**team-workflow.md**](./docs/team-workflow.md): using annotations across all your workspaces (extension + MCP + sync).
 - [**documentation-authoring.md**](./docs/documentation-authoring.md): writing documentation from annotations.
 - [**manual-test-guide.md**](./docs/manual-test-guide.md): per-version manual test matrix.
 
