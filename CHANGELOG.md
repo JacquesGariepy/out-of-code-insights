@@ -52,6 +52,12 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   shadowed the "source annotation not found" string; that variant is now
   `sourceAnnotationNotFound`.
 
+### Dependencies
+- Applied the pending Dependabot updates: `@octokit/rest` 21→22,
+  `@anthropic-ai/claude-code` →2.1.183, `openai` →6.44.0, `@vscode/codicons`
+  →0.0.45 (runtime); `typescript` 5→6, `esbuild` →0.28.1, `actions/checkout`
+  →6.0.3, and transitive `markdown-it` →14.2.0 / `launch-editor` →2.14.1 (tooling).
+
 ## [1.1.0] - 2026-06-13
 
 ### Security
