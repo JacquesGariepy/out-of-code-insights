@@ -1309,7 +1309,7 @@
         "lodash": "^4.17.21",
         "multi-llm-ts": "^5.0.1",
         "node-abort-controller": "^3.1.1",
-        "openai": "^6.37.0",
+        "openai": "^6.44.0",
         "path-browserify": "^1.0.1",
         "vscode-nls": "^5.2.0"
     }
