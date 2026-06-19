@@ -84,6 +84,9 @@ export class AnnotationManager extends EventEmitter {
     private annotationsPanel?: vscode.WebviewPanel;
     private currentFilter = 'all';
     private currentSort = 'line_asc';
+    // Annotations panel pagination. pageSize === 0 means "show all" (no paging).
+    private currentPage = 0;
+    private pageSize = 20;
     private codeLensProviderDisposable: vscode.Disposable | null = null;
     public annotationsEnabled = true;
     private temporaryHighlightDecoration: vscode.TextEditorDecorationType =
@@ -1600,11 +1603,37 @@ export class AnnotationManager extends EventEmitter {
 
     private handleSort(sortValue: string): void {
         this.currentSort = sortValue;
+        this.currentPage = 0;
     }
 
     private handleFilter(filterValue: string): void {
         this.currentFilter = filterValue;
+        this.currentPage = 0;
         this.updateAnnotationsPanel();
+    }
+
+    private handlePageChange(direction: string): void {
+        switch (direction) {
+            case 'first':
+                this.currentPage = 0;
+                break;
+            case 'prev':
+                this.currentPage = Math.max(0, this.currentPage - 1);
+                break;
+            case 'next':
+                // Overshoot is clamped against totalPages in getAnnotationsPanelHtml().
+                this.currentPage = this.currentPage + 1;
+                break;
+            case 'last':
+                this.currentPage = Number.MAX_SAFE_INTEGER;
+                break;
+        }
+    }
+
+    private handlePageSize(value: string): void {
+        const parsed = Number(value);
+        this.pageSize = Number.isFinite(parsed) && parsed >= 0 ? parsed : 20;
+        this.currentPage = 0;
     }
 
     private applyCurrentSorting(annotations: Annotation[]): void {
@@ -1953,17 +1982,44 @@ export class AnnotationManager extends EventEmitter {
         }
     }
 
+    // Serializes concurrent saves so two writes can never interleave on disk.
+    private saveQueue: Promise<void> = Promise.resolve();
+
+    // Set when the on-disk annotations file could not be read/parsed; blocks saves
+    // so the recoverable original is not overwritten.
+    private loadFailed = false;
+
     public async saveAnnotations(): Promise<void> {
         const annotationFilePath = this.getProjectAnnotationsPath();
         if (!annotationFilePath) {
             this.log('No workspace folder open; skipping annotation save.');
             return;
         }
+        // Refuse to persist while the on-disk file is known to be corrupt/unreadable,
+        // otherwise we would overwrite the recoverable original with the current
+        // (possibly empty) in-memory set. See loadAnnotations() for the backup.
+        if (this.loadFailed) {
+            this.log('Skipping save: last load failed; the on-disk annotations file is preserved for recovery.');
+            return;
+        }
+        // Chain onto the previous save (swallowing its error so one failure does not
+        // poison the queue) and return the new tail so callers still observe errors.
+        this.saveQueue = this.saveQueue
+            .catch(() => undefined)
+            .then(() => this.writeAnnotationsFile(annotationFilePath));
+        return this.saveQueue;
+    }
+
+    private async writeAnnotationsFile(annotationFilePath: string): Promise<void> {
         const annotationsArray = this.getPersistableAnnotations();
         const content = JSON.stringify(annotationsArray, null, 2);
         const fileData = Buffer.from(content, 'utf8');
         const fileUri = vscode.Uri.file(annotationFilePath);
-        await vscode.workspace.fs.writeFile(fileUri, fileData);
+        const tmpUri = vscode.Uri.file(`${annotationFilePath}.tmp`);
+        // Write to a temp file then atomically replace the target, so an interrupted
+        // write (crash, full disk) can never truncate the only copy of the data.
+        await vscode.workspace.fs.writeFile(tmpUri, fileData);
+        await vscode.workspace.fs.rename(tmpUri, fileUri, { overwrite: true });
     }
 
     private getPersistableAnnotations(): Omit<Annotation, 'resolvedAnchor'>[] {
@@ -2037,7 +2093,20 @@ export class AnnotationManager extends EventEmitter {
                         : '') +
                     (staleCount > 0 ? ` -- ${staleCount} marked stale by migration` : '')
             );
+            this.loadFailed = false;
         } catch (error) {
+            // The file exists but could not be read/parsed (corruption, lock, etc.).
+            // Preserve it as `.bak` and block saves so the next write does not
+            // silently overwrite the recoverable original with the in-memory set.
+            this.loadFailed = true;
+            try {
+                await vscode.workspace.fs.copy(fileUri, vscode.Uri.file(`${annotationFilePath}.bak`), {
+                    overwrite: true,
+                });
+                this.log(`Backed up unreadable annotations file to ${annotationFilePath}.bak`);
+            } catch {
+                // best-effort backup only
+            }
             vscode.window.showErrorMessage(
                 `Failed to load annotations: ${error instanceof Error ? error.message : String(error)}`
             );
@@ -2199,6 +2268,12 @@ export class AnnotationManager extends EventEmitter {
                 case 'filter':
                     this.handleFilter(message.value);
                     break;
+                case 'page':
+                    this.handlePageChange(message.value);
+                    break;
+                case 'pageSize':
+                    this.handlePageSize(message.value);
+                    break;
                 case 'updateComment':
                     await this.updateComment(message.commentId, message.newMessage);
                     break;
@@ -2292,7 +2367,21 @@ export class AnnotationManager extends EventEmitter {
         const annotations = Array.from(this.annotations.values()).filter((a) => this.shouldAnnotationBeVisible(a));
         this.applyCurrentSorting(annotations);
 
-        const groupedAnnotations = annotations.reduce(
+        const totalAnnotations = annotations.length;
+
+        // Pagination over the flat (sorted) list. pageSize === 0 disables paging.
+        const pageSize = this.pageSize;
+        const totalPages = pageSize > 0 ? Math.max(1, Math.ceil(totalAnnotations / pageSize)) : 1;
+        this.currentPage = Math.min(Math.max(0, this.currentPage), totalPages - 1);
+        const pageStart = pageSize > 0 ? this.currentPage * pageSize : 0;
+        const pageAnnotations = pageSize > 0 ? annotations.slice(pageStart, pageStart + pageSize) : annotations;
+
+        // File filter lists every file across the full (filtered) set, not just the
+        // current page, so filtering still reaches annotations on other pages.
+        const allFiles = Array.from(new Set(annotations.map((a) => a.file)));
+
+        // Group only the current page's annotations for display.
+        const groupedAnnotations = pageAnnotations.reduce(
             (groups, annotation) => {
                 if (!groups[annotation.file]) {
                     groups[annotation.file] = [];
@@ -2302,9 +2391,6 @@ export class AnnotationManager extends EventEmitter {
             },
             {} as Record<string, Annotation[]>
         );
-
-        const allFiles = Object.keys(groupedAnnotations);
-        const totalAnnotations = annotations.length;
 
         const codiconUri = this.annotationsPanel?.webview.asWebviewUri(
             vscode.Uri.joinPath(this.context.extensionUri, 'node_modules', '@vscode/codicons', 'dist', 'codicon.css')
@@ -2624,6 +2710,27 @@ export class AnnotationManager extends EventEmitter {
             html {
                 scroll-behavior: smooth;
             }
+            .pagination {
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 0.4em;
+                margin: 0.75em 0;
+            }
+            .pagination .page-info {
+                opacity: 0.85;
+                margin: 0 0.5em;
+            }
+            .pagination button[disabled] {
+                opacity: 0.4;
+                cursor: default;
+            }
+            .pagination .page-size-label {
+                margin-left: auto;
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35em;
+            }
             @media (max-width: 400px) {
                 .filters {
                     flex-direction: column;
@@ -2676,7 +2783,7 @@ export class AnnotationManager extends EventEmitter {
                         <label for="filterOptions">${loc('filterBy', 'Filter by')}:</label>
                         <select id="filterOptions">
                             <option value="all">${loc('allAnnotations', 'All annotations')}</option>
-                            ${allFiles.map((file) => `<option value="${file}">${file}</option>`).join('')}
+                            ${allFiles.map((file) => `<option value="${escapeHtml(file)}">${escapeHtml(file)}</option>`).join('')}
                         </select>
                     </div>
                 </div>
@@ -2694,10 +2801,10 @@ export class AnnotationManager extends EventEmitter {
         } else {
             for (const [file, fileAnnotations] of Object.entries(groupedAnnotations)) {
                 annotationsContent += `
-                    <div class="file-group" data-file="${file}">
+                    <div class="file-group" data-file="${escapeHtml(file)}">
                         <div class="file-header">
                             <span class="file-icon">📄</span>
-                            <span>${file}</span>
+                            <span>${escapeHtml(file)}</span>
                             <span class="file-stats">${fileAnnotations.length} ${fileAnnotations.length > 1 ? loc('annotations', 'annotations') : loc('annotation', 'annotation')}</span>
                         </div>
                         ${fileAnnotations
@@ -2981,6 +3088,14 @@ export class AnnotationManager extends EventEmitter {
                 });
             }
 
+            // Page-size selectors. The pagination bar is rendered top and bottom, so
+            // it uses a class (multiple elements) rather than a unique id.
+            document.querySelectorAll('.pageSizeSelect').forEach((sel) => {
+                sel.addEventListener('change', (event) => {
+                    vscode.postMessage({ command: 'pageSize', value: event.target.value });
+                });
+            });
+
             // Messages du backend
             window.addEventListener('message', event => {
                 const message = event.data;
@@ -3048,6 +3163,14 @@ export class AnnotationManager extends EventEmitter {
                     e.stopPropagation(); window.moveDown(annotationId, e);
                 } else if (action === 'deleteComment') {
                     e.stopPropagation(); window.deleteComment(annotationId, commentId, e);
+                } else if (action === 'firstPage') {
+                    vscode.postMessage({ command: 'page', value: 'first' });
+                } else if (action === 'prevPage') {
+                    vscode.postMessage({ command: 'page', value: 'prev' });
+                } else if (action === 'nextPage') {
+                    vscode.postMessage({ command: 'page', value: 'next' });
+                } else if (action === 'lastPage') {
+                    vscode.postMessage({ command: 'page', value: 'last' });
                 }
             });
             document.addEventListener('blur', function(e) {
@@ -3106,6 +3229,38 @@ export class AnnotationManager extends EventEmitter {
             }
         `;
 
+        // Pagination bar (rendered top and bottom). Buttons use data-action so the
+        // existing click-delegation in the webview script picks them up; the page-size
+        // <select> uses a class (not an id) because the bar appears twice.
+        const atFirst = this.currentPage <= 0;
+        const atLast = this.currentPage >= totalPages - 1;
+        const rangeStart = totalAnnotations === 0 ? 0 : pageStart + 1;
+        const rangeEnd = pageSize > 0 ? Math.min(totalAnnotations, pageStart + pageSize) : totalAnnotations;
+        const pageInfo = loc('paginationInfo', 'Page {0} of {1}')
+            .replace('{0}', String(this.currentPage + 1))
+            .replace('{1}', String(totalPages));
+        const pageSizeOptions = [10, 20, 50, 100];
+        const paginationBar =
+            totalAnnotations === 0
+                ? ''
+                : `
+            <div class="pagination">
+                <button class="action-button" data-action="firstPage" ${atFirst ? 'disabled' : ''} title="${loc('firstPage', 'First page')}">⏮</button>
+                <button class="action-button" data-action="prevPage" ${atFirst ? 'disabled' : ''} title="${loc('prevPage', 'Previous page')}">‹</button>
+                <span class="page-info">${pageInfo} &bull; ${rangeStart}–${rangeEnd}/${totalAnnotations}</span>
+                <button class="action-button" data-action="nextPage" ${atLast ? 'disabled' : ''} title="${loc('nextPage', 'Next page')}">›</button>
+                <button class="action-button" data-action="lastPage" ${atLast ? 'disabled' : ''} title="${loc('lastPage', 'Last page')}">⏭</button>
+                <label class="page-size-label">${loc('perPage', 'Per page')}:
+                    <select class="pageSizeSelect">
+                        ${pageSizeOptions
+                            .map((n) => `<option value="${n}" ${pageSize === n ? 'selected' : ''}>${n}</option>`)
+                            .join('')}
+                        <option value="0" ${pageSize === 0 ? 'selected' : ''}>${loc('allItems', 'All')}</option>
+                    </select>
+                </label>
+            </div>
+        `;
+
         const nonce = generateNonce();
         const cspSource = this.annotationsPanel?.webview.cspSource ?? '';
         return `
@@ -3121,9 +3276,11 @@ export class AnnotationManager extends EventEmitter {
             <body>
                 <div class="container">
                     ${searchAndFilters}
+                    ${paginationBar}
                     <div class="annotations-content">
                         ${annotationsContent}
                     </div>
+                    ${paginationBar}
                 </div>
                 <script nonce="${nonce}">${script}</script>
             </body>
@@ -3436,11 +3593,17 @@ export class AnnotationManager extends EventEmitter {
             return filePath;
         }
         const normalizedFilePath = this.normalizePath(filePath);
-        const workspaceFolder = workspaceFolders.find((folder) =>
-            normalizedFilePath.startsWith(this.normalizePath(folder.uri.fsPath))
-        );
-        if (workspaceFolder) {
-            return normalizedFilePath.slice(this.normalizePath(workspaceFolder.uri.fsPath).length + 1);
+        for (const folder of workspaceFolders) {
+            const root = this.normalizePath(folder.uri.fsPath);
+            if (normalizedFilePath === root) {
+                return '';
+            }
+            // Require a path-separator boundary so a sibling like `/project-x`
+            // is not matched as living under workspace `/project`.
+            const rootWithSep = root.endsWith('/') ? root : `${root}/`;
+            if (normalizedFilePath.startsWith(rootWithSep)) {
+                return normalizedFilePath.slice(rootWithSep.length);
+            }
         }
         return normalizedFilePath;
     }

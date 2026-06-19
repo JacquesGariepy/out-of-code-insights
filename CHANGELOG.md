@@ -7,6 +7,51 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-06-19
+
+### Added
+- Annotations panel pagination: the panel now renders one page of annotations at
+  a time with first/previous/next/last controls, a "Page X of Y • range/total"
+  indicator, and a per-page selector (10/20/50/100/All, default 20). Changing the
+  sort or filter resets to the first page; the file filter still spans every page.
+
+### Security
+- Annotations panel: the file path used as a group heading, filter `<option>`,
+  and `data-file` attribute is now run through `escapeHtml` like every other
+  annotation field, closing a stored-XSS vector where a crafted `file` value in
+  `annotations.json` could inject script into the webview.
+- Dependencies: refreshed the lockfile to pull patched transitive packages for
+  the three high-severity `npm audit` findings reachable through production
+  dependencies (`form-data` CRLF injection, `protobufjs` prototype shadowing /
+  DoS, `ws` memory-exhaustion DoS). No production dependency version constraints
+  changed (lockfile only); the CI gate `npm audit --audit-level=high --omit=dev`
+  is green again.
+
+### Fixed
+- Annotation saves are now atomic and serialized: the JSON is written to a
+  temporary file and atomically renamed over the target, and concurrent saves
+  are queued, so an interrupted write or two overlapping saves can no longer
+  truncate or corrupt the source-of-truth file.
+- When `annotations.json` cannot be read or parsed, the unreadable file is now
+  backed up to `annotations.json.bak` and saving is suspended, so a corrupt or
+  locked file is no longer silently overwritten (and lost) on the next save.
+- Rotating `llm.apiKeys` for the currently selected provider now takes effect
+  immediately; previously the new key was ignored until the provider changed or
+  the window reloaded, because the existing engine was reused with the old key.
+- AI-generated annotations no longer drop a `priority` of `0` coming from a
+  profile (the truthiness guard treated `0` as "unset").
+- `getRelativePath` now requires a path-separator boundary, so a sibling
+  directory sharing a prefix with the workspace root (e.g. `project-x` next to
+  `project`) is no longer resolved to a garbled relative path.
+
+### Changed
+- Build: removed the redundant `process.env.NODE_ENV` `DefinePlugin` entry that
+  conflicted with webpack's mode-derived value (the production bundle is now
+  correctly built with `NODE_ENV=production`, and the build warning is gone).
+- Localization: removed a duplicate `annotationNotFound` key that silently
+  shadowed the "source annotation not found" string; that variant is now
+  `sourceAnnotationNotFound`.
+
 ## [1.1.0] - 2026-06-13
 
 ### Security

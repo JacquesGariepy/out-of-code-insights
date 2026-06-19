@@ -453,8 +453,9 @@ export class UnifiedAIProvider {
 
     public updateConfig(config: Partial<UnifiedAIConfig>): void {
         this.config = { ...this.config, ...config };
-        // Reset LLM if provider changed
-        if (config.provider || config.model) {
+        // Reset the engine if the provider, model, or API keys changed so the next
+        // call rebuilds it with the new credentials instead of reusing a stale client.
+        if (config.provider || config.model || config.apiKeys) {
             this.llm = null;
             this.models = null;
         }

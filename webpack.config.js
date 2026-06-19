@@ -6,9 +6,12 @@ const path = require('path');
 const webpack = require('webpack');
 const TerserPlugin = require('terser-webpack-plugin');
 
-/**@type {import('webpack').Configuration}*/
-const config = {
-  mode: 'production', // Défini le mode : 'development' ou 'production'
+/**@type {(env: unknown, argv: { mode?: string }) => import('webpack').Configuration}*/
+const buildConfig = (_env, argv) => ({
+  // The active mode is driven by the CLI flag (`--mode development|production`);
+  // webpack derives a matching `process.env.NODE_ENV` from it, so we must not
+  // redefine that value ourselves (doing so triggers a DefinePlugin conflict).
+  mode: argv.mode === 'development' ? 'development' : 'production',
   target: 'node', // Change to node for Claude Code SDK
   entry: './src/extension.ts', // Point d'entrée
   output: {
@@ -65,15 +68,12 @@ const config = {
     ],
   },
   plugins: [
-    new webpack.DefinePlugin({
-      'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
-    }),
     // Provide globals that might be missing in some environments
     new webpack.ProvidePlugin({
       'globalThis.AbortController': ['abort-controller', 'AbortController'],
       'global.AbortController': ['abort-controller', 'AbortController']
     }),
   ],
-};
+});
 
-module.exports = config;
+module.exports = buildConfig;

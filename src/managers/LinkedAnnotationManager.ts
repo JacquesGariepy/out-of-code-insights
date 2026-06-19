@@ -74,7 +74,7 @@ export class LinkedAnnotationManager extends EventEmitter {
     ): Promise<void> {
         const sourceAnnotation = this.store.get(sourceId);
         if (!sourceAnnotation) {
-            throw new Error(localize('annotationNotFound', 'Source annotation not found'));
+            throw new Error(localize('sourceAnnotationNotFound', 'Source annotation not found'));
         }
 
         const targetAnnotation = this.findAnnotationByLocation(targetFile, targetLine);
@@ -105,7 +105,7 @@ export class LinkedAnnotationManager extends EventEmitter {
     public async removeLink(sourceId: string, targetFile: string, targetLine: number): Promise<void> {
         const sourceAnnotation = this.store.get(sourceId);
         if (!sourceAnnotation || !sourceAnnotation.linkedAnnotations) {
-            throw new Error(localize('annotationNotFound', 'Source annotation not found'));
+            throw new Error(localize('sourceAnnotationNotFound', 'Source annotation not found'));
         }
 
         const linkIndex = sourceAnnotation.linkedAnnotations.findIndex(

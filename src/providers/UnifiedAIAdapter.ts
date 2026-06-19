@@ -95,7 +95,9 @@ export class UnifiedAIAdapter {
 
         // Check if provider changed
         if (this.aiProvider && this.aiProvider.getCurrentProvider() === provider) {
-            // Just ensure it's initialized
+            // Provider unchanged, but the model or API keys may have been rotated.
+            // Push them so a refreshed key takes effect without a window reload.
+            this.aiProvider.updateConfig({ model, apiKeys });
             await this.aiProvider.ensureInitialized();
             return;
         }
@@ -884,7 +886,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             thread: [],
             kanbanColumn: suggestion.kanbanColumn || 'todo',
             resolved: false,
-            ...(suggestion.priority && { priority: suggestion.priority }),
+            ...(suggestion.priority !== undefined && { priority: suggestion.priority }),
         };
         // Set fileUri/anchor before persisting so the annotation is scoped strictly
         // to this document (no basename collisions across folders).
@@ -933,7 +935,7 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                     thread: [],
                     kanbanColumn: suggestion.kanbanColumn || 'todo',
                     resolved: false,
-                    ...(suggestion.priority && { priority: suggestion.priority }),
+                    ...(suggestion.priority !== undefined && { priority: suggestion.priority }),
                 };
 
                 if (targetDocument && line >= 0 && line < targetDocument.lineCount) {
