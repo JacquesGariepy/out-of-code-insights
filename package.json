@@ -1300,7 +1300,7 @@
         "webpack-dev-server": "^5.1.0"
     },
     "dependencies": {
-        "@anthropic-ai/claude-code": "^2.1.177",
+        "@anthropic-ai/claude-code": "^2.1.185",
         "@octokit/rest": "22.0.1",
         "@vscode/codicons": "^0.0.45",
         "abort-controller": "^3.0.0",
