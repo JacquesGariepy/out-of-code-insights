@@ -19,6 +19,9 @@ coverage/
 test-fixtures/**/*.js
 test-fixtures/**/*.js.map
 
+# Manual Kanban test workspace (fixtures + annotation store), not part of the product
+.test-workspace/
+
 # Editor & OS
 .DS_Store
 Thumbs.db
@@ -67,3 +70,5 @@ test-fixtures/lot14-*
 test-fixtures/lot15-*.md
 test-fixtures/CLAUDE.md
 test-fixtures/AGENTS.md
+.jackaiagent/
+todo.md

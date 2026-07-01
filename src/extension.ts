@@ -280,7 +280,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // Register KanbanView commands
         const showKanbanCommand = vscode.commands.registerCommand('annotations.showKanban', async () => {
             try {
-                if (!annotationStore) {
+                if (!annotationStore || !kanbanColumnStore) {
                     vscode.window.showErrorMessage(
                         loc('kanbanError', 'Failed to show Kanban board') + ': Annotation store is not ready yet'
                     );
@@ -290,7 +290,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 const annotationsArray = annotationStore.list();
                 getLogger().info(`Opening Kanban board with ${annotationsArray.length} annotations`);
 
-                await KanbanView.createOrShow(context, annotationsArray, annotationStore);
+                await KanbanView.createOrShow(context, annotationsArray, annotationStore, kanbanColumnStore);
 
                 // Listen for annotation changes to update Kanban
                 const updateKanban = () => {
@@ -307,7 +307,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                                 // Display-only line number derived from offset.
                                 line: annotation.startOffset,
                                 tags: annotation.tags || [],
-                                kanbanColumn: annotation.kanbanColumn || 'todo',
+                                kanbanColumn: kanbanColumnStore?.getColumn(annotation.id) ?? 'todo',
                                 timestamp: annotation.timestamp,
                             })),
                         });
