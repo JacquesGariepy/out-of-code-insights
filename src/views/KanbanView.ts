@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import { localize } from '../common/localize';
 import type { AnnotationV2 } from '../transactional/types';
 import type { AnnotationStore } from '../transactional/AnnotationStore';
+import type { KanbanColumnStore } from '../transactional/KanbanColumnStore';
 
 export class KanbanView {
     public static currentPanel: vscode.WebviewPanel | undefined;
@@ -17,13 +18,15 @@ export class KanbanView {
 
     constructor(
         private context: vscode.ExtensionContext,
-        private store: AnnotationStore
+        private store: AnnotationStore,
+        private kanbanColumnStore: KanbanColumnStore
     ) {}
 
     public static async createOrShow(
         context: vscode.ExtensionContext,
         annotations: readonly AnnotationV2[],
-        store: AnnotationStore
+        store: AnnotationStore,
+        kanbanColumnStore: KanbanColumnStore
     ) {
         const column = vscode.window.activeTextEditor ? vscode.window.activeTextEditor.viewColumn : undefined;
 
@@ -43,7 +46,7 @@ export class KanbanView {
             }
         );
 
-        const kanbanView = new KanbanView(context, store);
+        const kanbanView = new KanbanView(context, store, kanbanColumnStore);
         kanbanView.annotations = annotations;
 
         // Get current columns from AnnotationManager
@@ -212,7 +215,7 @@ export class KanbanView {
                 filePath: annotation.file,
                 line: resolvedLine === null ? null : resolvedLine + 1,
                 tags: annotation.tags || [],
-                kanbanColumn: annotation.kanbanColumn || 'todo',
+                kanbanColumn: this.kanbanColumnStore.getColumn(annotation.id) ?? 'todo',
                 timestamp: annotation.timestamp,
             };
         });
@@ -245,6 +248,16 @@ export class KanbanView {
             columnName: localize('kanban.columnName', 'Column name'),
             cancel: localize('cancel', 'Cancel'),
             save: localize('save', 'Save'),
+            severityFilterLabel: localize('kanban.severityFilterLabel', 'Filter by severity'),
+            setWipLimit: localize('kanban.setWipLimit', 'Click to set a WIP limit for this column'),
+            kbdGrabbed: localize(
+                'kanban.kbdGrabbed',
+                'Card grabbed from {0}. Use the arrow keys to choose a column, Enter to move, Escape to cancel.'
+            ),
+            kbdTarget: localize('kanban.kbdTarget', 'Target column: {0}.'),
+            kbdMoved: localize('kanban.kbdMoved', 'Card moved to {0}.'),
+            kbdCanceled: localize('kanban.kbdCanceled', 'Move canceled.'),
+            kbdNoChange: localize('kanban.kbdNoChange', 'No change.'),
         };
 
         return `<!DOCTYPE html>
@@ -314,12 +327,42 @@ export class KanbanView {
                     width: 200px;
                 }
 
-                .filter-select {
+                .sr-only {
+                    position: absolute;
+                    width: 1px;
+                    height: 1px;
+                    padding: 0;
+                    margin: -1px;
+                    overflow: hidden;
+                    clip: rect(0, 0, 0, 0);
+                    white-space: nowrap;
+                    border: 0;
+                }
+
+                .chip-group {
+                    display: flex;
+                    gap: 6px;
+                    flex-wrap: wrap;
+                }
+
+                .chip {
                     background-color: var(--vscode-input-background);
                     color: var(--vscode-input-foreground);
                     border: 1px solid var(--vscode-input-border);
-                    padding: 4px 8px;
-                    border-radius: 3px;
+                    padding: 3px 10px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    cursor: pointer;
+                }
+
+                .chip:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+
+                .chip.chip-active {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border-color: var(--vscode-button-background);
                 }
 
                 .add-column-btn {
@@ -399,6 +442,26 @@ export class KanbanView {
                     padding: 2px 6px;
                     border-radius: 10px;
                     font-size: 11px;
+                    cursor: pointer;
+                }
+
+                .column-count.column-count-over {
+                    background-color: var(--vscode-errorForeground);
+                    color: var(--vscode-editor-background);
+                }
+
+                .column.column-over-wip {
+                    box-shadow: inset 0 0 0 1px var(--vscode-errorForeground);
+                }
+
+                .wip-input {
+                    width: 48px;
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    border: 1px solid var(--vscode-input-border);
+                    border-radius: 10px;
+                    font-size: 11px;
+                    padding: 2px 6px;
                 }
 
                 .column-actions {
@@ -425,6 +488,10 @@ export class KanbanView {
                     min-height: 100px;
                 }
 
+                .virtual-spacer {
+                    pointer-events: none;
+                }
+
                 .card {
                     background-color: var(--vscode-editor-background);
                     border: 1px solid var(--vscode-editorWidget-border);
@@ -440,8 +507,22 @@ export class KanbanView {
                     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
                 }
 
+                .card:focus {
+                    outline: 2px solid var(--vscode-focusBorder);
+                    outline-offset: 2px;
+                }
+
                 .card.dragging {
                     opacity: 0.5;
+                }
+
+                .card.kbd-grabbed {
+                    outline: 2px dashed var(--vscode-focusBorder);
+                    outline-offset: 2px;
+                }
+
+                .column.kbd-target {
+                    box-shadow: inset 0 0 0 2px var(--vscode-focusBorder);
                 }
 
                 .card-header {
@@ -602,16 +683,18 @@ export class KanbanView {
                     <div class="title">${localizedStrings.title}</div>
                     <div class="controls">
                         <input type="text" class="search-box" placeholder="${localizedStrings.searchPlaceholder}" id="searchBox">
-                        <select class="filter-select" id="severityFilter">
-                            <option value="">${localizedStrings.allSeverities}</option>
-                            <option value="error">${localizedStrings.error}</option>
-                            <option value="warning">${localizedStrings.warning}</option>
-                            <option value="info">${localizedStrings.info}</option>
-                            <option value="hint">${localizedStrings.hint}</option>
-                        </select>
+                        <div class="chip-group" id="severityChips" role="group" aria-label="${localizedStrings.severityFilterLabel}">
+                            <button type="button" class="chip" data-severity="">${localizedStrings.allSeverities}</button>
+                            <button type="button" class="chip" data-severity="error">${localizedStrings.error}</button>
+                            <button type="button" class="chip" data-severity="warning">${localizedStrings.warning}</button>
+                            <button type="button" class="chip" data-severity="info">${localizedStrings.info}</button>
+                            <button type="button" class="chip" data-severity="hint">${localizedStrings.hint}</button>
+                        </div>
                         <button class="add-column-btn" data-action="show-add-column-modal">${localizedStrings.addColumn}</button>
                     </div>
                 </div>
+
+                <div id="kanbanAnnouncer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
                 <div class="stats" id="stats">
                     <!-- Stats will be generated dynamically -->
@@ -647,16 +730,61 @@ export class KanbanView {
                 let annotations = ${JSON.stringify(annotations)};
                 let columns = ${JSON.stringify(columns)};
                 let draggedCard = null;
-                let searchTerm = '';
-                let severityFilter = '';
+
+                // Filter/WIP state persists across webview reloads via vscode.setState,
+                // separately from retainContextWhenHidden (which only survives a hide/show,
+                // not a full panel reload).
+                const previousState = vscode.getState() || {};
+                let searchTerm = previousState.searchTerm || '';
+                let severityFilter = previousState.severityFilter || '';
+                let wipLimits = previousState.wipLimits || {};
+
+                // Keyboard drag-and-drop: null when idle, otherwise
+                // { annotationId, fromColumn, targetColumn } while a card is "grabbed".
+                let keyboardGrab = null;
+                // Annotation id to refocus once the next renderBoard() completes, set right
+                // before a move is requested so keyboard focus survives the round trip
+                // through the extension host and back.
+                let pendingFocusAnnotationId = null;
+
+                function persistState() {
+                    vscode.setState({ searchTerm, severityFilter, wipLimits });
+                }
+
+                function announce(message) {
+                    const el = document.getElementById('kanbanAnnouncer');
+                    if (!el) return;
+                    el.textContent = '';
+                    void el.offsetWidth; // force reflow so repeated messages are re-announced
+                    el.textContent = message;
+                }
+
+                // Column virtualization: below the threshold every card is rendered as
+                // before. Above it, only cards near the scroll viewport (+ overscan) are
+                // mounted, using a measured/estimated fixed card height since Kanban cards
+                // have variable content (tags) that make exact per-card sizing impractical
+                // for a dependency-free implementation.
+                const VIRTUALIZE_THRESHOLD = 30;
+                const ESTIMATED_CARD_HEIGHT = 96;
+                const VIRTUALIZE_OVERSCAN = 4;
                 
                 // Localized strings
                 const localized = ${JSON.stringify(localizedStrings)};
 
                 function init() {
+                    document.getElementById('searchBox').value = searchTerm;
+                    updateSeverityChipsUI();
                     renderStats();
                     renderBoard();
                     setupEventListeners();
+                }
+
+                function updateSeverityChipsUI() {
+                    document.querySelectorAll('.chip').forEach(function(chip) {
+                        const active = (chip.dataset.severity || '') === severityFilter;
+                        chip.classList.toggle('chip-active', active);
+                        chip.setAttribute('aria-pressed', active ? 'true' : 'false');
+                    });
                 }
 
                 function setupEventListeners() {
@@ -673,11 +801,16 @@ export class KanbanView {
 
                     document.getElementById('searchBox').addEventListener('input', (e) => {
                         searchTerm = e.target.value.toLowerCase();
+                        persistState();
                         renderBoard();
                     });
 
-                    document.getElementById('severityFilter').addEventListener('change', (e) => {
-                        severityFilter = e.target.value;
+                    document.addEventListener('click', function(e) {
+                        const chip = e.target.closest('.chip');
+                        if (!chip) return;
+                        severityFilter = chip.dataset.severity || '';
+                        persistState();
+                        updateSeverityChipsUI();
                         renderBoard();
                     });
 
@@ -710,6 +843,10 @@ export class KanbanView {
                             draggedCard.classList.remove('dragging');
                             draggedCard = null;
                         }
+                        // Scroll-triggered virtualization re-renders are skipped while a
+                        // drag is in progress (see createColumn); resync now in case the
+                        // browser auto-scrolled a column during the drag.
+                        refreshVirtualizedColumns();
                     });
 
                     document.addEventListener('dragover', function(e) {
@@ -738,16 +875,156 @@ export class KanbanView {
                         const annotationId = draggedCard.dataset.annotationId;
                         const fromColumnEl = draggedCard.closest('.column');
                         const fromColumn = fromColumnEl ? fromColumnEl.dataset.columnId : null;
-                        if (fromColumn && fromColumn !== toColumn) {
-                            vscode.postMessage({
-                                command: 'moveCard',
-                                annotationId: annotationId,
-                                fromColumn: fromColumn,
-                                toColumn: toColumn
-                            });
+                        if (fromColumn) {
+                            moveCardToColumn(annotationId, fromColumn, toColumn);
                         }
                         draggedCard.classList.remove('dragging');
                         draggedCard = null;
+                    });
+
+                    document.addEventListener('keydown', function(e) {
+                        const countBadge = e.target.closest('.column-count[data-action="edit-wip"]');
+                        if (countBadge && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
+                            e.preventDefault();
+                            startWipEdit(countBadge);
+                            return;
+                        }
+
+                        if (keyboardGrab) {
+                            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                                e.preventDefault();
+                                const ids = columns.map(c => c[0]);
+                                const currentIdx = ids.indexOf(keyboardGrab.targetColumn);
+                                const delta = e.key === 'ArrowRight' ? 1 : -1;
+                                const nextIdx = Math.min(ids.length - 1, Math.max(0, currentIdx + delta));
+                                setKeyboardTarget(ids[nextIdx]);
+                            } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                                e.preventDefault();
+                                commitKeyboardMove();
+                            } else if (e.key === 'Escape') {
+                                e.preventDefault();
+                                cancelKeyboardGrab();
+                            }
+                            return;
+                        }
+
+                        // Guards against e.target being a nested .card-action button (open/
+                        // delete): only grab when the card itself is the focused element, so
+                        // those buttons keep their own native Enter/Space activation.
+                        if (e.target.classList.contains('card') && (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar')) {
+                            e.preventDefault();
+                            startKeyboardGrab(e.target);
+                        }
+                    });
+                }
+
+                function moveCardToColumn(annotationId, fromColumn, toColumn) {
+                    if (!annotationId || !fromColumn || fromColumn === toColumn) return;
+                    pendingFocusAnnotationId = annotationId;
+                    vscode.postMessage({
+                        command: 'moveCard',
+                        annotationId: annotationId,
+                        fromColumn: fromColumn,
+                        toColumn: toColumn
+                    });
+                    const columnName = (columns.find(c => c[0] === toColumn) || [])[1] || toColumn;
+                    announce(localized.kbdMoved.replace('{0}', columnName));
+                }
+
+                function startKeyboardGrab(card) {
+                    const columnEl = card.closest('.column');
+                    const fromColumn = columnEl ? columnEl.dataset.columnId : null;
+                    if (!fromColumn) return;
+                    keyboardGrab = {
+                        annotationId: card.dataset.annotationId,
+                        fromColumn: fromColumn,
+                        targetColumn: fromColumn
+                    };
+                    card.classList.add('kbd-grabbed');
+                    card.setAttribute('aria-grabbed', 'true');
+                    highlightTargetColumn(fromColumn);
+                    const columnName = (columns.find(c => c[0] === fromColumn) || [])[1] || fromColumn;
+                    announce(localized.kbdGrabbed.replace('{0}', columnName));
+                }
+
+                function setKeyboardTarget(columnId) {
+                    keyboardGrab.targetColumn = columnId;
+                    highlightTargetColumn(columnId);
+                    const columnName = (columns.find(c => c[0] === columnId) || [])[1] || columnId;
+                    announce(localized.kbdTarget.replace('{0}', columnName));
+                }
+
+                function highlightTargetColumn(columnId) {
+                    document.querySelectorAll('.column').forEach(function(col) {
+                        col.classList.toggle('kbd-target', col.dataset.columnId === columnId);
+                    });
+                }
+
+                function commitKeyboardMove() {
+                    const grab = keyboardGrab;
+                    releaseKeyboardGrab();
+                    if (!grab) return;
+                    if (grab.targetColumn === grab.fromColumn) {
+                        announce(localized.kbdNoChange);
+                        return;
+                    }
+                    moveCardToColumn(grab.annotationId, grab.fromColumn, grab.targetColumn);
+                }
+
+                function cancelKeyboardGrab() {
+                    releaseKeyboardGrab();
+                    announce(localized.kbdCanceled);
+                }
+
+                function releaseKeyboardGrab() {
+                    if (!keyboardGrab) return;
+                    const card = document.querySelector('.card[data-annotation-id="' + CSS.escape(keyboardGrab.annotationId) + '"]');
+                    if (card) {
+                        card.classList.remove('kbd-grabbed');
+                        card.removeAttribute('aria-grabbed');
+                    }
+                    document.querySelectorAll('.column.kbd-target').forEach(function(col) {
+                        col.classList.remove('kbd-target');
+                    });
+                    keyboardGrab = null;
+                }
+
+                function startWipEdit(countEl) {
+                    const colId = countEl.dataset.colId;
+                    const input = document.createElement('input');
+                    input.type = 'number';
+                    input.min = '0';
+                    input.className = 'wip-input';
+                    input.value = wipLimits[colId] ? String(wipLimits[colId]) : '';
+                    countEl.replaceWith(input);
+                    input.focus();
+                    input.select();
+
+                    let canceled = false;
+
+                    function commit() {
+                        if (canceled) return;
+                        const raw = input.value.trim();
+                        const parsed = raw === '' ? 0 : Math.max(0, parseInt(raw, 10) || 0);
+                        if (parsed > 0) {
+                            wipLimits[colId] = parsed;
+                        } else {
+                            delete wipLimits[colId];
+                        }
+                        persistState();
+                        renderBoard();
+                    }
+
+                    input.addEventListener('blur', commit);
+                    input.addEventListener('keydown', function(e) {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            input.blur();
+                        } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            canceled = true;
+                            renderBoard();
+                        }
                     });
                 }
 
@@ -800,31 +1077,43 @@ export class KanbanView {
                         const columnAnnotations = filteredAnnotations.filter(a => (a.kanbanColumn || 'todo') === columnId);
                         const column = createColumn(columnId, columnName, columnAnnotations);
                         board.appendChild(column);
+                        // Rendered only after appending: clientHeight (used to size the
+                        // virtualization window) reads 0 on a detached element.
+                        renderColumnCards(column.querySelector('.cards-container'));
                     });
+
+                    if (pendingFocusAnnotationId) {
+                        const id = pendingFocusAnnotationId;
+                        pendingFocusAnnotationId = null;
+                        // Not found when the moved card lands outside a virtualized column's
+                        // current window; the card simply keeps whatever focus it had.
+                        const cardToFocus = document.querySelector('.card[data-annotation-id="' + CSS.escape(id) + '"]');
+                        if (cardToFocus) {
+                            cardToFocus.focus();
+                        }
+                    }
                 }
 
                 function createColumn(id, name, columnAnnotations) {
+                    const wipLimit = wipLimits[id];
+                    const overWip = !!wipLimit && columnAnnotations.length > wipLimit;
+
                     const column = document.createElement('div');
-                    column.className = 'column';
+                    column.className = 'column' + (overWip ? ' column-over-wip' : '');
                     column.dataset.columnId = id;
 
                     column.innerHTML = \`
                         <div class="column-header">
                             <div class="column-title">
                                 <span>\${escapeHtml(name)}</span>
-                                <span class="column-count">\${columnAnnotations.length}</span>
+                                <span class="column-count\${overWip ? ' column-count-over' : ''}" data-action="edit-wip" data-col-id="\${escapeHtml(id)}" tabindex="0" role="button" title="\${escapeHtml(localized.setWipLimit)}">\${columnAnnotations.length}\${wipLimit ? ' / ' + wipLimit : ''}</span>
                             </div>
                             <div class="column-actions">
                                 <button class="column-action-btn" data-action="rename" data-col-id="\${escapeHtml(id)}" data-col-name="\${escapeHtml(name)}" title="\${escapeHtml(localized.rename)}">&#9999;&#65039;</button>
                                 <button class="column-action-btn" data-action="delete-col" data-col-id="\${escapeHtml(id)}" title="\${escapeHtml(localized.delete)}">&#128465;&#65039;</button>
                             </div>
                         </div>
-                        <div class="cards-container">
-                            \${columnAnnotations.length === 0 ?
-                                '<div class="empty-column">' + escapeHtml(localized.dropAnnotationsHere) + '</div>' :
-                                columnAnnotations.map(annotation => createCard(annotation)).join('')
-                            }
-                        </div>
+                        <div class="cards-container"></div>
                     \`;
                     column.querySelector('[data-action="rename"]')?.addEventListener('click', function() {
                         showRenameColumnModal(this.dataset.colId, this.dataset.colName);
@@ -833,7 +1122,71 @@ export class KanbanView {
                         deleteColumn(this.dataset.colId);
                     });
 
+                    const cardsContainer = column.querySelector('.cards-container');
+                    cardsContainer._virtualAnnotations = columnAnnotations;
+                    if (columnAnnotations.length > VIRTUALIZE_THRESHOLD) {
+                        let scrollRaf = null;
+                        cardsContainer.addEventListener('scroll', function() {
+                            if (draggedCard) return;
+                            if (scrollRaf) return;
+                            scrollRaf = requestAnimationFrame(function() {
+                                scrollRaf = null;
+                                renderColumnCards(cardsContainer);
+                            });
+                        });
+                    }
+
                     return column;
+                }
+
+                function renderColumnCards(cardsContainer) {
+                    const columnAnnotations = cardsContainer._virtualAnnotations || [];
+
+                    if (columnAnnotations.length === 0) {
+                        cardsContainer.innerHTML = '<div class="empty-column">' + escapeHtml(localized.dropAnnotationsHere) + '</div>';
+                        return;
+                    }
+
+                    if (columnAnnotations.length <= VIRTUALIZE_THRESHOLD) {
+                        cardsContainer.innerHTML = columnAnnotations.map(annotation => createCard(annotation)).join('');
+                        return;
+                    }
+
+                    const total = columnAnnotations.length;
+                    const cardHeight = Number(cardsContainer.dataset.measuredCardHeight) || ESTIMATED_CARD_HEIGHT;
+                    const viewportHeight = cardsContainer.clientHeight || 400;
+                    const visibleCount = Math.ceil(viewportHeight / cardHeight) + VIRTUALIZE_OVERSCAN * 2;
+                    const rawStart = Math.max(0, Math.floor(cardsContainer.scrollTop / cardHeight) - VIRTUALIZE_OVERSCAN);
+                    const start = Math.min(rawStart, Math.max(0, total - 1));
+                    const end = Math.min(total, start + visibleCount);
+
+                    const topSpacerHeight = start * cardHeight;
+                    const bottomSpacerHeight = (total - end) * cardHeight;
+
+                    let html = '<div class="virtual-spacer" style="height:' + topSpacerHeight + 'px"></div>';
+                    for (let i = start; i < end; i++) {
+                        html += createCard(columnAnnotations[i]);
+                    }
+                    html += '<div class="virtual-spacer" style="height:' + bottomSpacerHeight + 'px"></div>';
+
+                    cardsContainer.innerHTML = html;
+
+                    const sampleCard = cardsContainer.querySelector('.card');
+                    if (sampleCard) {
+                        const measuredHeight = sampleCard.getBoundingClientRect().height;
+                        if (measuredHeight > 0) {
+                            // + 8 accounts for .card's margin-bottom, excluded from getBoundingClientRect.
+                            cardsContainer.dataset.measuredCardHeight = String(Math.round(measuredHeight + 8));
+                        }
+                    }
+                }
+
+                function refreshVirtualizedColumns() {
+                    document.querySelectorAll('.cards-container').forEach(function(el) {
+                        if (el._virtualAnnotations && el._virtualAnnotations.length > VIRTUALIZE_THRESHOLD) {
+                            renderColumnCards(el);
+                        }
+                    });
                 }
 
                 function createCard(annotation) {
@@ -843,7 +1196,7 @@ export class KanbanView {
                     const safeSeverity = escapeHtml(annotation.severity);
 
                     return \`
-                        <div class="card" draggable="true" data-annotation-id="\${safeId}">
+                        <div class="card" draggable="true" tabindex="0" role="button" aria-grabbed="false" aria-label="\${escapeHtml(annotation.severity)}: \${escapeHtml(annotation.message)}" data-annotation-id="\${safeId}">
                             <div class="card-header">
                                 <div style="display: flex; align-items: center;">
                                     <div class="card-severity severity-\${safeSeverity}"></div>
