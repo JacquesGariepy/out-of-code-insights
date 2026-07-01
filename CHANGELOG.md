@@ -7,6 +7,28 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-01
+
+### Added
+- Kanban board: keyboard accessibility for the drag-and-drop flow — grab a
+  card with Enter/Space, choose a target column with the arrow keys, confirm
+  with Enter/Space or cancel with Escape, with `aria-live` announcements at
+  each step.
+- Kanban board: severity filter chips replacing the previous dropdown, plus
+  per-column WIP (work-in-progress) limits with a visual indicator when a
+  column exceeds its limit.
+- Kanban board: search term, severity filter, and WIP limits now persist
+  while the webview is hidden and shown again.
+- Kanban board: card rendering is now virtualized above a per-column
+  threshold, so large boards only mount the cards near the visible scroll
+  area instead of the full list.
+
+### Fixed
+- Kanban board: the column shown for an annotation is now read from
+  `KanbanColumnStore` (the store that actually persists moves) everywhere
+  the board serializes annotations, instead of a separate per-annotation
+  field that could disagree with the real persisted column.
+
 ## [1.1.1] - 2026-06-19
 
 ### Added

@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.1.1",
+    "version": "1.2.0",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
