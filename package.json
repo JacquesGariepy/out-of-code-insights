@@ -1282,7 +1282,7 @@
         "@typescript-eslint/eslint-plugin": "^5.30.0",
         "@typescript-eslint/parser": "^5.30.0",
         "@vscode/test-electron": "^2.5.2",
-        "@vscode/vsce": "^3.9.1",
+        "@vscode/vsce": "^3.9.2",
         "c8": "^11.0.0",
         "concurrently": "^10.0.3",
         "esbuild": "^0.28.1",
