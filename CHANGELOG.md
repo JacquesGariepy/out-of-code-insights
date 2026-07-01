@@ -29,6 +29,20 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   the board serializes annotations, instead of a separate per-annotation
   field that could disagree with the real persisted column.
 
+### Known issues
+- Keyboard "grabbed" state is not invalidated by an external board
+  re-render (e.g. a column deleted by another user while a card is
+  grabbed) - can result in confirming a move to a column that no longer
+  exists.
+- Clicking the WIP limit badge with the mouse does nothing - only
+  keyboard activation (Enter/Space) opens the WIP limit editor, despite
+  the tooltip suggesting a click works.
+- Search term, severity filter, and WIP limits persist only while the
+  webview is hidden and shown again - they do not survive a full panel
+  close and reopen.
+- The WIP-overage indicator counts filtered cards, not the column's real
+  total - an active search/severity filter can hide a real WIP overage.
+
 ## [1.1.1] - 2026-06-19
 
 ### Added
