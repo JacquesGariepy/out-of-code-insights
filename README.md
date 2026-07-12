@@ -1,65 +1,82 @@
-# Out-of-code Insights
+# Out-of-Code Insights
 
-[![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/JacquesGariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=JacquesGariepy.out-of-code-insights)
-[![License: MPL-2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](./LICENSE)
+> Contextual code annotations that follow your work without changing your source files.
+
+[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/jacquesgariepy.out-of-code-insights?label=Marketplace)](https://marketplace.visualstudio.com/items?itemName=jacquesgariepy.out-of-code-insights)
+[![Visual Studio Marketplace Downloads](https://img.shields.io/visual-studio-marketplace/d/jacquesgariepy.out-of-code-insights)](https://marketplace.visualstudio.com/items?itemName=jacquesgariepy.out-of-code-insights)
+[![Open VSX](https://img.shields.io/open-vsx/v/jacquesgariepy/out-of-code-insights?label=Open%20VSX)](https://open-vsx.org/extension/jacquesgariepy/out-of-code-insights)
 [![CI](https://github.com/JacquesGariepy/out-of-code-insights/actions/workflows/ci.yml/badge.svg)](https://github.com/JacquesGariepy/out-of-code-insights/actions/workflows/ci.yml)
+[![License: MPL-2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](./LICENSE)
 
-Out-of-code Insights is a Visual Studio Code extension that allows you to add annotations, comments, and notes **without modifying your source files**. It is ideal for avoiding clutter in your code with temporary comments or making the code unnecessarily heavy.
+Out-of-Code Insights adds review notes, threaded discussions, documentation,
+and workflow metadata beside your code. The source stays untouched; annotation
+data lives in `.out-of-code-insights/annotations.json`, where it can remain
+local or be versioned and shared with the team.
 
-## 🌐 Connect with Me
+**[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=jacquesgariepy.out-of-code-insights)** ·
+**[Install from Open VSX](https://open-vsx.org/extension/jacquesgariepy/out-of-code-insights)** ·
+**[Download the latest VSIX](https://github.com/JacquesGariepy/out-of-code-insights/releases/latest)** ·
+**[Read the documentation](./docs/README.md)**
 
-You can find me on these platforms:
+![Annotations panel and editor decorations](https://github.com/user-attachments/assets/beedc87b-c914-48d0-b7fa-cfe8194074f5)
 
-[![Github Badge](https://img.shields.io/badge/-0077B5?style=social&logo=github)](https://github.com/JacquesGariepy)
-[![LinkedIn Badge](https://img.shields.io/badge/-0077B5?style=social&logo=linkedin)](https://linkedin.com/in/jacquesgariepy)
-[![X Badge](https://img.shields.io/badge/-1DA1F2?style=social&logo=x)](https://X.com/jacquesgariepy)
+## Why teams use it
 
-We’d love to hear your thoughts, feedback, and ideas! Feel free to join the conversation on GitHub Discussions and connect with the community.
+| Capability                    | What it gives you                                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Non-intrusive annotations     | Review notes and TODOs on any file type without adding source comments                                       |
+| Resilient tracking            | Annotations follow typing, line moves, copy/cut/paste, drag-and-drop, Undo/Redo, renames, and external edits |
+| Recovery instead of data loss | Orphaned annotations stay recoverable and can be attached to the current cursor                              |
+| One workspace for discussion  | Threads, tags, severities, filters, pagination, review mode, and Kanban                                      |
+| Native VS Code experience     | Gutter decorations, CodeLens, Comments API threads, Tree View, commands, and keyboard access                 |
+| Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-[![GitHub Discussions](https://img.shields.io/github/discussions/JacquesGariepy/out-of-code-insights)](https://github.com/JacquesGariepy/out-of-code-insights/discussions)
+## What is new in 1.3.0
 
-[![GitHub Discussions](https://img.shields.io/badge/buy_me_a_coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/jacquesgarx)
+- **Re-anchor Annotation to Current Cursor** repairs an orphaned annotation,
+  including across files, while preserving its identity and discussion.
+- **Show Annotation Tracking Diagnostics** opens a local JSON report containing
+  anchor decisions, hashes, offsets, and issue codes without copying source text.
+- The annotations panel offers persisted **Comfortable** and **Compact** density
+  modes.
+- Multi-line cut/paste no longer leaves a stale original plus a duplicate at
+  the destination when the editor fragments the deletion event.
+- The Marketplace package is reduced to the runtime files actually needed by
+  the extension.
 
-## Why use Out-of-code Insights?
+See the [1.3.0 release notes](./docs/CHANGELOG-1.3.0.md) or the
+[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.3.0).
 
-- **Non-intrusive annotations**: Add comments without altering the source code, keeping your files clean and organized.
-- **Optimized for code reviews**: Facilitate team communication by adding comments directly on the relevant lines.
-- **Avoid code clutter**: Maintain clarity and readability of your code by avoiding unnecessary comments.
-- **Annotations on all file types**: Add annotations to any file in your project, including source code, Markdown, JSON, XML, text, etc.
-- **Intelligent change tracking**: Annotations automatically follow file changes as long as edits are made within Visual Studio Code.
-- **Personalization**: Adapt the extension to your needs with various configuration options.
-- **Threaded discussions**: Reply to annotations to create threads and enhance collaboration.
-- **Advanced annotation management**: Move, filter, sort, and navigate annotations with ease.
-- **Batch Edit Annotations**: Modify multiple annotations simultaneously to save time and effort.
-- **Keyword Search**: Quickly find annotations by searching for specific keywords.
-- **Filter by Severity**: Categorize and view annotations based on their severity levels.
-- **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
-- **Show AI Suggestion**: Display simulated suggestions from AI.
-- **Auto-Resolve Stale Annotations**: Automatically handle annotations that are no longer relevant or outdated.
+## Start in 60 seconds
 
-[![Watch the video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw) (v1.0.3)
+1. Install the extension and open a folder in VS Code.
+2. Place the cursor on any line and press `Ctrl+Alt+A` (`Cmd+Alt+A` on macOS).
+3. Enter a note. It appears in the editor and in the Out-of-Code Insights view.
+4. Open the annotations panel to filter, discuss, prioritize, or move the item.
+5. Commit `.out-of-code-insights/annotations.json` only when you want to share
+   annotations with the repository.
 
-![Annotations](https://github.com/user-attachments/assets/beedc87b-c914-48d0-b7fa-cfe8194074f5)
+If an annotation loses its target, place the cursor on the intended line and
+run **Re-anchor Annotation to Current Cursor**. For troubleshooting, run
+**Show Annotation Tracking Diagnostics** and inspect the generated local report.
 
-![feature_add](https://github.com/user-attachments/assets/ea4d463e-a2d5-4eb4-85c8-04746533213f)
+## Feature map
 
-## Key Features
+- **Capture:** context menu, shortcut, CodeLens, native comment gutter, templates,
+  imported TODO/FIXME comments, or AI suggestions.
+- **Organize:** tags, severity, pinning, search, filters, pagination, compact
+  density, batch editing, Review Mode, and Kanban.
+- **Connect:** threaded replies, cross-file links, navigation history, team sync,
+  and a companion [desktop application](https://github.com/JacquesGariepy/out-of-code-insights-desktop).
+- **Automate:** MCP server, AI-agent instructions, documentation generation,
+  workspace comment import, and multi-provider AI profiles.
+- **Recover:** automatic movement tracking, orphan preservation, manual
+  re-anchoring, and privacy-preserving diagnostics.
 
-- **Add annotations**: Insert comments or notes on specific lines **without modifying the source file**, regardless of file type.
-- **View and manage annotations**: See all your annotations in a dedicated panel, modify, delete, or reply to them.
-- **Toggle annotation visibility**: Enable or disable annotation visibility in the editor.
-- **Move annotations**: Drag annotations directly within the editor. Annotations follow their assigned lines; simply position above or below a line to move it.
-- **CodeLens integration**: Manage annotations directly from the editor with CodeLens integration.
-- **Filter and sort annotations**: Filter and sort annotations in the panel for efficient management.
-- **Export and import**: Export your annotations to share or back them up, and import them into other projects.
-- **Batch Edit Annotations**: Modify multiple annotations at once to streamline your workflow.
-- **Keyword Search**: Quickly locate annotations by searching for specific terms or phrases.
-- **Filter by Severity**: Organize annotations based on their severity to prioritize tasks.
-- **Set Annotation Severity**: Assign severity levels (info, warning, error) to your annotations.
-- **Edit Annotation Tags**: Add or modify tags on annotations to better categorize them.
-- **Show AI Suggestion**: View simulated suggestions from AI to enhance your annotations.
-- **Auto-Resolve Stale Annotations**: Automatically resolve annotations that are no longer relevant, keeping your workspace clean.
-- **Navigation Stack**: Quickly jump back and forth between recently viewed annotations.
+[![Watch the original overview video](https://github.com/user-attachments/assets/16cf301b-7eb1-480d-a616-ba4fae09a16f)](https://youtu.be/H6xjResrJzw)
+
+> The overview video demonstrates version 1.0.3. The current interface and
+> tracking engine include the newer capabilities documented below.
 
 ## ✨ Features
 
@@ -94,13 +111,44 @@ Systematically review annotations with advanced filtering and tracking:
 - **Progress tracking**: Visual progress bar shows reviewed vs. total annotations
 - **Review statistics**: Get insights on annotation distribution and completion
 
+### 🎯 Resilient Tracking and Recovery
+
+Annotations are anchored by UTF-16 ranges, normalized line hashes, and nearby
+context instead of relying on a line number alone.
+
+- Follow common editor gestures: typing, formatting, line moves,
+  copy/cut/paste, drag-and-drop, Undo/Redo, file rename, and external rewrites.
+- Preserve the same annotation identity during moves, including threaded
+  replies, tags, severity, and links.
+- Keep unresolved annotations as recoverable orphans instead of silently
+  deleting them.
+- Re-anchor an annotation to the current cursor from the Tree View, annotations
+  panel, or Command Palette.
+- Generate a local tracking report when an anchor decision needs investigation;
+  source text is intentionally excluded.
+
+### 💬 Native Editor Comments
+
+Annotations render as native VS Code comment threads (Comments API):
+
+- **Inline gutter "+"**: create a new annotation directly from the comment gutter at any line
+- **Threaded replies**: replies typed in the comment widget are appended to the annotation's discussion thread
+- **Thread actions**: resolve, unresolve, or delete an annotation from its comment thread title bar
+- **Severity & tags at a glance**: the thread label shows the annotation's severity and tags
+- Controlled by `annotation.commentsView` (enabled by default; changes take
+  effect after the next window reload)
+
 ### 📋 Kanban-style Workspace
 
 Manage annotations visually with a dedicated Kanban board:
 ![Kanban](https://github.com/user-attachments/assets/499bbbec-f773-47c8-9c5a-84f3ad5bb079)
 
 - **Visual organization**: Drag & drop annotations between customizable columns (To Do, In Progress, Review, Done)
-- **Smart filtering**: Filter by author, severity, tags, or file
+- **Keyboard accessible drag-and-drop**: grab a card with Enter/Space, move it with the arrow keys, confirm with Enter/Space or cancel with Escape; each step is announced via `aria-live`
+- **Severity filter chips**: filter cards by severity with quick-toggle chips
+- **WIP limits**: set a per-column work-in-progress limit with a visual indicator when a column exceeds it
+- **Virtualized rendering**: large boards only mount the cards near the visible scroll area, above a per-column threshold
+- **Persisted view state**: search term, severity filter, and WIP limits survive hiding and reshowing the board
 - **Intelligent deletion**: Choose to remove from kanban or delete completely
 - **Custom columns**: Create workflow-specific columns for your team
 - **Quick navigation**: Double-click cards to jump to code location
@@ -128,15 +176,16 @@ Attach and execute code directly from annotations:
 
 ## Installation
 
-1. **Open Visual Studio Code**.
-2. **Access the Extensions Manager**:
-    - Click the Extensions icon in the sidebar.
-    - Or use the shortcut `Ctrl+Shift+X` (`Cmd+Shift+X` on Mac).
-3. **Search for the extension**:
-    - Type **"Out-of-code Insights"** in the search bar.
-4. **Install the extension**:
-    - Click **"Install"** next to the appropriate result.
-5. **Restart Visual Studio Code** (if required).
+- **VS Code Marketplace:** open the
+  [extension page](https://marketplace.visualstudio.com/items?itemName=jacquesgariepy.out-of-code-insights)
+  and select **Install**, or search for `Out-of-Code Insights` from
+  `Ctrl+Shift+X` (`Cmd+Shift+X` on macOS).
+- **Open VSX:** install from the
+  [Open VSX page](https://open-vsx.org/extension/jacquesgariepy/out-of-code-insights)
+  in compatible editors.
+- **Manual VSIX:** download the asset from the
+  [latest GitHub release](https://github.com/JacquesGariepy/out-of-code-insights/releases/latest),
+  then run **Extensions: Install from VSIX...**.
 
 ## Quick Start Guide
 
@@ -193,14 +242,19 @@ Attach and execute code directly from annotations:
     - Or click the annotations icon in the status bar.
 - **Toggle annotation visibility**:
     - Use the **`Toggle Annotation Visibility`** command to make annotations visible or hidden in the editor.
-    - Shortcut: `Ctrl+Alt+T` (Windows/Linux) or `Cmd+Alt+T` (Mac).
+    - Shortcut: `Ctrl+Alt+T` on every platform.
+- **Choose panel density**:
+    - Select **Comfortable** for more breathing room or **Compact** for large
+      annotation sets. The choice is retained when the panel is reopened.
 
 ### Moving Annotations
 
-- **Move an annotation within the editor**:
-    - Position your cursor on the line above or below the annotation.
-    - Use the **`Move Annotation Up`** or **`Move Annotation Down`** commands available in the context menu or annotations panel.
-    - Annotations automatically follow their lines when you modify code within Visual Studio Code.
+- Drag or move code normally in the editor; attached annotations follow the
+  affected lines and blocks.
+- Use **Move Annotation Up** or **Move Annotation Down** for a deliberate
+  one-line adjustment.
+- To recover an orphan or deliberately move it elsewhere, place the cursor on
+  the destination and run **Re-anchor Annotation to Current Cursor**.
 
 ### Replying to an Annotation
 
@@ -214,6 +268,9 @@ Attach and execute code directly from annotations:
     - Use the filtering options in the annotations panel to display annotations by file or author.
 - **Sort annotations**:
     - Sort annotations by date, number of comments, etc., for efficient management.
+- **Paginate large lists**:
+    - The panel renders one page of annotations at a time, with first/previous/next/last controls, a page indicator, and a per-page selector (10/20/50/100/All, default 20).
+    - Changing the sort or filter resets to the first page; the file filter still spans every page.
 
 ### Batch Editing Annotations
 
@@ -262,7 +319,8 @@ Out-of-Code Insights now supports **all major LLM providers**, giving you flexib
 1. Open VS Code Settings (`Ctrl+,`)
 2. Search for "annotation.provider"
 3. Select your preferred LLM provider
-4. Add your API key in `annotation.llm.apiKeys.[provider]`
+4. Run **Update AI Provider API Key**; the key is saved in VS Code Secret
+   Storage rather than written to the repository
 
 ### Custom AI Profiles
 
@@ -356,7 +414,7 @@ This feature allows you to create multiple types of items in a single operation 
 
 ### MCP Server
 
-The repository ships a standalone MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server in [`mcp-server/`](./mcp-server) that lets AI agents work with your annotations **outside VS Code**: list/get/add/update/remove/link annotations, a `code_graph` projection of annotation links, and `generate_docs` — all against the same `annotations.json` the extension uses, without ever modifying source files. While VS Code is open, external changes are reloaded live by the extension's file watcher.
+The repository ships a standalone MCP ([Model Context Protocol](https://modelcontextprotocol.io)) server in [`mcp-server/`](./mcp-server) that lets AI agents work with your annotations **outside VS Code**: list/get/add/update/remove/link annotations, a `code_graph` projection of annotation links, and `generate_docs`, all against the same `annotations.json` the extension uses, without ever modifying source files. While VS Code is open, external changes are reloaded live by the extension's file watcher.
 
 Quickstart:
 
@@ -370,12 +428,14 @@ claude mcp add out-of-code-insights -- node /path/to/out-of-code-insights/mcp-se
 
 Or run the **MCP Server Setup** command in VS Code: it copies a ready-to-paste configuration (Claude Code command or `claude_desktop_config.json` snippet) with the paths pre-filled. Full tool reference: [mcp-server/README.md](./mcp-server/README.md). Tagged releases (`mcp-v*`) are published to npm; the version always comes from `mcp-server/package.json`.
 
+The **Set Up AI Agent Instructions** command upserts a marked instruction block into both `CLAUDE.md` and `AGENTS.md` at the workspace root (creating them if absent), telling AI agents to annotate code through these MCP tools instead of writing comments into source files, to tag documentation annotations with `doc:module` / `doc:class` / `doc:function` / `doc:example` / `doc:guide`, and where the generated documentation lives. Re-running the command replaces the block in place; it never duplicates it.
+
 ### Pro licensing
 
-Everything is **free by default** — gating only activates for the feature ids you list. The flow:
+Everything is **free by default**: gating only activates for the feature ids you list. The flow:
 
 - **Enter License Key (Pro)** command stores the key in VS Code Secret Storage and validates it against `annotation.pro.licenseServerUrl` (`POST /v1/validate` → `{ valid, entitlements, expiresAt? }`).
-- `annotation.pro.gatedFeatures` — the feature ids that actually require an entitlement (e.g. `sync`, `docs.watch`); anything not listed stays free. Entitlements are cached with an offline grace period (`annotation.pro.offlineGraceDays`, default 7 days).
+- `annotation.pro.gatedFeatures`: the feature ids that actually require an entitlement (e.g. `sync`, `docs.watch`); anything not listed stays free. Entitlements are cached with an offline grace period (`annotation.pro.offlineGraceDays`, default 7 days).
 - Self-hosting: the [`license-server/`](./license-server) package implements the contract with offline-verifiable HMAC keys, a CLI to issue/revoke keys, the cloud-sync API, an optional Stripe webhook that issues keys on completed checkouts, and a Dockerfile.
 
 ### Cloud sync
@@ -384,7 +444,7 @@ Share annotations across a team through the license server: set `annotation.sync
 
 ### Comment import & styling
 
-- **Import Code Comments as Annotations** (active file) and **Import Code Comments from Workspace** turn better-comments-style markers (`// !`, `// ?`, `// *`, `TODO`, `FIXME`, `HACK` — also `#`, `--`, `<!-- -->` syntaxes) into tagged, severity-mapped annotations; reruns never duplicate.
+- **Import Code Comments as Annotations** (active file) and **Import Code Comments from Workspace** turn better-comments-style markers (`// !`, `// ?`, `// *`, `TODO`, `FIXME`, `HACK`, also `#`, `--`, `<!-- -->` syntaxes) into tagged, severity-mapped annotations; reruns never duplicate.
 - `annotation.severityStyles` / `annotation.tagStyles` map severities and tags to decoration colors (inline text, background, border, gutter visibility).
 - **Edit Annotation Message (Markdown)** opens a multiline editor panel; the inline editor decoration shows only the first line of the message.
 - `annotation.watchExternalChanges` (default on) reloads annotations changed on disk by external tools; `annotation.docs.watch` regenerates the documentation on every annotation change.
@@ -393,7 +453,9 @@ Share annotations across a team through the license server: set `annotation.sync
 
 The **Generate Annotation Documentation** command builds a DocFX-compatible Markdown site from your annotations: overview with counts, by-type and by-file pages with `file:line` links, plus authored API pages assembled from `doc:*` tags (`doc:module`, `doc:class`, `doc:function`, `doc:example`, `doc:guide`) with `[[Title]]` wiki-links. Output and structure are fully configurable through the `annotation.docs.*` settings (default output: `docs/annotations`).
 
-**How to write documentation annotations** — roles, message format (titles, GFM, math, Mermaid, wiki-links), display, and an end-to-end example: see [docs/documentation-authoring.md](docs/documentation-authoring.md).
+The **Add Documentation Annotation** command pre-tags a new annotation with the role you pick (`doc:module`, `doc:class`, `doc:function`/`doc:method`, `doc:example`, or `doc:guide`) so it is picked up by the generator.
+
+**How to write documentation annotations**: roles, message format (titles, GFM, math, Mermaid, wiki-links), display, and an end-to-end example. See [docs/documentation-authoring.md](docs/documentation-authoring.md).
 
 ## 📋 Key Commands
 
@@ -440,31 +502,33 @@ For the full command reference grouped by feature, see
 
 ### Annotation lifecycle
 
-| Command ID                 | Title                          | Default keybinding |
-| -------------------------- | ------------------------------ | ------------------ |
-| `annotations.add`          | Add Annotation                 | `Ctrl+Alt+A`       |
-| `annotations.edit`         | Edit Annotation                | `Ctrl+Alt+E`       |
-| `annotations.delete`       | Delete Annotation              | `Ctrl+Alt+D`       |
-| `annotations.reply`        | Reply to Annotation            | -                  |
-| `annotations.clearAll`     | Clear All Annotations          | -                  |
-| `annotations.pinToggle`    | Toggle Annotation Pin          | -                  |
-| `annotations.setSeverity`  | Set Annotation Severity        | -                  |
-| `annotations.markAsViewed` | Mark Annotation as Viewed      | -                  |
-| `annotations.batchEdit`    | Batch Edit Annotations in File | -                  |
+| Command ID                     | Title                          | Default keybinding |
+| ------------------------------ | ------------------------------ | ------------------ |
+| `annotations.add`              | Add Annotation                 | `Ctrl+Alt+A`       |
+| `annotations.edit`             | Edit Annotation                | `Ctrl+Alt+E`       |
+| `annotations.delete`           | Delete Annotation              | `Ctrl+Alt+D`       |
+| `annotations.reply`            | Reply to Annotation            | -                  |
+| `annotations.clearAll`         | Clear All Annotations          | -                  |
+| `annotations.pinToggle`        | Toggle Annotation Pin          | -                  |
+| `annotations.setSeverity`      | Set Annotation Severity        | -                  |
+| `annotations.markAsViewed`     | Mark Annotation as Viewed      | -                  |
+| `annotations.batchEdit`        | Batch Edit Annotations in File | -                  |
+| `annotations.reanchorToCursor` | Re-anchor to Current Cursor    | -                  |
 
 ### Display & navigation
 
-| Command ID                       | Title                      | Default keybinding |
-| -------------------------------- | -------------------------- | ------------------ |
-| `annotations.show`               | Show Annotations Panel     | `Ctrl+Alt+S`       |
-| `annotations.toggleDisplay`      | Toggle Annotations Display | `Ctrl+Alt+T`       |
-| `annotations.navigate`           | Navigate to Annotation     | -                  |
-| `annotations.moveUp`             | Move Annotation Up         | -                  |
-| `annotations.moveDown`           | Move Annotation Down       | -                  |
-| `annotations.nextAnnotation`     | Next Annotation            | `F8`               |
-| `annotations.previousAnnotation` | Previous Annotation        | `Shift+F8`         |
-| `stack.back`                     | Navigation Stack - Back    | `Alt+Left`         |
-| `stack.forward`                  | Navigation Stack - Forward | `Alt+Right`        |
+| Command ID                            | Title                                | Default keybinding |
+| ------------------------------------- | ------------------------------------ | ------------------ |
+| `annotations.show`                    | Show Annotations Panel               | `Ctrl+Alt+S`       |
+| `annotations.toggleDisplay`           | Toggle Annotations Display           | `Ctrl+Alt+T`       |
+| `annotations.navigate`                | Navigate to Annotation               | -                  |
+| `annotations.moveUp`                  | Move Annotation Up                   | -                  |
+| `annotations.moveDown`                | Move Annotation Down                 | -                  |
+| `annotations.showTrackingDiagnostics` | Show Annotation Tracking Diagnostics | -                  |
+| `annotations.nextAnnotation`          | Next Annotation                      | `F8`               |
+| `annotations.previousAnnotation`      | Previous Annotation                  | `Shift+F8`         |
+| `stack.back`                          | Navigation Stack - Back              | `Alt+Left`         |
+| `stack.forward`                       | Navigation Stack - Forward           | `Alt+Right`        |
 
 ### Search
 
@@ -539,8 +603,6 @@ For the full command reference grouped by feature, see
 | `annotations.batchCreateMixed`         | Batch Create Mixed Items (templates / links / snippets) | -                  |
 | `annotations.manageAIProfiles`         | AI: Manage Custom Profiles                              | -                  |
 | `annotations.updateApiKey`             | Update AI Provider API Key                              | -                  |
-| `annotations.updateOpenAIKey`          | Update OpenAI Key _(legacy)_                            | -                  |
-| `annotations.resetOpenAIKey`           | Reset OpenAI Key _(legacy)_                             | -                  |
 
 For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./docs/ai-features.md).
 
@@ -710,22 +772,24 @@ For an end-to-end walkthrough of every AI command, see [docs/ai-features.md](./d
 ### Important Notes
 
 - **File modification**:
-    - To ensure annotations track file changes correctly, always modify files **within Visual Studio Code**. External modifications may disrupt annotation tracking.
+    - Edits made in VS Code are tracked live. If a file changes externally
+      (for example after `git pull` or a branch switch), reopening it triggers
+      hash-and-context re-anchoring. Unresolved items remain recoverable.
 - **Compatibility with all file types**:
     - You can add annotations to **any file in your project**, including source code, Markdown, JSON, XML, text, etc.
 - **Annotation storage**:
     - Annotations are stored in a JSON file named **`annotations.json`**, located by default in the **`.out-of-code-insights`** directory of your project.
     - **Include this file in your version control repository** if you want to preserve annotation history and share comments with your team.
-- **OpenAI API Key Management**:
-    - The extension uses your OpenAI API key for AI-powered features.
-    - The key is securely stored using VS Code's Secret Storage, ensuring that your key is protected and only accessible by this extension.
-    - **To remove or update your OpenAI API key**:
+- **AI provider key management**:
+    - AI features are optional. Keys for supported providers are stored using
+      VS Code Secret Storage and are accessible only to this extension.
+    - **To remove or update stored keys**:
         1. **Open the Command Palette**:
             - Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (Mac).
         2. **Type**: `Developer: Clear Extension Secret Storage`.
         3. **Select Your Extension**:
             - In the list that appears, select **Out-of-Code Insights**.
-        - This will clear all secrets stored by the extension, including your OpenAI API key.
+        - This clears all provider keys and other secrets stored by the extension.
 
 ## Configuration
 
@@ -738,10 +802,11 @@ Customize the extension according to your needs by modifying the available setti
     - Customize annotation colors, highlight background, and comment borders for both light and dark themes.
 - **Enable CodeLens** (`annotation.codelens.enable`): Toggles CodeLens integration.
 - **Show commands in CodeLens** (`annotation.codelens.showCommands`): Toggles command display in CodeLens.
-- **Batch Edit Annotations** (`annotation.batchEdit`): Enable or disable the batch editing feature.
-- **Keyword Search** (`annotation.keywordSearch`): Configure settings for keyword-based annotation searching.
-- **Filter by Severity** (`annotation.filterBySeverity`): Set preferences for severity-based annotation filtering.
 - **Default Severity** (`annotation.defaultSeverity`): Choose the severity level automatically applied to new annotations.
+- **Native comment threads** (`annotation.commentsView`): Enables the VS Code Comments API integration.
+- **Cut recovery window** (`annotation.cutRecoveryWindowSeconds`): Controls how long a cut annotation waits for a matching paste.
+- **External store watcher** (`annotation.watchExternalChanges`): Reloads annotations written by MCP or another process.
+- **Documentation watch** (`annotation.docs.watch`): Regenerates annotation documentation after changes.
 - **Advanced settings**:
     - **Change detection delay** (`annotation.debounceDelay`)
     - **Maximum annotations per file** (`annotation.maxAnnotationsPerFile`)
@@ -759,9 +824,9 @@ You can customize Out-of-Code Insights using the following settings (available i
 
 - **annotation.provider**: Select the LLM provider to use for AI-powered features. Supported values: `openai`, `anthropic`, `azure`, `cerebras`, `deepseek`, `google`, `groq`, `meta`, `mistralai`, `ollama`, `openrouter`, `togetherai`, `xai`.
 - **annotation.model**: Specify the model to use for the selected provider (e.g., `gpt-4o-mini`, `claude-3-opus`, etc.).
-- **annotation.llm.apiKeys**: Object containing API keys for all supported LLM providers. Example:
+- **llm.apiKeys**: Object containing API keys for all supported LLM providers. Example:
     ```json
-    "annotation.llm.apiKeys": {
+    "llm.apiKeys": {
       "openai": "sk-...",
       "anthropic": "sk-ant-...",
       "azure": "...",
@@ -823,61 +888,24 @@ To use AI-powered annotation generation, you can choose from multiple LLM provid
 
 ## Keyboard Shortcuts
 
-| **Action**                        | **Shortcut (Windows/Linux)** | **Shortcut (Mac)** |
-| --------------------------------- | ---------------------------- | ------------------ |
-| Add an annotation                 | `Ctrl+Alt+A`                 | `Cmd+Alt+A`        |
-| Edit an annotation                | `Ctrl+Alt+E`                 | `Cmd+Alt+E`        |
-| Delete an annotation              | `Ctrl+Alt+D`                 | `Cmd+Alt+D`        |
-| Show annotations panel            | `Ctrl+Alt+S`                 | `Cmd+Alt+S`        |
-| Toggle annotation visibility      | `Ctrl+Alt+T`                 | `Cmd+Alt+T`        |
-| Batch Edit Annotations            | `Ctrl+Alt+B`                 | `Cmd+Alt+B`        |
-| Keyword Search                    | `Ctrl+Alt+K`                 | `Cmd+Alt+K`        |
-| Filter by Severity                | `Ctrl+Alt+F`                 | `Cmd+Alt+F`        |
-| Show AI Suggestion                | `Ctrl+Alt+G`                 | `Cmd+Alt+G`        |
-| Auto-Resolve Stale Annotations    | `Ctrl+Alt+R`                 | `Cmd+Alt+R`        |
-| **Advanced Features**             |                              |                    |
-| Create Link to Annotation         | `Ctrl+Alt+L`                 | `Cmd+Alt+L`        |
-| Apply Annotation Template         | `Ctrl+Shift+Alt+T`           | `Cmd+Shift+Alt+T`  |
-| Show Kanban Board                 | `Ctrl+Alt+K`                 | `Cmd+Alt+K`        |
-| Next Annotation (Review Mode)     | `F8`                         | `F8`               |
-| Previous Annotation (Review Mode) | `Shift+F8`                   | `Shift+F8`         |
+| Action                          | Windows/Linux        | macOS                |
+| ------------------------------- | -------------------- | -------------------- |
+| Add annotation                  | `Ctrl+Alt+A`         | `Cmd+Alt+A`          |
+| Edit annotation                 | `Ctrl+Alt+E`         | `Cmd+Alt+E`          |
+| Delete annotation               | `Ctrl+Alt+D`         | `Cmd+Alt+D`          |
+| Show annotations panel          | `Ctrl+Alt+S`         | `Cmd+Alt+S`          |
+| Toggle annotation visibility    | `Ctrl+Alt+T`         | `Ctrl+Alt+T`         |
+| AI Suggest                      | `Ctrl+Alt+I`         | `Cmd+Alt+I`          |
+| Navigate to linked annotation   | `Ctrl+Alt+L`         | `Cmd+Alt+L`          |
+| Apply annotation template       | `Ctrl+Shift+Alt+T`   | `Cmd+Shift+Alt+T`    |
+| Show Kanban board               | `Ctrl+Alt+K`         | `Cmd+Alt+K`          |
+| Navigation stack back / forward | `Alt+Left` / `Right` | `Alt+Left` / `Right` |
+| Next / previous in Review Mode  | `F8` / `Shift+F8`    | `F8` / `Shift+F8`    |
 
-Below is the complete list of commands (available via **Ctrl+Shift+P**) in a tabular format, suitable for inclusion in your README. Each command can be run by opening the Command Palette (**Ctrl+Shift+P**) and typing its name:
-
-| **Action**                        | **Command**                      | **Description**                                                            |
-| --------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
-| Add Annotation                    | `annotations.add`                | Adds a new annotation to the current line of code.                         |
-| Reply to Annotation               | `annotations.reply`              | Adds a reply/comment to an existing annotation.                            |
-| Clear All Annotations             | `annotations.clearAll`           | Removes all annotations from the project.                                  |
-| Delete Annotation                 | `annotations.delete`             | Deletes the annotation on the current line.                                |
-| Edit Annotation                   | `annotations.edit`               | Edits the annotation on the current line.                                  |
-| Toggle Annotations Display        | `annotations.toggleDisplay`      | Shows or hides all annotations in the editor.                              |
-| Navigate to Annotation            | `annotations.navigate`           | Jumps directly to the specified annotation.                                |
-| Export Annotations to JSON        | `annotations.exportJSON`         | Exports all annotations to a JSON file.                                    |
-| Import Annotations from JSON      | `annotations.importJSON`         | Imports annotations from a JSON file.                                      |
-| Toggle Annotation Pin             | `annotations.pinToggle`          | Pins or unpins the annotation at the current line.                         |
-| Batch Edit Annotations in File    | `annotations.batchEdit`          | Updates all annotations within the current file at once.                   |
-| Keyword Search in Annotations     | `annotations.keywordSearch`      | Searches annotations by a keyword.                                         |
-| AI Suggest Annotation             | `annotations.aiSuggest`          | Requests an AI-generated annotation for the current line of code.          |
-| Move Annotation Up                | `annotations.moveUp`             | Moves the annotation on the current line up by one line.                   |
-| Move Annotation Down              | `annotations.moveDown`           | Moves the annotation on the current line down by one line.                 |
-| Show Annotations Panel            | `annotations.show`               | Opens the annotations panel to view and manage all annotations.            |
-| Update OpenAI Key                 | `annotations.updateOpenAIKey`    | Prompts you to enter a new OpenAI API key.                                 |
-| Reset OpenAI Key                  | `annotations.resetOpenAIKey`     | Clears the stored OpenAI API key, requiring a new key on the next AI call. |
-| **Advanced Features**             |                                  |                                                                            |
-| Create Link to Another Annotation | `annotations.createLink`         | Creates a relationship link between two annotations across files.          |
-| Navigate to Linked Annotation     | `annotations.navigateToLinked`   | Navigates to annotations linked to the current one.                        |
-| Show All Links                    | `annotations.showLinks`          | Opens interactive visualization of all annotation links.                   |
-| Apply Annotation Template         | `annotations.applyTemplate`      | Applies a pre-built or custom template to create structured annotations.   |
-| Create Annotation Template        | `annotations.createTemplate`     | Creates a new custom annotation template with variables.                   |
-| Manage Templates                  | `annotations.manageTemplates`    | Opens template management interface.                                       |
-| Start Review Mode                 | `annotations.startReview`        | Begins systematic review of annotations with filtering options.            |
-| Stop Review Mode                  | `annotations.stopReview`         | Ends the current review session and shows statistics.                      |
-| Next Annotation                   | `annotations.nextAnnotation`     | Navigates to the next annotation in review mode.                           |
-| Previous Annotation               | `annotations.previousAnnotation` | Navigates to the previous annotation in review mode.                       |
-| Show Kanban Board                 | `annotations.showKanban`         | Opens the visual Kanban board for annotation management.                   |
-| Add Code Snippet to Annotation    | `annotations.addSnippet`         | Attaches an executable code snippet to an annotation.                      |
-| Apply Code Snippet                | `annotations.applySnippet`       | Executes and applies a code snippet from an annotation.                    |
+For every command ID and current keybinding, use the
+[command reference above](#-command-reference) or
+[`docs/commands.md`](./docs/commands.md). Keeping one canonical table prevents
+the README from drifting away from the extension manifest.
 
 ## Additional Features
 
@@ -945,6 +973,15 @@ These features enhance annotation management by providing an overview and manage
 - **Verify file path**: Ensure annotations.json is in the correct location (`.out-of-code-insights/` by default)
 - **Restart VS Code**: Sometimes a restart is needed after installation
 
+#### "An annotation is orphaned or points to the wrong line"
+
+1. Place the cursor on the intended destination line.
+2. Run **Re-anchor Annotation to Current Cursor** and select the annotation.
+3. If the cause is unclear, run **Show Annotation Tracking Diagnostics**.
+4. Check the report for `line-hash-mismatch`, `offset-out-of-document`, or
+   `awaiting-paste`. The report contains no source text and is safe to inspect
+   locally before sharing.
+
 #### "Template variables not working"
 
 - **Use correct syntax**: Variables should be `{{variableName}}` with double curly braces
@@ -990,10 +1027,15 @@ These features enhance annotation management by providing an overview and manage
 
 ## Known Issues
 
-- **`AnnotationManager` God Object** - the core class is currently ~3,450 lines and concentrates 13 responsibilities. A decomposition into focused services is on the v2 roadmap (tracked as a `good first issue (architecture)`). Functionality is unaffected; the code is harder to navigate for new contributors.
-- **HTML inline in webviews** - three webviews embed HTML/CSS/JS inside TypeScript template literals, which prevents IDE syntax highlighting and complicates debugging. Extraction to standalone files is planned.
-- **No automated UI tests yet** - the test suite covers integration smoke paths only. Exhaustive UI test coverage is a backlog item.
-- **`npm install` reports transitive vulnerabilities** - these come from third-party transitive dependencies (notably in dev tooling). They do not affect runtime; we track upstream fixes and run `npm audit` regularly.
+- **Transitional lifecycle architecture:** the transactional `AnnotationStore`
+  owns persistence while a legacy manager still serves a few UI and AI paths.
+  Retiring that bridge remains an architectural priority.
+- **Inline webview assets:** some panels still embed HTML, CSS, and JavaScript
+  in TypeScript template strings. Moving them to independently testable assets
+  is planned.
+- **Visual regression coverage:** the suite exercises hundreds of Node and
+  Electron integration cases, but exhaustive screenshot-based UI comparison is
+  not yet automated.
 
 If you hit any other issue, please [open a GitHub Issue](https://github.com/JacquesGariepy/out-of-code-insights/issues) using the bug report template.
 
@@ -1015,6 +1057,18 @@ In-depth documentation lives in [`docs/`](./docs/README.md):
 - [**documentation-authoring.md**](./docs/documentation-authoring.md): writing documentation from annotations.
 - [**manual-test-guide.md**](./docs/manual-test-guide.md): per-version manual test matrix.
 
+## Community and support
+
+[GitHub Discussions](https://github.com/JacquesGariepy/out-of-code-insights/discussions)
+is the best place for questions, workflows, and feature ideas. Use
+[GitHub Issues](https://github.com/JacquesGariepy/out-of-code-insights/issues)
+for reproducible bugs and enhancement requests.
+
+[![GitHub](https://img.shields.io/badge/GitHub-JacquesGariepy-181717?logo=github)](https://github.com/JacquesGariepy)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Jacques%20Gari%C3%A9py-0A66C2?logo=linkedin)](https://linkedin.com/in/jacquesgariepy)
+[![X](https://img.shields.io/badge/X-@jacquesgariepy-000000?logo=x)](https://x.com/jacquesgariepy)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-Support-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/jacquesgarx)
+
 ## Contribution
 
 Contributions are welcome! Read [CONTRIBUTING.md](./CONTRIBUTING.md) for the development setup, build/test workflow, code style rules, and pull request process. Security disclosures: see [SECURITY.md](./SECURITY.md). Community standards: [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
@@ -1030,13 +1084,3 @@ By contributing to this project you agree that your contributions will be licens
 The icon assets from `@vscode/codicons` are licensed under
 [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) (Microsoft Corporation).
 See [NOTICE](./NOTICE) for the full third-party attribution list.
-
-## Conclusion
-
-Out-of-code Insights helps you manage comments and notes in your projects **without cluttering your source code**. By providing a platform for non-intrusive annotations, precise change tracking, and seamless integration into your development environment, this extension is a practical tool for developers and teams looking to improve collaboration and productivity.
-
----
-
-**Try Out-of-code Insights today and streamline your workflow without overloading your code!**
-
-[<img src="media/bmc_qr.png" alt="Buy me a coffee" height="128px"/>](https://www.buymeacoffee.com/jacquesgarX)
