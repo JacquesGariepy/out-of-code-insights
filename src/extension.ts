@@ -691,7 +691,7 @@ interface ActivationLogger {
  * Build the new AnnotationStore + 4 services and wire them into the editor:
  *  - load v2 envelope from disk (or start empty), deserialize into the store.
  *  - subscribe `vscode.workspace.onDidChangeTextDocument` →
- *    `store.applyDocumentChange(event)`.
+ *    `store.applyDocumentChange(event, relativeFilePath)`.
  *  - subscribe `store.onDidChange` → `persistence.save(...)` (debounced 500ms).
  *  - register all subscriptions on `context.subscriptions`.
  */
@@ -755,7 +755,7 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
                 return;
             }
             try {
-                annotationStore.applyDocumentChange(event);
+                annotationStore.applyDocumentChange(event, vscode.workspace.asRelativePath(event.document.uri));
                 annotationStore.notifyChanged();
             } catch (err) {
                 logger.error('applyDocumentChange threw', err);

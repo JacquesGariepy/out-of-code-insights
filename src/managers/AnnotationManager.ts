@@ -2368,6 +2368,13 @@ export class AnnotationManager extends EventEmitter {
         this.applyCurrentSorting(annotations);
 
         const totalAnnotations = annotations.length;
+        const resolvedCount = annotations.filter((a) => a.resolved).length;
+        const openCount = totalAnnotations - resolvedCount;
+        const warningCount = annotations.filter((a) => a.severity === 'warning').length;
+        const errorCount = annotations.filter((a) => a.severity === 'error' || a.severity === 'critical').length;
+        const orphanedCount = annotations.filter(
+            (a) => a.resolvedAnchor?.status === 'orphaned' || a.resolvedAnchor?.status === 'stale'
+        ).length;
 
         // Pagination over the flat (sorted) list. pageSize === 0 disables paging.
         const pageSize = this.pageSize;
@@ -2402,24 +2409,74 @@ export class AnnotationManager extends EventEmitter {
                 font-family: var(--vscode-editor-font-family, sans-serif);
                 color: var(--vscode-foreground);
                 background-color: var(--vscode-editor-background);
+                background-image:
+                    radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--vscode-focusBorder) 12%, transparent), transparent 32rem),
+                    radial-gradient(circle at 88% 8%, color-mix(in srgb, var(--vscode-charts-purple) 10%, transparent), transparent 28rem);
                 margin: 0;
                 padding: 0;
             }
             .container {
-                padding: 1em;
+                width: min(1180px, calc(100% - 2em));
+                margin: 0 auto;
+                padding: 1em 0 2em;
             }
             .toolbar {
                 display: flex;
                 flex-direction: column;
-                gap: 1em;
+                gap: 0.85em;
                 margin-bottom: 1em;
-                border-bottom: 1px solid var(--vscode-editorWidget-border);
-                padding-bottom: 1em;
+                border: 1px solid var(--vscode-editorWidget-border);
+                padding: 1em;
+                border-radius: 12px;
+                background: color-mix(in srgb, var(--vscode-editorWidget-background) 90%, transparent);
+                box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14);
+                position: sticky;
+                top: 0;
+                z-index: 30;
+                backdrop-filter: blur(14px);
             }
+            .title-row { display: flex; align-items: flex-start; gap: 1em; }
             .title {
-                font-size: 1.3em;
-                font-weight: bold;
+                font-size: 1.45em;
+                font-weight: 750;
+                letter-spacing: -0.025em;
             }
+            .eyebrow {
+                color: var(--vscode-descriptionForeground);
+                font-size: 0.72em;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                margin-bottom: 0.25em;
+            }
+            .drag-hint {
+                margin-left: auto;
+                max-width: 34em;
+                color: var(--vscode-descriptionForeground);
+                font-size: 0.82em;
+                line-height: 1.45;
+                text-align: right;
+            }
+            .summary-grid {
+                display: grid;
+                grid-template-columns: repeat(5, minmax(88px, 1fr));
+                gap: 0.5em;
+            }
+            .summary-card {
+                min-width: 0;
+                border: 1px solid var(--vscode-editorWidget-border);
+                border-radius: 8px;
+                padding: 0.65em 0.75em;
+                color: var(--vscode-foreground);
+                background: color-mix(in srgb, var(--vscode-sideBar-background) 86%, transparent);
+                text-align: left;
+                cursor: pointer;
+            }
+            .summary-card:hover, .summary-card.active {
+                border-color: var(--vscode-focusBorder);
+                background: var(--vscode-list-hoverBackground);
+            }
+            .summary-value { display: block; font-size: 1.25em; font-weight: 750; }
+            .summary-label { display: block; color: var(--vscode-descriptionForeground); font-size: 0.76em; margin-top: 0.15em; }
             
             /* Inline search bar */
             .search-container {
@@ -2525,19 +2582,20 @@ export class AnnotationManager extends EventEmitter {
             .annotation-card {
                 background-color: var(--vscode-sideBar-background);
                 border: 1px solid var(--vscode-editorWidget-border);
-                border-radius: 5px;
+                border-radius: 10px;
                 margin-bottom: 1em;
-                padding: 1em;
-                transition: all 0.3s ease;
+                padding: 1em 1.1em;
+                transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease, box-shadow 0.16s ease;
                 cursor: pointer;
                 position: relative;
                 scroll-margin-top: 20px;
             }
             .annotation-card:hover {
                 background-color: var(--vscode-list-hoverBackground);
-                transform: scale(1.01);
-                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                transform: translateY(-1px);
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
             }
+            .annotation-card:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
             
             /* Highlight enhancements during search */
             .annotation-card.highlight {
@@ -2744,12 +2802,40 @@ export class AnnotationManager extends EventEmitter {
                     justify-content: center;
                 }
             }
+            @media (max-width: 720px) {
+                .container { width: min(100% - 1em, 1180px); }
+                .toolbar { position: static; padding: 0.75em; }
+                .title-row { flex-direction: column; }
+                .drag-hint { margin-left: 0; text-align: left; }
+                .summary-grid { grid-template-columns: repeat(2, 1fr); }
+                .search-container { align-items: stretch; flex-wrap: wrap; }
+                .search-input { flex-basis: 100%; }
+            }
+            @media (prefers-reduced-motion: reduce) {
+                *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+            }
         `;
 
         // Improved search bar and filters
         const searchAndFilters = `
             <div class="toolbar">
-                <div class="title">${loc('annotationsTitle', 'Out-of-Code Insights')} (${totalAnnotations})</div>
+                <div class="title-row">
+                    <div>
+                        <div class="eyebrow">${loc('annotationsWorkspace', 'Annotation workspace')}</div>
+                        <div class="title">${loc('annotationsTitle', 'Out-of-Code Insights')}</div>
+                    </div>
+                    <div class="drag-hint">
+                        ${loc('dragHint', 'Move code with the editor’s native drag-and-drop: attached annotations now follow the block, including across files.')}
+                    </div>
+                </div>
+
+                <div class="summary-grid" role="group" aria-label="${loc('quickFilters', 'Quick annotation filters')}">
+                    <button class="summary-card active" data-quick-filter="all" type="button"><span class="summary-value">${totalAnnotations}</span><span class="summary-label">${loc('allAnnotations', 'All annotations')}</span></button>
+                    <button class="summary-card" data-quick-filter="open" type="button"><span class="summary-value">${openCount}</span><span class="summary-label">${loc('openAnnotations', 'Open')}</span></button>
+                    <button class="summary-card" data-quick-filter="resolved" type="button"><span class="summary-value">${resolvedCount}</span><span class="summary-label">${loc('resolvedAnnotations', 'Resolved')}</span></button>
+                    <button class="summary-card" data-quick-filter="attention" type="button"><span class="summary-value">${warningCount + errorCount}</span><span class="summary-label">${loc('needsAttention', 'Needs attention')}</span></button>
+                    <button class="summary-card" data-quick-filter="orphaned" type="button"><span class="summary-value">${orphanedCount}</span><span class="summary-label">${loc('orphanedAnnotations', 'Orphaned')}</span></button>
+                </div>
                 
                 <!-- Inline search bar -->
                 <div class="search-container">
@@ -2789,7 +2875,7 @@ export class AnnotationManager extends EventEmitter {
                 </div>
 
                 <!-- Search results -->
-                <div id="searchResults" class="search-results-info" style="display: none;">
+                <div id="searchResults" class="search-results-info" role="status" aria-live="polite" style="display: none;">
                 </div>
             </div>
         `;
@@ -2814,10 +2900,15 @@ export class AnnotationManager extends EventEmitter {
                                  id="${escapeHtml(annotation.id)}"
                                  data-annotation-id="${escapeHtml(annotation.id)}"
                                  data-severity="${escapeHtml(annotation.severity || 'info')}"
+                                 data-resolved="${annotation.resolved ? 'true' : 'false'}"
+                                 data-anchor-status="${escapeHtml(annotation.resolvedAnchor?.status || 'active')}"
                                  data-file="${escapeHtml(annotation.file)}"
                                  data-author="${escapeHtml(annotation.author || '')}"
                                  data-message="${escapeHtml(annotation.message.toLowerCase())}"
-                                 data-action="navigate">
+                                 data-action="navigate"
+                                 role="button"
+                                 tabindex="0"
+                                 aria-label="${escapeHtml(`${annotation.file}, ${loc('line', 'Line')} ${annotation.line + 1}: ${annotation.message}`)}">
 
                                 <div class="annotation-header">
                                     <span class="annotation-author">${escapeHtml(annotation.author || loc('anonymous', 'Anonymous'))}${annotation.pinned ? ' \u{1F4CC}' : ''}</span>
@@ -2905,6 +2996,7 @@ export class AnnotationManager extends EventEmitter {
             const searchResults = document.getElementById('searchResults');
             const sortSelect = document.getElementById('sortOptions');
             const filterSelect = document.getElementById('filterOptions');
+            const quickFilterButtons = Array.from(document.querySelectorAll('[data-quick-filter]'));
 
             // Restore state
             if (sortSelect) sortSelect.value = state.sortOption || 'line_asc';
@@ -2915,6 +3007,35 @@ export class AnnotationManager extends EventEmitter {
             let currentSearchTerm = state.searchTerm || '';
             let searchResults_annotations = [];
             let currentSearchIndex = 0;
+
+            function applyQuickFilter(value) {
+                document.querySelectorAll('.annotation-card').forEach((card) => {
+                    const severity = card.dataset.severity || 'info';
+                    const resolved = card.dataset.resolved === 'true';
+                    const anchorStatus = card.dataset.anchorStatus || 'active';
+                    const visible = value === 'all' ||
+                        (value === 'open' && !resolved) ||
+                        (value === 'resolved' && resolved) ||
+                        (value === 'attention' && ['warning', 'error', 'critical'].includes(severity)) ||
+                        (value === 'orphaned' && ['orphaned', 'stale'].includes(anchorStatus));
+                    card.hidden = !visible;
+                });
+                document.querySelectorAll('.file-group').forEach((group) => {
+                    group.hidden = !Array.from(group.querySelectorAll('.annotation-card')).some((card) => !card.hidden);
+                });
+                quickFilterButtons.forEach((button) => {
+                    button.classList.toggle('active', button.dataset.quickFilter === value);
+                    button.setAttribute('aria-pressed', button.dataset.quickFilter === value ? 'true' : 'false');
+                });
+                state.quickFilter = value;
+                vscode.setState(state);
+                clearHighlights();
+                hideSearchResults();
+            }
+
+            quickFilterButtons.forEach((button) => {
+                button.addEventListener('click', () => applyQuickFilter(button.dataset.quickFilter || 'all'));
+            });
 
             // Search function in the panel
             function searchInPanel(searchTerm) {
@@ -2929,6 +3050,7 @@ export class AnnotationManager extends EventEmitter {
                 const foundAnnotations = [];
 
                 annotations.forEach(annotation => {
+                    if (annotation.hidden) { return; }
                     const message = annotation.dataset.message || '';
                     const author = annotation.dataset.author || '';
                     const fileData = annotation.dataset.file || '';
@@ -3137,6 +3259,30 @@ export class AnnotationManager extends EventEmitter {
                     searchInPanel(currentSearchTerm);
                 }, 100);
             }
+
+            applyQuickFilter(state.quickFilter || 'all');
+
+            document.addEventListener('keydown', (event) => {
+                const card = event.target.closest?.('.annotation-card');
+                if (card && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault();
+                    window.navigate(card.dataset.annotationId);
+                    return;
+                }
+                if (card && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+                    event.preventDefault();
+                    const cards = Array.from(document.querySelectorAll('.annotation-card:not([hidden])'));
+                    const index = cards.indexOf(card);
+                    const delta = event.key === 'ArrowDown' ? 1 : -1;
+                    cards[Math.max(0, Math.min(cards.length - 1, index + delta))]?.focus();
+                    return;
+                }
+                if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey &&
+                    !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) {
+                    event.preventDefault();
+                    searchInput?.focus();
+                }
+            });
 
             // Event delegation replaces all inline onclick/onblur handlers.
             document.addEventListener('click', function(e) {

@@ -94,11 +94,11 @@ interface MockChange {
     text: string;
 }
 
-function makeEvent(doc: MockDoc, changes: MockChange[]): vscode.TextDocumentChangeEvent {
+function makeEvent(doc: MockDoc, changes: MockChange[], reason?: 1 | 2): vscode.TextDocumentChangeEvent {
     return {
         document: asDoc(doc),
         contentChanges: changes,
-        reason: undefined,
+        reason,
     } as unknown as vscode.TextDocumentChangeEvent;
 }
 
@@ -733,6 +733,98 @@ suite('AnnotationStore — auto paste detection', () => {
         assert.strictEqual(clone.endOffset, 13);
     });
 
+    test('copy → paste over a selection clones annotations and re-scopes destination metadata', () => {
+        const store = new AnnotationStore();
+        const source = makeDoc('source\nTARGET\n', 'file:///source.ts');
+        const original = store.add(defaultDraft('file:///source.ts', 'source.ts'), { line: 1 }, asDoc(source));
+
+        const destination = makeDoc('prefix\nTARGET\n', 'file:///nested/destination.ts', 2);
+        const replace: MockChange = {
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 3 } },
+            rangeOffset: 7,
+            rangeLength: 3,
+            text: 'TARGET',
+        };
+        store.applyDocumentChange(makeEvent(destination, [replace]), 'nested/destination.ts');
+
+        const clone = store.getAll().find((a) => a.id !== original.id);
+        assert.ok(clone);
+        assert.strictEqual(clone.fileUri, 'file:///nested/destination.ts');
+        assert.strictEqual(clone.file, 'nested/destination.ts');
+        assert.strictEqual(clone.languageId, 'typescript');
+        assert.strictEqual(clone.startOffset, 7);
+    });
+
+    test('copy → paste carries every annotation co-located on the source line', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('aaa\nTARGET\nzzz\n');
+        store.add({ ...defaultDraft(), message: 'first' }, { line: 1 }, asDoc(doc));
+        store.add({ ...defaultDraft(), message: 'second' }, { line: 1 }, asDoc(doc));
+
+        const after = makeDoc('aaa\nTARGET\nzzz\nTARGET\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } },
+                    rangeOffset: 15,
+                    rangeLength: 0,
+                    text: 'TARGET\n',
+                },
+            ])
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 4, 'two originals + two co-located copies');
+        assert.strictEqual(all.filter((a) => a.origin.kind === 'paste').length, 2);
+        assert.deepStrictEqual(
+            all.filter((a) => a.origin.kind === 'paste').map((a) => a.message).sort(),
+            ['first', 'second']
+        );
+    });
+
+    test('cut → cross-file paste moves every co-located annotation and updates file metadata', () => {
+        const store = new AnnotationStore();
+        const source = makeDoc('aaa\nTARGET\nzzz\n', 'file:///source.ts');
+        const first = store.add({ ...defaultDraft('file:///source.ts', 'source.ts'), message: 'first' }, { line: 1 }, asDoc(source));
+        const second = store.add({ ...defaultDraft('file:///source.ts', 'source.ts'), message: 'second' }, { line: 1 }, asDoc(source));
+
+        const sourceAfterCut = makeDoc('aaa\nzzz\n', 'file:///source.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(sourceAfterCut, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+                    rangeOffset: 4,
+                    rangeLength: 7,
+                    text: '',
+                },
+            ])
+        );
+        assert.strictEqual(store.get(first.id)?.state, 'suspended');
+        assert.strictEqual(store.get(second.id)?.state, 'suspended');
+
+        const destination = makeDoc('head\nTARGET\n', 'file:///nested/destination.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(destination, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+                    rangeOffset: 5,
+                    rangeLength: 0,
+                    text: 'TARGET\n',
+                },
+            ]),
+            'nested/destination.ts'
+        );
+
+        for (const id of [first.id, second.id]) {
+            const moved = store.get(id);
+            assert.ok(moved);
+            assert.strictEqual(moved.state, 'active');
+            assert.strictEqual(moved.fileUri, 'file:///nested/destination.ts');
+            assert.strictEqual(moved.file, 'nested/destination.ts');
+            assert.strictEqual(moved.startOffset, 5);
+        }
+    });
+
     test('FIFO precedence: oldest suspended wins when several share the hash', () => {
         const store = new AnnotationStore();
         const doc = makeDoc('abc\nfg\n');
@@ -1292,6 +1384,46 @@ suite('AnnotationStore — onDidDispose', () => {
 });
 
 suite('AnnotationStore — sticky boundaries: editing the annotated line rebinds the anchor', () => {
+    test('undoing ordinary typing keeps the annotation instead of undoing its creation', () => {
+        const store = new AnnotationStore();
+        const doc0 = makeDoc('aaa\nbbb\nccc');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc0));
+
+        const doc1 = makeDoc('aaa\nbbbx\nccc', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(doc1, [
+                {
+                    range: { start: { line: 1, character: 3 }, end: { line: 1, character: 3 } },
+                    rangeOffset: 7,
+                    rangeLength: 0,
+                    text: 'x',
+                },
+            ])
+        );
+
+        store.applyDocumentChange(
+            makeEvent(
+                doc0,
+                [
+                    {
+                        range: { start: { line: 1, character: 3 }, end: { line: 1, character: 4 } },
+                        rangeOffset: 7,
+                        rangeLength: 1,
+                        text: '',
+                    },
+                ],
+                1
+            )
+        );
+
+        const current = store.get(ann.id);
+        assert.ok(current, 'undo must not remove the last-created annotation');
+        assert.strictEqual(current.state, 'active');
+        assert.strictEqual(current.startOffset, 4);
+        assert.strictEqual(current.endOffset, 7);
+        assert.strictEqual(current.lineHash, hashLine('bbb'));
+    });
+
     test('two successive keystrokes at end of the annotated line keep the hash bound', () => {
         const store = new AnnotationStore();
         const doc0 = makeDoc('aaa\nbbb\nccc');
