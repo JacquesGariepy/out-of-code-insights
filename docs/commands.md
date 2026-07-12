@@ -175,9 +175,31 @@ See [documentation-authoring.md](./documentation-authoring.md) for the authoring
 
 ## Pro, sync and integrations
 
-| Command ID                    | Title                     | Default keybinding |
-| ----------------------------- | ------------------------- | ------------------ |
-| `annotations.enterLicenseKey` | Enter License Key (Pro)   | --                 |
-| `annotations.syncConfigure`   | Configure Annotation Sync | --                 |
-| `annotations.syncNow`         | Sync Annotations Now      | --                 |
-| `annotations.mcpSetup`        | MCP Server Setup          | --                 |
+| Command ID                        | Title                         | Default keybinding |
+| ---------------------------------- | ------------------------------ | ------------------ |
+| `annotations.enterLicenseKey`      | Enter License Key (Pro)        | --                 |
+| `annotations.syncConfigure`        | Configure Annotation Sync      | --                 |
+| `annotations.syncNow`              | Sync Annotations Now           | --                 |
+| `annotations.mcpSetup`             | MCP Server Setup               | --                 |
+| `annotations.setupAiInstructions`  | Set Up AI Agent Instructions   | --                 |
+
+---
+
+## Native editor comments (Comments API)
+
+| Command ID                     | Title                | Default keybinding |
+| -------------------------------- | --------------------- | ------------------ |
+| `annotations.commentReply`       | Reply                 | --                 |
+| `annotations.commentResolve`     | Resolve Annotation     | --                 |
+| `annotations.commentUnresolve`   | Unresolve Annotation   | --                 |
+| `annotations.commentDelete`      | Delete Annotation      | --                 |
+
+These appear on the annotation's native comment thread (`annotation.commentsView`, default on) rather than in the Command Palette.
+
+---
+
+## Diagnostics
+
+| Command ID                      | Title                            | Default keybinding |
+| -------------------------------- | ------------------------------------ | ------------------ |
+| `outOfCodeInsights.showLogs`     | Out-of-Code Insights: Show Logs      | --                 |

@@ -25,7 +25,9 @@ No manual upload is ever required.
 
 ## Versioning
 
-This project follows [Semantic Versioning 2.0.0](https://semver.org/):
+Every version MUST follow the `MAJOR.MINOR.PATCH` structure of
+[Semantic Versioning 2.0.0](https://semver.org/). Never publish a version
+number that deviates from this structure.
 
 | Change type | Version segment | Example |
 |---|---|---|
@@ -154,6 +156,37 @@ git branch -d hotfix/v1.0.19
 ---
 
 ## Recovery Procedures
+
+### Transient network failure (ECONNRESET or similar)
+
+If a step fails with a transient network error (e.g. `write ECONNRESET`) while
+publishing to the VS Code Marketplace or Open VSX, and no secret or code
+change is involved, no tag manipulation is needed:
+
+1. Confirm the failure is network-related by inspecting the failed step logs:
+   ```bash
+   gh run view <run-id> --log-failed
+   ```
+2. Re-run the whole workflow (rebuilds and re-packages the VSIX, then retries
+   publishing):
+   ```bash
+   gh run rerun <run-id>
+   ```
+   To retry only the failed job and its downstream steps instead:
+   ```bash
+   gh run rerun <run-id> --failed
+   ```
+3. Monitor the new attempt:
+   ```bash
+   gh run view <run-id> --json status,conclusion,jobs
+   ```
+4. Once it succeeds, confirm the GitHub Release now exists:
+   ```bash
+   gh release view vX.Y.Z
+   ```
+
+Do not delete or re-push the tag for this case: the tag and commit are already
+correct, only the publish step needs to be retried.
 
 ### Wrong version pushed
 

@@ -10,7 +10,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [1.2.0] - 2026-07-01
 
 ### Added
-- Kanban board: keyboard accessibility for the drag-and-drop flow — grab a
+- Kanban board: keyboard accessibility for the drag-and-drop flow: grab a
   card with Enter/Space, choose a target column with the arrow keys, confirm
   with Enter/Space or cancel with Escape, with `aria-live` announcements at
   each step.
@@ -99,18 +99,18 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Security
 - Resolved all open CodeQL alerts: the annotations search webview now builds
   its localized strings with `JSON.stringify` (a translated value can no
-  longer break out of the script — incomplete-sanitization, high severity);
+  longer break out of the script (incomplete-sanitization, high severity);
   the file logger replaces the `existsSync`+`statSync` check-then-act with a
   stat-with-catch (no file-system race); and the documentation table-cell
   escaper now escapes the backslash first (complete sanitization).
 - All 11 npm audit findings resolved (1 critical `shell-quote`, high
   `tmp`/`serialize-javascript`, DoS-range `diff`, `qs`, `uuid`, and their
   transitive chains) by upgrading `concurrently` to v10 and `mocha` to v11
-  and pinning targeted `overrides` — every affected package was
+  and pinning targeted `overrides`; every affected package was
   development tooling; nothing vulnerable ships in the extension bundle.
 
 ### Added
-- New `docs/team-workflow.md` (using annotations across every workspace —
+- New `docs/team-workflow.md` (using annotations across every workspace:
   extension, MCP, and sync), linked from the README.
 - Documentation generator: display-math blocks (`$$ … $$`) are now
   protected from heading demotion and wiki-link rewriting (same treatment
@@ -121,7 +121,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   display, end-to-end example), linked from the README.
 - The inline editor decoration now shows only the first line of the
   annotation message (Markdown heading marker stripped, capped at 120
-  chars) — multi-line documentation annotations no longer dump their whole
+  chars): multi-line documentation annotations no longer dump their whole
   body into the editor; the full content stays in the panel, the Markdown
   editor and the generated site.
 - New `docs/manual-test-guide.md`: per-version manual test matrix
@@ -129,7 +129,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   Markdown-compatibility table of the generated documentation.
 - Live reload of external `annotations.json` changes: a file watcher picks
   up writes made outside VS Code (e.g. by the MCP server) within a couple
-  of seconds — no window reload needed. Self-saves are suppressed to avoid
+  of seconds; no window reload needed. Self-saves are suppressed to avoid
   loops; disable with `annotation.watchExternalChanges`.
 - Stripe payments for the license server (optional): a signed
   `checkout.session.completed` webhook issues a license key (entitlements
@@ -158,7 +158,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   source file in the workspace (up to 2000 files, 1 MB each;
   `node_modules`, `.git`, `dist`, `out` and `coverage` excluded) for the
   same better-comments-style markers as the single-file import and creates
-  tagged, severity-mapped annotations — without opening any editor.
+  tagged, severity-mapped annotations without opening any editor.
   Already-annotated lines are skipped so the command is rerunnable;
   progress is reported in a cancellable notification.
 - Pro feature registry (`docs.watch`, `comments.importWorkspace`): the
@@ -168,7 +168,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   the toast once and then skips silently).
 - New command **Import Code Comments as Annotations**: scans the active
   document for better-comments-style markers (`// !`, `// ?`, `// *`,
-  `TODO`, `FIXME`/`BUG`, `HACK`/`XXX` — also `#`, `--` and `<!-- -->`
+  `TODO`, `FIXME`/`BUG`, `HACK`/`XXX`, also `#`, `--` and `<!-- -->`
   comment syntaxes) and creates tagged, severity-mapped annotations;
   already-annotated lines are skipped so the command is rerunnable.
 - New command **MCP Server Setup**: copies a ready-to-paste MCP client
@@ -178,9 +178,9 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   the server when running a Marketplace build (it ships with the source
   repository).
 - Standalone MCP server under `mcp-server/`: exposes the annotation store
-  to AI agents outside VS Code over stdio — list/get/add/update/remove/link
+  to AI agents outside VS Code over stdio: list/get/add/update/remove/link
   annotations, a code-graph projection of annotation links, and Markdown
-  documentation generation — all against the same v2 `annotations.json`
+  documentation generation, all against the same v2 `annotations.json`
   envelope, with atomic writes and shared anchoring logic. External changes
   are picked up by the extension on window reload (no file watcher yet).
 - Configurable annotation styling (better-comments style): new settings
@@ -197,13 +197,13 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 - New setting `annotation.docs.watch` (default `false`): regenerates the
   annotation documentation automatically (2 s debounce, silent) whenever
   annotations change.
-- Pro licensing scaffold (inactive by default — the extension stays fully
+- Pro licensing scaffold (inactive by default: the extension stays fully
   free): new command **Enter License Key (Pro)** stores the key in VS Code
   Secret Storage and validates it against the server configured via
   `annotation.pro.licenseServerUrl` (empty default skips validation).
   Entitlements are cached with an offline grace period
   (`annotation.pro.offlineGraceDays`, default 7) and features are gated only
-  when listed in `annotation.pro.gatedFeatures` (empty default — nothing is
+  when listed in `annotation.pro.gatedFeatures` (empty default: nothing is
   gated).
 - CI now builds the `mcp-server/` package and builds + tests the
   `license-server/` package on Ubuntu; both jobs no-op gracefully while a
@@ -230,19 +230,19 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   documentation annotations with `doc:module` / `doc:class` /
   `doc:function` / `doc:example` / `doc:guide`, and where the generated
   documentation lives (`annotation.docs.outputPath`). Re-running the
-  command replaces the block in place — never duplicates it.
+  command replaces the block in place; it never duplicates it.
 
 ## [1.0.22] - 2026-06-11
 
 ### Added
-- The documentation generator is fully configurable — nothing hardcoded:
+- The documentation generator is fully configurable, nothing hardcoded:
   `annotation.docs.siteTitle`, `tagPrefix`, `apiFolder`, `guideFile`,
   `includeInventory`, `includeAuthored`, `includeTimestamp` (disable for
   fully diffable output) and `untaggedLabel`, alongside the existing
   `outputPath`.
 - New command **Generate Annotation Documentation** (book icon in the
   Annotations view, also in the command palette): builds a DocFX-compatible
-  Markdown site from all annotations — `toc.yml`, overview with counts by
+  Markdown site from all annotations: `toc.yml`, overview with counts by
   type/severity/file, a by-type page (tags act as the annotation type
   taxonomy), a by-file page with clickable `file:line` source links, code
   snippets, discussion threads, and a links page mapping annotation
@@ -280,7 +280,7 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ### Added
 - When annotated code is deleted and not pasted back within the recovery
   window, a non-modal prompt now asks whether to keep the annotation
-  (restored in the panel/tree) or delete it — annotations are never
+  (restored in the panel/tree) or delete it; annotations are never
   silently lost anymore.
 
 ### Fixed
