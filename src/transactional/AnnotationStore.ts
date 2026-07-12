@@ -74,6 +74,35 @@ export interface AnnotationStoreOptions {
     suspendTtlMs?: number;
 }
 
+export interface AnnotationTrackingDiagnostic {
+    id: string;
+    file: string;
+    fileUri: string;
+    state: AnnotationV2['state'];
+    origin: AnnotationV2['origin']['kind'];
+    startOffset: number;
+    endOffset: number;
+    documentOpen: boolean;
+    resolvedLine: number | null;
+    storedLineHash: string;
+    currentLineHash: string | null;
+    hashMatches: boolean | null;
+    issues: string[];
+}
+
+export interface TrackingDiagnosticsReport {
+    generatedAt: string;
+    valid: boolean;
+    counts: {
+        total: number;
+        active: number;
+        suspended: number;
+        withIssues: number;
+    };
+    violations: ViolationReport[];
+    annotations: AnnotationTrackingDiagnostic[];
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers (no vscode runtime dep)
 // ---------------------------------------------------------------------------
@@ -905,6 +934,79 @@ export class AnnotationStore {
         return { valid: violations.length === 0, violations };
     }
 
+    /**
+     * Produce a read-only, local tracking report suitable for support and
+     * anchor debugging. No source text is included: only hashes, offsets,
+     * lifecycle state and issue codes leave the store.
+     */
+    diagnose(openDocuments: readonly vscode.TextDocument[] = []): TrackingDiagnosticsReport {
+        const validation = this.validate();
+        const annotations: AnnotationTrackingDiagnostic[] = [];
+        const all = [
+            ...Array.from(this.map.values()),
+            ...Array.from(this.suspendedById.values(), (record) => record.annotation),
+        ];
+
+        for (const annotation of all) {
+            const document = openDocuments.find((candidate) => candidate.uri.toString() === annotation.fileUri);
+            const issues: string[] = [];
+            let resolvedLine: number | null = null;
+            let currentLineHash: string | null = null;
+            let hashMatches: boolean | null = null;
+
+            if (annotation.startOffset < 0 || annotation.endOffset < annotation.startOffset) {
+                issues.push('invalid-offset-range');
+            }
+            if (annotation.state === 'suspended') {
+                issues.push('awaiting-paste');
+            }
+            if (!document) {
+                issues.push('document-not-open');
+            } else {
+                const documentLength = document.getText().length;
+                if (annotation.startOffset > documentLength || annotation.endOffset > documentLength) {
+                    issues.push('offset-out-of-document');
+                } else {
+                    resolvedLine = document.positionAt(annotation.startOffset).line;
+                    currentLineHash = hashLine(document.lineAt(resolvedLine).text);
+                    hashMatches = currentLineHash === annotation.lineHash;
+                    if (!hashMatches) {
+                        issues.push('line-hash-mismatch');
+                    }
+                }
+            }
+
+            annotations.push({
+                id: annotation.id,
+                file: annotation.file,
+                fileUri: annotation.fileUri,
+                state: annotation.state,
+                origin: annotation.origin.kind,
+                startOffset: annotation.startOffset,
+                endOffset: annotation.endOffset,
+                documentOpen: document !== undefined,
+                resolvedLine,
+                storedLineHash: annotation.lineHash,
+                currentLineHash,
+                hashMatches,
+                issues,
+            });
+        }
+
+        return {
+            generatedAt: new Date().toISOString(),
+            valid: validation.valid,
+            counts: {
+                total: annotations.length,
+                active: annotations.filter((annotation) => annotation.state === 'active').length,
+                suspended: annotations.filter((annotation) => annotation.state === 'suspended').length,
+                withIssues: annotations.filter((annotation) => annotation.issues.length > 0).length,
+            },
+            violations: validation.violations,
+            annotations,
+        };
+    }
+
     private validateOne(
         ann: AnnotationV2,
         expectedState: 'active' | 'suspended',
@@ -1190,6 +1292,11 @@ export class AnnotationStore {
         if (!existing) {
             throw new Error(`AnnotationStore.setAnnotationLine: annotation ${id} not found`);
         }
+        if (!Number.isInteger(line) || line < 0 || line >= document.lineCount) {
+            throw new RangeError(
+                `AnnotationStore.setAnnotationLine: line ${String(line)} outside [0, ${String(document.lineCount - 1)}]`
+            );
+        }
         const length = existing.endOffset - existing.startOffset;
         const newStartOffset = this.lineToOffset(line, document);
         const newEndOffset = newStartOffset + length;
@@ -1220,6 +1327,59 @@ export class AnnotationStore {
                 previous: before,
                 next: after,
             },
+            documentVersionAtOp: document.version,
+            fileUri: after.fileUri,
+            transactionId: '',
+        });
+        return after;
+    }
+
+    /**
+     * Deliberately attach an active annotation to a user-selected line. In
+     * contrast with movement tracking, the target range is recaptured from
+     * the destination line instead of preserving a possibly longer source
+     * range that could spill into neighbouring lines.
+     */
+    reanchor(
+        id: string,
+        line: number,
+        document: vscode.TextDocument,
+        relativeFilePath?: string
+    ): Readonly<AnnotationV2> {
+        const existing = this.map.get(id);
+        if (!existing) {
+            throw new Error(`AnnotationStore.reanchor: active annotation ${id} not found`);
+        }
+        if (!Number.isInteger(line) || line < 0 || line >= document.lineCount) {
+            throw new RangeError(
+                `AnnotationStore.reanchor: line ${String(line)} outside [0, ${String(document.lineCount - 1)}]`
+            );
+        }
+
+        const destinationLine = document.lineAt(line);
+        const captured = captureAnchor(document as unknown as TextDocumentLike, line, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        const before = this.freezeAnnotation(existing);
+        existing.fileUri = document.uri.toString();
+        existing.file = relativeFilePath ?? existing.file;
+        existing.languageId = document.languageId;
+        existing.startOffset = document.offsetAt(destinationLine.range.start);
+        existing.endOffset = document.offsetAt(destinationLine.range.end);
+        existing.lineHash = captured.lineHash;
+        existing.contextBefore = captured.contextBefore;
+        existing.contextAfter = captured.contextAfter;
+        const after = this.freezeAnnotation(existing);
+
+        this.commitOrQueue({
+            opId: randomUUID(),
+            timestamp: new Date().toISOString(),
+            kind: 'update',
+            annotationId: id,
+            before,
+            after,
+            inverse: { kind: 'update', annotationId: id, previous: before, next: after },
             documentVersionAtOp: document.version,
             fileUri: after.fileUri,
             transactionId: '',
@@ -1762,6 +1922,39 @@ export class AnnotationStore {
                             sourceAnn.endOffset > change.rangeOffset
                         )
                 );
+
+                // Missed/fragmented multi-line cut safety net. Some editor
+                // hosts can deliver a block deletion in a shape that leaves
+                // the source active even though its stored hash no longer
+                // exists at its live offset. Treat that stale active source
+                // as a move, not a copy, or the paste would create a fresh-id
+                // duplicate while leaving the original behind.
+                const displacedSources = matchingSources.filter(
+                    (sourceAnn) =>
+                        sourceAnn.fileUri === document.uri.toString() &&
+                        !this.activeAnnotationMatchesDocumentLine(sourceAnn.id, document)
+                );
+                const displacedPrimary = displacedSources[0];
+                if (displacedPrimary) {
+                    const companions = displacedSources.filter(
+                        (sourceAnn) =>
+                            sourceAnn.fileUri === displacedPrimary.fileUri &&
+                            sourceAnn.startOffset === displacedPrimary.startOffset &&
+                            sourceAnn.endOffset === displacedPrimary.endOffset
+                    );
+                    for (const sourceAnn of companions) {
+                        this.relocateDisplacedActivePasteSource(
+                            sourceAnn.id,
+                            document,
+                            lineOffset,
+                            lineText.length,
+                            relativeFilePath
+                        );
+                        resumedThisCall.add(sourceAnn.id);
+                    }
+                    continue;
+                }
+
                 const primary = matchingSources[0];
                 if (primary) {
                     const companions = matchingSources.filter(
@@ -1776,6 +1969,45 @@ export class AnnotationStore {
                 }
             }
         }
+    }
+
+    private activeAnnotationMatchesDocumentLine(id: string, document: vscode.TextDocument): boolean {
+        const annotation = this.map.get(id);
+        if (!annotation || annotation.fileUri !== document.uri.toString()) {
+            return false;
+        }
+        const documentLength = document.getText().length;
+        if (annotation.startOffset < 0 || annotation.startOffset > documentLength) {
+            return false;
+        }
+        const line = document.positionAt(annotation.startOffset).line;
+        return hashLine(document.lineAt(line).text) === annotation.lineHash;
+    }
+
+    private relocateDisplacedActivePasteSource(
+        id: string,
+        document: vscode.TextDocument,
+        atOffset: number,
+        lineLength: number,
+        relativeFilePath?: string
+    ): void {
+        const annotation = this.map.get(id);
+        if (!annotation) {
+            return;
+        }
+        const line = document.positionAt(atOffset).line;
+        const captured = captureAnchor(document as unknown as TextDocumentLike, line, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        annotation.fileUri = document.uri.toString();
+        annotation.file = relativeFilePath ?? annotation.file;
+        annotation.languageId = document.languageId;
+        annotation.startOffset = atOffset;
+        annotation.endOffset = atOffset + lineLength;
+        annotation.lineHash = captured.lineHash;
+        annotation.contextBefore = captured.contextBefore;
+        annotation.contextAfter = captured.contextAfter;
     }
 
     private cloneAsPaste(

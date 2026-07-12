@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.2.1",
+    "version": "1.3.0",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
@@ -83,6 +83,16 @@
                 "command": "annotations.editMessageMarkdown",
                 "title": "Edit Annotation Message (Markdown)",
                 "icon": "$(edit)"
+            },
+            {
+                "command": "annotations.reanchorToCursor",
+                "title": "Re-anchor Annotation to Current Cursor",
+                "icon": "$(target)"
+            },
+            {
+                "command": "annotations.showTrackingDiagnostics",
+                "title": "Show Annotation Tracking Diagnostics",
+                "icon": "$(pulse)"
             },
             {
                 "command": "annotations.toggleDisplay",
@@ -611,6 +621,12 @@
             ],
             "view/item/context": [
                 {
+                    "command": "annotations.reanchorToCursor",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "inline",
+                    "order": 0
+                },
+                {
                     "command": "annotations.edit",
                     "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "inline",
@@ -675,6 +691,11 @@
                 }
             ],
             "view/title": [
+                {
+                    "command": "annotations.showTrackingDiagnostics",
+                    "when": "view == annotationsView",
+                    "group": "navigation@0"
+                },
                 {
                     "command": "annotations.toggleDisplay",
                     "when": "view == annotationsView",

@@ -73,7 +73,14 @@ license-server/**
 # Internal AI-agent / orchestrator state and project guidance (do not publish)
 .orchestra/**
 .claude/**
+.jackaiagent/**
+.test-workspace/**
+_tmp_kanban_probe/**
 data/**
+logs/**
 reports/**
+skills/**
 CLAUDE.md
 INSTRUCTIONS_TEST_REEL.md
+tasks.jsonp
+todo.md
