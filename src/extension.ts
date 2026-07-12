@@ -10,7 +10,11 @@ import { TextDecoder } from 'util';
 import * as vscode from 'vscode';
 import { AnnotationManager } from './managers/AnnotationManager';
 import type { Annotation } from './common/types';
-import { AnnotationsTreeDataProvider, AnnotationsDragAndDropController } from './tree/AnnotationsTree';
+import {
+    AnnotationsTreeDataProvider,
+    AnnotationsDragAndDropController,
+    AnnotationTreeItem,
+} from './tree/AnnotationsTree';
 import { NavigationStackDataProvider } from './tree/NavigationStackTree';
 import { KanbanView } from './views/KanbanView';
 import { localize } from './common/localize';
@@ -60,6 +64,7 @@ let annotationPersistence: AnnotationPersistence | undefined;
 let visibilityFilter: VisibilityFilter | undefined;
 let kanbanColumnStore: KanbanColumnStore | undefined;
 let annotationSyncService: AnnotationSyncService | undefined;
+let selectedTreeAnnotationIds: string[] = [];
 
 /** Reentrancy guard for {@link generateDocumentationNow}. */
 let docsGenerationInProgress = false;
@@ -161,12 +166,83 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (!annotationStore || !visibilityFilter || !annotationPersistence) {
             throw new Error('Lot 5 R2: transactional stack not bootstrapped before tree wiring');
         }
-        const treeDataProvider = new AnnotationsTreeDataProvider(annotationStore, visibilityFilter);
-        const dragAndDropController = new AnnotationsDragAndDropController(annotationStore, annotationPersistence);
+        const treeStore = annotationStore;
+        const treeDataProvider = new AnnotationsTreeDataProvider(treeStore, visibilityFilter);
+        const dragAndDropController = new AnnotationsDragAndDropController(treeStore, annotationPersistence);
         const view = vscode.window.createTreeView('annotationsView', {
             treeDataProvider,
             dragAndDropController,
+            canSelectMany: true,
         });
+        const updateTreeChrome = (): void => {
+            const stats = treeDataProvider.getStats();
+            view.badge = stats.visible
+                ? {
+                      value: stats.visible,
+                      tooltip: loc(
+                          'treeBadgeTooltip',
+                          '{0} visible annotations across {1} files',
+                          stats.visible,
+                          stats.files
+                      ),
+                  }
+                : undefined;
+            view.description = stats.visible
+                ? loc('treeViewDescription', '{0} open · {1} resolved', stats.open, stats.resolved)
+                : undefined;
+            view.message =
+                stats.total === 0
+                    ? loc('treeEmptyMessage', 'No annotations yet. Press Ctrl+Alt+A in an editor to create one.')
+                    : stats.visible === 0
+                      ? loc(
+                            'treeFilteredEmptyMessage',
+                            'Annotations exist, but the current visibility filters hide them.'
+                        )
+                      : stats.attention > 0
+                        ? loc('treeAttentionMessage', '{0} annotations need attention.', stats.attention)
+                        : undefined;
+        };
+        context.subscriptions.push(treeDataProvider.onDidChangeTreeData(updateTreeChrome));
+        context.subscriptions.push(
+            view.onDidChangeSelection((event) => {
+                selectedTreeAnnotationIds = event.selection
+                    .filter((item): item is AnnotationTreeItem => item instanceof AnnotationTreeItem)
+                    .map((item) => item.annotation.id);
+                void vscode.commands.executeCommand(
+                    'setContext',
+                    'outOfCodeInsights.treeSelectionCount',
+                    selectedTreeAnnotationIds.length
+                );
+            })
+        );
+        context.subscriptions.push(
+            view.onDidChangeCheckboxState((event) => {
+                const changes = event.items.filter(
+                    (entry): entry is [AnnotationTreeItem, vscode.TreeItemCheckboxState] =>
+                        entry[0] instanceof AnnotationTreeItem
+                );
+                if (changes.length === 0) {
+                    return;
+                }
+                treeStore.beginTransaction();
+                try {
+                    for (const [item, state] of changes) {
+                        treeStore.update(item.annotation.id, {
+                            resolved: state === vscode.TreeItemCheckboxState.Checked,
+                        });
+                    }
+                    treeStore.commit();
+                } catch (error) {
+                    treeStore.rollback();
+                    getLogger().error('Unable to update annotation resolution from TreeView checkbox', error);
+                    vscode.window.showErrorMessage(
+                        loc('treeCheckboxUpdateFailed', 'Unable to update annotation state.')
+                    );
+                }
+            })
+        );
+        updateTreeChrome();
+        void vscode.commands.executeCommand('setContext', 'outOfCodeInsights.treeSelectionCount', 0);
         // Lot 5 R2: NavigationStackTree migrated to (store, navigationStack).
         const stackDataProvider = new NavigationStackDataProvider(annotationStore, annotationManager.navigationStack);
         const stackView = vscode.window.createTreeView('stackView', { treeDataProvider: stackDataProvider });
@@ -1298,6 +1374,127 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.bulkActions', async (commandArg?: unknown) => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+
+            type BulkAction = 'resolve' | 'reopen' | 'severity' | 'delete';
+            type BulkActionArgument = { ids?: unknown; action?: unknown; severity?: unknown };
+            const argument =
+                commandArg && typeof commandArg === 'object' ? (commandArg as BulkActionArgument) : undefined;
+            let ids = Array.isArray(argument?.ids)
+                ? argument.ids.filter((id): id is string => typeof id === 'string')
+                : [];
+            if (commandArg instanceof AnnotationTreeItem) {
+                ids = selectedTreeAnnotationIds.includes(commandArg.annotation.id)
+                    ? selectedTreeAnnotationIds
+                    : [commandArg.annotation.id];
+            } else if (ids.length === 0) {
+                ids = selectedTreeAnnotationIds;
+            }
+            ids = [...new Set(ids)].filter((id) => store.get(id) !== undefined);
+            if (ids.length === 0) {
+                vscode.window.showInformationMessage(
+                    loc('bulkSelectionEmpty', 'Select one or more annotations before running a bulk action.')
+                );
+                return 0;
+            }
+
+            const suppliedAction = argument?.action;
+            let action: BulkAction | undefined =
+                suppliedAction === 'resolve' ||
+                suppliedAction === 'reopen' ||
+                suppliedAction === 'severity' ||
+                suppliedAction === 'delete'
+                    ? suppliedAction
+                    : undefined;
+            if (!action) {
+                const picked = await vscode.window.showQuickPick(
+                    [
+                        {
+                            label: '$(pass-filled) ' + loc('bulkResolve', 'Mark as resolved'),
+                            value: 'resolve' as const,
+                        },
+                        { label: '$(circle-large-outline) ' + loc('bulkReopen', 'Reopen'), value: 'reopen' as const },
+                        { label: '$(warning) ' + loc('bulkSeverity', 'Change severity'), value: 'severity' as const },
+                        { label: '$(trash) ' + loc('bulkDelete', 'Delete'), value: 'delete' as const },
+                    ],
+                    {
+                        title: loc('bulkActionTitle', 'Bulk actions'),
+                        placeHolder: loc('bulkActionPlaceholder', 'Apply an action to {0} annotations', ids.length),
+                    }
+                );
+                action = picked?.value;
+            }
+            if (!action) {
+                return 0;
+            }
+
+            let severity = typeof argument?.severity === 'string' ? argument.severity : undefined;
+            if (action === 'severity' && !severity) {
+                const picked = await vscode.window.showQuickPick(
+                    [
+                        { label: '$(info) Info', value: 'info' },
+                        { label: '$(warning) Warning', value: 'warning' },
+                        { label: '$(error) Error', value: 'error' },
+                        { label: '$(flame) Critical', value: 'critical' },
+                    ],
+                    { placeHolder: loc('bulkSeverityPlaceholder', 'Choose a severity for {0} annotations', ids.length) }
+                );
+                severity = picked?.value;
+            }
+            if (action === 'severity' && !severity) {
+                return 0;
+            }
+
+            if (action === 'delete') {
+                const deleteLabel = loc('deleteSelected', 'Delete selected');
+                const confirmation = await vscode.window.showWarningMessage(
+                    loc('confirmBulkDelete', 'Permanently delete {0} selected annotations?', ids.length),
+                    { modal: true },
+                    deleteLabel
+                );
+                if (confirmation !== deleteLabel) {
+                    return 0;
+                }
+            }
+
+            store.beginTransaction();
+            try {
+                for (const id of ids) {
+                    if (action === 'delete') {
+                        store.remove(id);
+                    } else if (action === 'resolve') {
+                        store.update(id, { resolved: true });
+                    } else if (action === 'reopen') {
+                        store.update(id, { resolved: false });
+                    } else {
+                        store.update(id, { severity });
+                    }
+                }
+                store.commit();
+            } catch (error) {
+                store.rollback();
+                getLogger().error('Bulk annotation action failed', error);
+                vscode.window.showErrorMessage(loc('bulkActionFailed', 'Unable to update the selected annotations.'));
+                return 0;
+            }
+
+            selectedTreeAnnotationIds = selectedTreeAnnotationIds.filter((id) => store.get(id) !== undefined);
+            void vscode.commands.executeCommand(
+                'setContext',
+                'outOfCodeInsights.treeSelectionCount',
+                selectedTreeAnnotationIds.length
+            );
+            vscode.window.setStatusBarMessage(loc('bulkActionComplete', 'Updated {0} annotations.', ids.length), 4000);
+            return ids.length;
+        })
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand('annotations.reanchorToCursor', async (commandArg?: unknown) => {
             const store = annotationStore;
             if (!store) {
@@ -1349,11 +1546,16 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     }))
                     .sort((left, right) => Number(right.hasIssues) - Number(left.hasIssues));
                 if (items.length === 0) {
-                    vscode.window.showInformationMessage(loc('noAnnotationsToReanchor', 'No annotations to re-anchor.'));
+                    vscode.window.showInformationMessage(
+                        loc('noAnnotationsToReanchor', 'No annotations to re-anchor.')
+                    );
                     return;
                 }
                 const picked = await vscode.window.showQuickPick(items, {
-                    placeHolder: loc('pickAnnotationToReanchor', 'Select the annotation to attach to the current cursor'),
+                    placeHolder: loc(
+                        'pickAnnotationToReanchor',
+                        'Select the annotation to attach to the current cursor'
+                    ),
                     matchOnDescription: true,
                     matchOnDetail: true,
                 });

@@ -121,4 +121,34 @@ suite('Lot 12 — manual re-anchor and local diagnostics commands', () => {
         assert.ok(Array.isArray(report.annotations));
         assert.strictEqual(document.getText().includes('a very long annotated source line'), false);
     });
+
+    test('bulk command updates multiple annotations in one native command path', async function () {
+        this.timeout(20_000);
+        const uri = await fixture('lot12-bulk-actions.ts', 'first\nsecond\nthird\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document);
+        await vscode.commands.executeCommand('annotations.add', { line: 0, message: 'lot12 bulk first' });
+        await vscode.commands.executeCommand('annotations.add', { line: 1, message: 'lot12 bulk second' });
+        const first = await waitForAnnotation((candidate) => candidate.message === 'lot12 bulk first');
+        const second = await waitForAnnotation((candidate) => candidate.message === 'lot12 bulk second');
+        createdIds.push(first.id, second.id);
+
+        const commands = await vscode.commands.getCommands(true);
+        assert.ok(commands.includes('annotations.bulkActions'));
+        const updated = await vscode.commands.executeCommand<number>('annotations.bulkActions', {
+            ids: [first.id, second.id],
+            action: 'resolve',
+        });
+        assert.strictEqual(updated, 2);
+        await waitForAnnotation((candidate) => candidate.id === first.id && candidate.resolved === true);
+        await waitForAnnotation((candidate) => candidate.id === second.id && candidate.resolved === true);
+
+        await vscode.commands.executeCommand('annotations.bulkActions', {
+            ids: [first.id, second.id],
+            action: 'severity',
+            severity: 'critical',
+        });
+        await waitForAnnotation((candidate) => candidate.id === first.id && candidate.severity === 'critical');
+        await waitForAnnotation((candidate) => candidate.id === second.id && candidate.severity === 'critical');
+    });
 });

@@ -2265,6 +2265,12 @@ export class AnnotationManager extends EventEmitter {
                 case 'reanchor':
                     await vscode.commands.executeCommand('annotations.reanchorToCursor', message.annotationId);
                     break;
+                case 'bulkAction':
+                    await vscode.commands.executeCommand('annotations.bulkActions', {
+                        ids: message.annotationIds,
+                        action: message.action,
+                    });
+                    break;
                 case 'sort':
                     this.handleSort(message.value);
                     break;
@@ -2570,6 +2576,41 @@ export class AnnotationManager extends EventEmitter {
                 outline: 1px solid var(--vscode-focusBorder);
                 border-color: var(--vscode-focusBorder);
             }
+            .bulk-toolbar {
+                display: flex;
+                align-items: center;
+                gap: 0.55em;
+                flex-wrap: wrap;
+                padding: 0.6em 0.7em;
+                border: 1px solid var(--vscode-editorWidget-border);
+                border-radius: 8px;
+                background: var(--vscode-editor-background);
+            }
+            .bulk-toolbar.visible {
+                border-color: var(--vscode-focusBorder);
+                background: var(--vscode-list-activeSelectionBackground);
+            }
+            .bulk-count { font-weight: 700; margin-right: auto; }
+            .bulk-button {
+                border: 1px solid var(--vscode-button-border);
+                border-radius: 5px;
+                padding: 0.35em 0.65em;
+                color: var(--vscode-button-secondaryForeground);
+                background: var(--vscode-button-secondaryBackground);
+                cursor: pointer;
+            }
+            .bulk-button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+            .bulk-button:disabled { opacity: 0.45; cursor: default; }
+            .bulk-button.danger { color: var(--vscode-errorForeground); }
+            .select-visible-label { display: inline-flex; align-items: center; gap: 0.4em; cursor: pointer; }
+            .annotation-select {
+                width: 1.15em;
+                height: 1.15em;
+                margin: 0 0.65em 0 0;
+                accent-color: var(--vscode-focusBorder);
+                flex: 0 0 auto;
+                cursor: pointer;
+            }
             
             .file-group {
                 margin-bottom: 2em;
@@ -2617,6 +2658,11 @@ export class AnnotationManager extends EventEmitter {
                 background-color: var(--vscode-list-hoverBackground);
                 transform: translateY(-1px);
                 box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+            }
+            .annotation-card.selected {
+                border-color: var(--vscode-focusBorder);
+                background: var(--vscode-list-inactiveSelectionBackground);
+                box-shadow: 0 0 0 1px var(--vscode-focusBorder);
             }
             .annotation-card:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
             
@@ -2919,6 +2965,19 @@ export class AnnotationManager extends EventEmitter {
                     </div>
                 </div>
 
+                <div id="bulkToolbar" class="bulk-toolbar" aria-label="${loc('bulkActions', 'Bulk actions')}">
+                    <label class="select-visible-label">
+                        <input id="selectVisible" type="checkbox">
+                        ${loc('selectVisible', 'Select visible')}
+                    </label>
+                    <span id="selectedCount" class="bulk-count" role="status" aria-live="polite"></span>
+                    <button class="bulk-button" data-bulk-action="resolve" type="button">✓ ${loc('bulkResolve', 'Resolve')}</button>
+                    <button class="bulk-button" data-bulk-action="reopen" type="button">○ ${loc('bulkReopen', 'Reopen')}</button>
+                    <button class="bulk-button" data-bulk-action="severity" type="button">⚠ ${loc('bulkSeverity', 'Severity')}</button>
+                    <button class="bulk-button danger" data-bulk-action="delete" type="button">⌫ ${loc('bulkDelete', 'Delete')}</button>
+                    <button id="clearSelection" class="bulk-button" type="button">${loc('clearSelection', 'Clear selection')}</button>
+                </div>
+
                 <!-- Search results -->
                 <div id="searchResults" class="search-results-info" role="status" aria-live="polite" style="display: none;">
                 </div>
@@ -2951,11 +3010,15 @@ export class AnnotationManager extends EventEmitter {
                                  data-author="${escapeHtml(annotation.author || '')}"
                                  data-message="${escapeHtml(annotation.message.toLowerCase())}"
                                  data-action="navigate"
-                                 role="button"
+                                 role="group"
                                  tabindex="0"
                                  aria-label="${escapeHtml(`${annotation.file}, ${loc('line', 'Line')} ${annotation.line + 1}: ${annotation.message}`)}">
 
                                 <div class="annotation-header">
+                                    <input class="annotation-select"
+                                           type="checkbox"
+                                           data-select-annotation="${escapeHtml(annotation.id)}"
+                                           aria-label="${escapeHtml(loc('selectAnnotation', 'Select annotation: {0}', annotation.message))}">
                                     <span class="annotation-author">${escapeHtml(annotation.author || loc('anonymous', 'Anonymous'))}${annotation.pinned ? ' \u{1F4CC}' : ''}</span>
                                     <span class="severity-icon">${this.getSeverityIcon(annotation.severity || 'info')}</span>
                                     <span class="badge">${annotation.thread ? annotation.thread.length : 0} ${loc('comments', 'Comments')}</span>
@@ -3044,6 +3107,68 @@ export class AnnotationManager extends EventEmitter {
             const filterSelect = document.getElementById('filterOptions');
             const quickFilterButtons = Array.from(document.querySelectorAll('[data-quick-filter]'));
             const densityButtons = Array.from(document.querySelectorAll('[data-density]'));
+            const bulkToolbar = document.getElementById('bulkToolbar');
+            const selectedCount = document.getElementById('selectedCount');
+            const selectVisible = document.getElementById('selectVisible');
+            const clearSelection = document.getElementById('clearSelection');
+            const selectionInputs = Array.from(document.querySelectorAll('[data-select-annotation]'));
+            const selectedIds = new Set(Array.isArray(state.selectedAnnotationIds) ? state.selectedAnnotationIds : []);
+
+            function updateSelectionControls() {
+                const cards = Array.from(document.querySelectorAll('.annotation-card'));
+                const presentIds = new Set(cards.map((card) => card.dataset.annotationId));
+                Array.from(selectedIds).forEach((id) => {
+                    if (!presentIds.has(id)) selectedIds.delete(id);
+                });
+                cards.forEach((card) => card.classList.toggle('selected', selectedIds.has(card.dataset.annotationId)));
+                selectionInputs.forEach((input) => {
+                    input.checked = selectedIds.has(input.dataset.selectAnnotation);
+                });
+                const visibleCards = cards.filter((card) => !card.hidden);
+                const visibleSelected = visibleCards.filter((card) => selectedIds.has(card.dataset.annotationId)).length;
+                if (selectVisible) {
+                    selectVisible.checked = visibleCards.length > 0 && visibleSelected === visibleCards.length;
+                    selectVisible.indeterminate = visibleSelected > 0 && visibleSelected < visibleCards.length;
+                }
+                if (selectedCount) {
+                    selectedCount.textContent = selectedIds.size + ' ${loc('selectedAnnotations', 'selected')}';
+                }
+                bulkToolbar?.classList.toggle('visible', selectedIds.size > 0);
+                document.querySelectorAll('[data-bulk-action], #clearSelection').forEach((button) => {
+                    button.disabled = selectedIds.size === 0;
+                });
+                state.selectedAnnotationIds = Array.from(selectedIds);
+                vscode.setState(state);
+            }
+
+            selectionInputs.forEach((input) => {
+                input.addEventListener('click', (event) => event.stopPropagation());
+                input.addEventListener('change', () => {
+                    if (input.checked) selectedIds.add(input.dataset.selectAnnotation);
+                    else selectedIds.delete(input.dataset.selectAnnotation);
+                    updateSelectionControls();
+                });
+            });
+            selectVisible?.addEventListener('change', () => {
+                document.querySelectorAll('.annotation-card:not([hidden])').forEach((card) => {
+                    if (selectVisible.checked) selectedIds.add(card.dataset.annotationId);
+                    else selectedIds.delete(card.dataset.annotationId);
+                });
+                updateSelectionControls();
+            });
+            clearSelection?.addEventListener('click', () => {
+                selectedIds.clear();
+                updateSelectionControls();
+            });
+            document.querySelectorAll('[data-bulk-action]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    vscode.postMessage({
+                        command: 'bulkAction',
+                        action: button.dataset.bulkAction,
+                        annotationIds: Array.from(selectedIds),
+                    });
+                });
+            });
 
             // Restore state
             if (sortSelect) sortSelect.value = state.sortOption || 'line_asc';
@@ -3093,6 +3218,7 @@ export class AnnotationManager extends EventEmitter {
                 });
                 state.quickFilter = value;
                 vscode.setState(state);
+                updateSelectionControls();
                 clearHighlights();
                 hideSearchResults();
             }
@@ -3327,6 +3453,9 @@ export class AnnotationManager extends EventEmitter {
             applyQuickFilter(state.quickFilter || 'all');
 
             document.addEventListener('keydown', (event) => {
+                if (event.target.closest?.('button, input, select, textarea, [contenteditable="true"]')) {
+                    return;
+                }
                 const card = event.target.closest?.('.annotation-card');
                 if (card && (event.key === 'Enter' || event.key === ' ')) {
                     event.preventDefault();
@@ -3350,6 +3479,9 @@ export class AnnotationManager extends EventEmitter {
 
             // Event delegation replaces all inline onclick/onblur handlers.
             document.addEventListener('click', function(e) {
+                if (e.target.closest('[data-select-annotation], [data-bulk-action], #clearSelection, #selectVisible')) {
+                    return;
+                }
                 const btn = e.target.closest('[data-action]');
                 if (!btn) { return; }
                 const action = btn.dataset.action;
