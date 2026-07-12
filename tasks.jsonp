@@ -1,7 +1,7 @@
 globalThis.OOCI_TASKS = {
   "schemaVersion": 1,
   "project": "Out-of-Code Insights augmented platform",
-  "updatedAt": "2026-07-11T22:52:00-04:00",
+  "updatedAt": "2026-07-12T00:36:00-04:00",
   "statuses": ["todo", "in_progress", "blocked", "done", "accepted", "investigate"],
   "tasks": [
     {"id":"TRACK-001","area":"tracking","title":"Recognize paste over a selected range","status":"done"},
@@ -35,10 +35,12 @@ globalThis.OOCI_TASKS = {
     {"id":"PARITY-002","area":"parity","title":"Share filters, sorting, links, threads, Kanban and docs domain layer","status":"todo"},
     {"id":"PARITY-003","area":"parity","title":"Add golden envelope fixtures consumed by both repositories","status":"todo"},
     {"id":"QA-001","area":"quality","title":"Run extension TypeScript typecheck","status":"done"},
-    {"id":"QA-002","area":"quality","title":"Compile and run focused transactional tests (485 passing)","status":"done"},
-    {"id":"QA-003","area":"quality","title":"Run VS Code copy/replace-paste/cut/drag/Undo/Redo/multi-cursor integration","status":"todo"},
+    {"id":"QA-002","area":"quality","title":"Compile and run focused transactional tests (486 passing)","status":"done"},
+    {"id":"QA-003","area":"quality","title":"Run VS Code copy/replace-paste/cut/drag/Undo/Redo/multi-cursor integration","status":"done"},
     {"id":"QA-004","area":"quality","title":"Build/test Tauri frontend, 20 React tests and Rust backend","status":"done"},
-    {"id":"QA-005","area":"quality","title":"Visual QA: desktop/narrow/high-contrast/reduced-motion","status":"blocked","blocker":"In-app browser runtime did not start; retry after environment recovery."}
+    {"id":"QA-005","area":"quality","title":"Visual QA: desktop/narrow/high-contrast/reduced-motion","status":"blocked","blocker":"In-app browser runtime did not start; retry after environment recovery."},
+    {"id":"REL-001","area":"release","title":"Publish extension v1.2.1 to GitHub, VS Code Marketplace and Open VSX","status":"done"},
+    {"id":"REL-002","area":"release","title":"Publish desktop v0.1.1 with NSIS and MSI installers","status":"done"}
   ],
   "productThoughts": [
     {"id":"THOUGHT-001","status":"accepted","text":"Identity must follow semantic code movement; line numbers and hashes alone are insufficient."},
