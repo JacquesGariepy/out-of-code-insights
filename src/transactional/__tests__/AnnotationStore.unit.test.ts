@@ -1411,6 +1411,12 @@ suite('AnnotationStore — sticky boundaries: editing the annotated line rebinds
         );
         assert.strictEqual(store.get(pasted.id), undefined, 'undo removes the paste-derived annotation');
 
+        // VS Code may emit a metadata-only document event (dirty/save state)
+        // between the content Undo and Redo. It must not invalidate the
+        // retained paste snapshot because it does not create a new edit
+        // branch in the editor history.
+        store.applyDocumentChange(makeEvent(afterUndo, []));
+
         const afterRedo = makeDoc('aaa\nbbb\nccc\n', 'file:///test.ts', 3);
         store.applyDocumentChange(
             makeEvent(

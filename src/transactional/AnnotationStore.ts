@@ -449,7 +449,7 @@ export class AnnotationStore {
 
         // Any fresh edit invalidates VS Code's redo branch. Mirror that rule
         // for paste-derived annotations retained solely for document Redo.
-        if (!isUndo && !isRedo) {
+        if (!isUndo && !isRedo && event.contentChanges.length > 0) {
             this.undonePastesById.clear();
         }
 
