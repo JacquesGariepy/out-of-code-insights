@@ -1,7 +1,7 @@
 globalThis.OOCI_TASKS = {
   "schemaVersion": 1,
   "project": "Out-of-Code Insights augmented platform",
-  "updatedAt": "2026-07-12T18:34:00-04:00",
+  "updatedAt": "2026-07-12T18:50:49-04:00",
   "statuses": ["todo", "in_progress", "blocked", "done", "accepted", "investigate"],
   "tasks": [
     {"id":"TRACK-001","area":"tracking","title":"Recognize paste over a selected range","status":"done"},
@@ -48,7 +48,7 @@ globalThis.OOCI_TASKS = {
     {"id":"REL-001","area":"release","title":"Publish extension v1.2.1 to GitHub, VS Code Marketplace and Open VSX","status":"done"},
     {"id":"REL-002","area":"release","title":"Publish desktop v0.1.1 with NSIS and MSI installers","status":"done"},
     {"id":"REL-003","area":"release","title":"Publish extension v1.3.0 recovery, diagnostics and density release","status":"done"},
-    {"id":"REL-004","area":"release","title":"Publish extension v1.4.0 native tree and bulk panel release","status":"in_progress"}
+    {"id":"REL-004","area":"release","title":"Publish extension v1.4.0 native tree and bulk panel release","status":"done"}
   ],
   "productThoughts": [
     {"id":"THOUGHT-001","status":"accepted","text":"Identity must follow semantic code movement; line numbers and hashes alone are insufficient."},
