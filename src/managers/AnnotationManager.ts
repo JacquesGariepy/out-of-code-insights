@@ -2262,6 +2262,9 @@ export class AnnotationManager extends EventEmitter {
                 case 'navigate':
                     await this.navigateToAnnotation(message.annotationId);
                     break;
+                case 'reanchor':
+                    await vscode.commands.executeCommand('annotations.reanchorToCursor', message.annotationId);
+                    break;
                 case 'sort':
                     this.handleSort(message.value);
                     break;
@@ -2455,6 +2458,26 @@ export class AnnotationManager extends EventEmitter {
                 font-size: 0.82em;
                 line-height: 1.45;
                 text-align: right;
+            }
+            .density-toggle {
+                display: inline-flex;
+                padding: 2px;
+                border: 1px solid var(--vscode-editorWidget-border);
+                border-radius: 7px;
+                background: var(--vscode-editor-background);
+            }
+            .density-row { display: flex; justify-content: flex-end; }
+            .density-button {
+                border: 0;
+                border-radius: 5px;
+                padding: 0.3em 0.65em;
+                color: var(--vscode-descriptionForeground);
+                background: transparent;
+                cursor: pointer;
+            }
+            .density-button:hover, .density-button.active {
+                color: var(--vscode-foreground);
+                background: var(--vscode-list-activeSelectionBackground);
             }
             .summary-grid {
                 display: grid;
@@ -2708,6 +2731,20 @@ export class AnnotationManager extends EventEmitter {
             .comment {
                 margin-bottom: 1em;
             }
+            body[data-density="compact"] .container { width: min(1380px, calc(100% - 1em)); padding-top: 0.5em; }
+            body[data-density="compact"] .toolbar { gap: 0.5em; padding: 0.65em; margin-bottom: 0.65em; }
+            body[data-density="compact"] .summary-card { padding: 0.4em 0.55em; }
+            body[data-density="compact"] .summary-value { display: inline; font-size: 1em; margin-right: 0.35em; }
+            body[data-density="compact"] .summary-label { display: inline; font-size: 0.72em; }
+            body[data-density="compact"] .file-group { margin-bottom: 1em; }
+            body[data-density="compact"] .file-header { padding: 0.35em 0.5em; margin-bottom: 0.35em; }
+            body[data-density="compact"] .annotation-card { margin-bottom: 0.45em; border-radius: 7px; }
+            body[data-density="compact"] .annotation-header,
+            body[data-density="compact"] .annotation-message,
+            body[data-density="compact"] .annotation-file-info,
+            body[data-density="compact"] .annotation-tags,
+            body[data-density="compact"] .action-buttons { padding-top: 0.35em; padding-bottom: 0.35em; }
+            body[data-density="compact"] .action-button { padding: 0.3em 0.55em; }
             .action-buttons {
                 display: flex;
                 gap: 0.5em;
@@ -2807,6 +2844,7 @@ export class AnnotationManager extends EventEmitter {
                 .toolbar { position: static; padding: 0.75em; }
                 .title-row { flex-direction: column; }
                 .drag-hint { margin-left: 0; text-align: left; }
+                .density-row { justify-content: flex-start; }
                 .summary-grid { grid-template-columns: repeat(2, 1fr); }
                 .search-container { align-items: stretch; flex-wrap: wrap; }
                 .search-input { flex-basis: 100%; }
@@ -2826,6 +2864,13 @@ export class AnnotationManager extends EventEmitter {
                     </div>
                     <div class="drag-hint">
                         ${loc('dragHint', 'Move code with the editor’s native drag-and-drop: attached annotations now follow the block, including across files.')}
+                    </div>
+                </div>
+
+                <div class="density-row">
+                    <div class="density-toggle" role="group" aria-label="${loc('panelDensity', 'Panel density')}">
+                        <button class="density-button" data-density="comfortable" type="button">${loc('densityComfortable', 'Comfortable')}</button>
+                        <button class="density-button" data-density="compact" type="button">${loc('densityCompact', 'Compact')}</button>
                     </div>
                 </div>
 
@@ -2962,6 +3007,7 @@ export class AnnotationManager extends EventEmitter {
                                     <button class="action-button" data-action="modify"         data-annotation-id="${escapeHtml(annotation.id)}">\u{270F}\u{FE0F} ${loc('modify', 'Modify')}</button>
                                     <button class="action-button" data-action="editTags"       data-annotation-id="${escapeHtml(annotation.id)}">\u{1F3F7}\u{FE0F} ${loc('editTags', 'Tags')}</button>
                                     <button class="action-button" data-action="changeSeverity" data-annotation-id="${escapeHtml(annotation.id)}">${this.getSeverityIcon(annotation.severity || 'info')} ${loc('changeSeverity', 'Severity')}</button>
+                                    <button class="action-button" data-action="reanchor"       data-annotation-id="${escapeHtml(annotation.id)}">⌖ ${loc('reanchorHere', 'Re-anchor here')}</button>
                                     <button class="action-button" data-action="delete"         data-annotation-id="${escapeHtml(annotation.id)}">\u{1F5D1} ${loc('delete', 'Delete')}</button>
                                     <button class="action-button" data-action="moveUp"         data-annotation-id="${escapeHtml(annotation.id)}">\u{2191} ${loc('moveUp', 'Up')}</button>
                                     <button class="action-button" data-action="moveDown"       data-annotation-id="${escapeHtml(annotation.id)}">\u{2193} ${loc('moveDown', 'Down')}</button>
@@ -2997,11 +3043,29 @@ export class AnnotationManager extends EventEmitter {
             const sortSelect = document.getElementById('sortOptions');
             const filterSelect = document.getElementById('filterOptions');
             const quickFilterButtons = Array.from(document.querySelectorAll('[data-quick-filter]'));
+            const densityButtons = Array.from(document.querySelectorAll('[data-density]'));
 
             // Restore state
             if (sortSelect) sortSelect.value = state.sortOption || 'line_asc';
             if (filterSelect) filterSelect.value = state.filterOption || 'all';
             if (searchInput) searchInput.value = state.searchTerm || '';
+
+            function applyDensity(value) {
+                const density = value === 'compact' ? 'compact' : 'comfortable';
+                document.body.dataset.density = density;
+                densityButtons.forEach((button) => {
+                    const active = button.dataset.density === density;
+                    button.classList.toggle('active', active);
+                    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+                });
+                state.density = density;
+                vscode.setState(state);
+            }
+
+            densityButtons.forEach((button) => {
+                button.addEventListener('click', () => applyDensity(button.dataset.density));
+            });
+            applyDensity(state.density || 'comfortable');
 
             // Variables de recherche
             let currentSearchTerm = state.searchTerm || '';
@@ -3301,6 +3365,8 @@ export class AnnotationManager extends EventEmitter {
                     e.stopPropagation(); window.editTags(annotationId, e);
                 } else if (action === 'changeSeverity') {
                     e.stopPropagation(); window.changeSeverity(annotationId, e);
+                } else if (action === 'reanchor') {
+                    e.stopPropagation(); window.reanchor(annotationId, e);
                 } else if (action === 'delete') {
                     e.stopPropagation(); window.deleteAnnotation(annotationId, e);
                 } else if (action === 'moveUp') {
@@ -3372,6 +3438,11 @@ export class AnnotationManager extends EventEmitter {
             window.changeSeverity = function(annotationId, event) {
                 event.stopPropagation();
                 vscode.postMessage({ command: 'changeSeverity', annotationId });
+            }
+
+            window.reanchor = function(annotationId, event) {
+                event.stopPropagation();
+                vscode.postMessage({ command: 'reanchor', annotationId });
             }
         `;
 

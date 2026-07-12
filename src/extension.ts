@@ -1298,6 +1298,129 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.reanchorToCursor', async (commandArg?: unknown) => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return;
+            }
+            // Capture the text editor before a QuickPick/webview can take
+            // focus. This command deliberately targets the current cursor.
+            let editor = vscode.window.activeTextEditor;
+            if (!editor && vscode.window.visibleTextEditors.length === 1) {
+                [editor] = vscode.window.visibleTextEditors;
+            } else if (!editor && vscode.window.visibleTextEditors.length > 1) {
+                const target = await vscode.window.showQuickPick(
+                    vscode.window.visibleTextEditors.map((candidate) => ({
+                        label: vscode.workspace.asRelativePath(candidate.document.uri),
+                        description: loc(
+                            'cursorLineDescription',
+                            'Cursor on line {0}',
+                            candidate.selection.active.line + 1
+                        ),
+                        editor: candidate,
+                    })),
+                    { placeHolder: loc('pickReanchorEditor', 'Select the editor containing the destination cursor') }
+                );
+                editor = target?.editor;
+            }
+            if (!editor) {
+                vscode.window.showErrorMessage(
+                    loc('reanchorNeedsEditor', 'Place the cursor on the destination line before re-anchoring.')
+                );
+                return;
+            }
+
+            let annotationId = annotationIdFromCommandArg(commandArg);
+            if (!annotationId) {
+                const diagnostics = store.diagnose(vscode.workspace.textDocuments);
+                const issuesById = new Map(diagnostics.annotations.map((item) => [item.id, item.issues]));
+                const items = store
+                    .list()
+                    .map((annotation) => ({
+                        label: firstMessageLine(annotation.message) || annotation.id,
+                        description: formatAnnotationLocation(
+                            annotation.file,
+                            store.getLineForAnnotation(annotation.id, vscode.workspace.textDocuments)
+                        ),
+                        detail: issuesById.get(annotation.id)?.join(', ') || loc('anchorHealthy', 'Anchor healthy'),
+                        id: annotation.id,
+                        hasIssues: (issuesById.get(annotation.id)?.length ?? 0) > 0,
+                    }))
+                    .sort((left, right) => Number(right.hasIssues) - Number(left.hasIssues));
+                if (items.length === 0) {
+                    vscode.window.showInformationMessage(loc('noAnnotationsToReanchor', 'No annotations to re-anchor.'));
+                    return;
+                }
+                const picked = await vscode.window.showQuickPick(items, {
+                    placeHolder: loc('pickAnnotationToReanchor', 'Select the annotation to attach to the current cursor'),
+                    matchOnDescription: true,
+                    matchOnDetail: true,
+                });
+                if (!picked) {
+                    return;
+                }
+                annotationId = picked.id;
+            }
+
+            const targetLine = editor.selection.active.line;
+            try {
+                const updated = store.reanchor(
+                    annotationId,
+                    targetLine,
+                    editor.document,
+                    vscode.workspace.asRelativePath(editor.document.uri)
+                );
+                const targetRange = editor.document.lineAt(targetLine).range;
+                editor.revealRange(targetRange, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+                getLogger().info('Annotation manually re-anchored', {
+                    annotationId: updated.id,
+                    fileUri: updated.fileUri,
+                    line: targetLine,
+                });
+                vscode.window.showInformationMessage(
+                    loc(
+                        'annotationReanchored',
+                        'Annotation re-anchored to {0}, line {1}.',
+                        updated.file,
+                        targetLine + 1
+                    )
+                );
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                vscode.window.showErrorMessage(loc('reanchorFailed', 'Unable to re-anchor annotation: {0}', message));
+            }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.showTrackingDiagnostics', async () => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return;
+            }
+            const report = store.diagnose(vscode.workspace.textDocuments);
+            const document = await vscode.workspace.openTextDocument({
+                language: 'json',
+                content: JSON.stringify(report, null, 2),
+            });
+            await vscode.window.showTextDocument(document, { preview: true });
+            const summary = loc(
+                'trackingDiagnosticsSummary',
+                'Tracking diagnostics: {0} annotation(s), {1} with issue(s).',
+                report.counts.total,
+                report.counts.withIssues
+            );
+            if (report.valid) {
+                vscode.window.setStatusBarMessage(summary, 5000);
+            } else {
+                vscode.window.showWarningMessage(summary);
+            }
+        })
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand('annotations.addDocBlock', async () => {
             const roles: { label: string; description: string; tag: string }[] = [
                 {
@@ -1642,6 +1765,20 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             { dispose: () => docsWatchDebounce.cancel() }
         );
     }
+}
+
+function annotationIdFromCommandArg(value: unknown): string | undefined {
+    if (typeof value === 'string') {
+        return value;
+    }
+    if (!value || typeof value !== 'object') {
+        return undefined;
+    }
+    const candidate = value as { id?: unknown; annotation?: { id?: unknown } };
+    if (typeof candidate.annotation?.id === 'string') {
+        return candidate.annotation.id;
+    }
+    return typeof candidate.id === 'string' ? candidate.id : undefined;
 }
 
 /**

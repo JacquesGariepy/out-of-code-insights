@@ -339,6 +339,38 @@ suite('AnnotationStore — validate (I1-I3)', () => {
     });
 });
 
+suite('AnnotationStore — tracking diagnostics', () => {
+    test('reports healthy open-document anchors without exposing source text', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('alpha\nbeta');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(doc));
+        const report = store.diagnose([asDoc(doc)]);
+
+        assert.strictEqual(report.valid, true);
+        assert.deepStrictEqual(report.counts, { total: 1, active: 1, suspended: 0, withIssues: 0 });
+        assert.strictEqual(report.annotations[0].id, ann.id);
+        assert.strictEqual(report.annotations[0].resolvedLine, 1);
+        assert.strictEqual(report.annotations[0].hashMatches, true);
+        assert.strictEqual(JSON.stringify(report).includes('beta'), false, 'source line content is never included');
+    });
+
+    test('flags closed documents, hash drift and suspended state', () => {
+        const store = new AnnotationStore();
+        const original = makeDoc('alpha\nbeta');
+        const changed = makeDoc('alpha\nchanged');
+        const active = store.add(defaultDraft(), { line: 1 }, asDoc(original));
+        const suspended = store.add({ ...defaultDraft(), message: 'cut' }, { line: 0 }, asDoc(original));
+        store.suspend(suspended.id, suspended.lineHash);
+
+        const openReport = store.diagnose([asDoc(changed)]);
+        assert.ok(openReport.annotations.find((item) => item.id === active.id)?.issues.includes('line-hash-mismatch'));
+        assert.ok(openReport.annotations.find((item) => item.id === suspended.id)?.issues.includes('awaiting-paste'));
+
+        const closedReport = store.diagnose();
+        assert.ok(closedReport.annotations.every((item) => item.issues.includes('document-not-open')));
+    });
+});
+
 // ---------------------------------------------------------------------------
 // serialize / deserialize
 // ---------------------------------------------------------------------------
@@ -731,6 +763,35 @@ suite('AnnotationStore — auto paste detection', () => {
         assert.notStrictEqual(clone.id, original.id);
         assert.strictEqual(clone.startOffset, 11);
         assert.strictEqual(clone.endOffset, 13);
+    });
+
+    test('missed multi-line cut safety net moves a stale active source instead of cloning it', () => {
+        const store = new AnnotationStore();
+        const beforeCut = makeDoc('block top\nTARGET\nblock tail\npost\n');
+        const original = store.add(defaultDraft(), { line: 1 }, asDoc(beforeCut));
+
+        // Model an editor host that omitted/fragmented the deletion event:
+        // the document is already cut down to "post\n", while the store
+        // still considers the old source annotation active at its old offset.
+        const afterPaste = makeDoc('post\nblock top\nTARGET\nblock tail\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(afterPaste, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+                    rangeOffset: 5,
+                    rangeLength: 0,
+                    text: 'block top\nTARGET\nblock tail\n',
+                },
+            ])
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 1, 'stale source is moved, never duplicated');
+        assert.strictEqual(all[0].id, original.id, 'move preserves annotation identity');
+        assert.strictEqual(all[0].origin.kind, 'manual');
+        assert.strictEqual(all[0].startOffset, 15);
+        assert.strictEqual(all[0].endOffset, 21);
+        assert.strictEqual(all[0].lineHash, hashLine('TARGET'));
     });
 
     test('copy → paste over a selection clones annotations and re-scopes destination metadata', () => {
@@ -1248,6 +1309,15 @@ suite('AnnotationStore — setAnnotationLine', () => {
         assert.throws(() => store.setAnnotationLine('unknown', 0, asDoc(doc)), /not found/);
     });
 
+    test('rejects negative, fractional and out-of-document target lines', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('line0\nline1');
+        const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        assert.throws(() => store.setAnnotationLine(ann.id, -1, asDoc(doc)), RangeError);
+        assert.throws(() => store.setAnnotationLine(ann.id, 0.5, asDoc(doc)), RangeError);
+        assert.throws(() => store.setAnnotationLine(ann.id, doc.lineCount, asDoc(doc)), RangeError);
+    });
+
     test('journals an update OpEntry', () => {
         const store = new AnnotationStore();
         const doc = makeDoc('line0\nline1');
@@ -1257,6 +1327,33 @@ suite('AnnotationStore — setAnnotationLine', () => {
         const journal = store.getJournal();
         assert.strictEqual(journal.entries.length, journalLenBefore + 1);
         assert.strictEqual(journal.entries[journal.entries.length - 1].kind, 'update');
+    });
+});
+
+suite('AnnotationStore — deliberate reanchor', () => {
+    test('recaptures the exact destination line without spilling into the next line', () => {
+        const store = new AnnotationStore();
+        const source = makeDoc('a very long source line\nx', 'file:///source.ts');
+        const destination = makeDoc('tiny\nnext line', 'file:///destination.ts', 2);
+        const ann = store.add(defaultDraft('file:///source.ts', 'source.ts'), { line: 0 }, asDoc(source));
+
+        const moved = store.reanchor(ann.id, 0, asDoc(destination), 'destination.ts');
+
+        assert.strictEqual(moved.fileUri, 'file:///destination.ts');
+        assert.strictEqual(moved.file, 'destination.ts');
+        assert.strictEqual(moved.startOffset, 0);
+        assert.strictEqual(moved.endOffset, 4, 'range ends with the selected line');
+        assert.strictEqual(moved.lineHash, hashLine('tiny'));
+        assert.strictEqual(moved.languageId, 'typescript');
+    });
+
+    test('rejects suspended annotations and invalid target lines', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('one\ntwo');
+        const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        assert.throws(() => store.reanchor(ann.id, 2, asDoc(doc)), RangeError);
+        store.suspend(ann.id, ann.lineHash);
+        assert.throws(() => store.reanchor(ann.id, 1, asDoc(doc)), /active annotation/);
     });
 });
 

@@ -1,7 +1,7 @@
 globalThis.OOCI_TASKS = {
   "schemaVersion": 1,
   "project": "Out-of-Code Insights augmented platform",
-  "updatedAt": "2026-07-12T00:36:00-04:00",
+  "updatedAt": "2026-07-12T01:05:00-04:00",
   "statuses": ["todo", "in_progress", "blocked", "done", "accepted", "investigate"],
   "tasks": [
     {"id":"TRACK-001","area":"tracking","title":"Recognize paste over a selected range","status":"done"},
@@ -14,12 +14,12 @@ globalThis.OOCI_TASKS = {
     {"id":"TRACK-008","area":"tracking","title":"Verify clipboard intent to distinguish paste from identical typed/generated text","status":"todo"},
     {"id":"TRACK-009","area":"tracking","title":"Disambiguate identical lines using block hash, context and selection offsets","status":"todo"},
     {"id":"TRACK-010","area":"tracking","title":"Persist suspended cut annotations through reload within recovery TTL","status":"todo"},
-    {"id":"TRACK-011","area":"tracking","title":"Expose orphan recovery and manual re-anchor actions","status":"todo"},
-    {"id":"TRACK-012","area":"tracking","title":"Add local diagnostics for anchor decisions","status":"todo"},
+    {"id":"TRACK-011","area":"tracking","title":"Expose orphan recovery and manual re-anchor actions","status":"done"},
+    {"id":"TRACK-012","area":"tracking","title":"Add local diagnostics for anchor decisions","status":"done"},
     {"id":"UI-EXT-001","area":"vscode-ui","title":"Modernize panel hierarchy and responsive layout","status":"done"},
     {"id":"UI-EXT-002","area":"vscode-ui","title":"Add active/resolved/orphaned/severity summary counters","status":"done"},
     {"id":"UI-EXT-003","area":"vscode-ui","title":"Add one-click status, severity and current-file filters","status":"done"},
-    {"id":"UI-EXT-004","area":"vscode-ui","title":"Add persisted compact/comfortable density modes","status":"todo"},
+    {"id":"UI-EXT-004","area":"vscode-ui","title":"Add persisted compact/comfortable density modes","status":"done"},
     {"id":"UI-EXT-005","area":"vscode-ui","title":"Add keyboard navigation, ARIA, visible focus and reduced motion","status":"done"},
     {"id":"UI-EXT-006","area":"vscode-ui","title":"Add drag affordances and editor drag feedback","status":"done"},
     {"id":"UI-EXT-007","area":"vscode-ui","title":"Replace full HTML reloads with incremental state messages","status":"todo"},
@@ -35,12 +35,13 @@ globalThis.OOCI_TASKS = {
     {"id":"PARITY-002","area":"parity","title":"Share filters, sorting, links, threads, Kanban and docs domain layer","status":"todo"},
     {"id":"PARITY-003","area":"parity","title":"Add golden envelope fixtures consumed by both repositories","status":"todo"},
     {"id":"QA-001","area":"quality","title":"Run extension TypeScript typecheck","status":"done"},
-    {"id":"QA-002","area":"quality","title":"Compile and run focused transactional tests (486 passing)","status":"done"},
-    {"id":"QA-003","area":"quality","title":"Run VS Code copy/replace-paste/cut/drag/Undo/Redo/multi-cursor integration","status":"done"},
+    {"id":"QA-002","area":"quality","title":"Compile and run full Node unit suite (492 passing)","status":"done"},
+    {"id":"QA-003","area":"quality","title":"Run full VS Code Electron integration suite (407 passing, 6 pending)","status":"done"},
     {"id":"QA-004","area":"quality","title":"Build/test Tauri frontend, 20 React tests and Rust backend","status":"done"},
     {"id":"QA-005","area":"quality","title":"Visual QA: desktop/narrow/high-contrast/reduced-motion","status":"blocked","blocker":"In-app browser runtime did not start; retry after environment recovery."},
     {"id":"REL-001","area":"release","title":"Publish extension v1.2.1 to GitHub, VS Code Marketplace and Open VSX","status":"done"},
-    {"id":"REL-002","area":"release","title":"Publish desktop v0.1.1 with NSIS and MSI installers","status":"done"}
+    {"id":"REL-002","area":"release","title":"Publish desktop v0.1.1 with NSIS and MSI installers","status":"done"},
+    {"id":"REL-003","area":"release","title":"Publish extension v1.3.0 recovery, diagnostics and density release","status":"in_progress"}
   ],
   "productThoughts": [
     {"id":"THOUGHT-001","status":"accepted","text":"Identity must follow semantic code movement; line numbers and hashes alone are insufficient."},
@@ -50,6 +51,7 @@ globalThis.OOCI_TASKS = {
     {"id":"THOUGHT-005","status":"accepted","text":"Drag-and-drop needs visible feedback and an accessible non-drag alternative."},
     {"id":"THOUGHT-006","status":"investigate","text":"AST symbol identity plus block fingerprint and Git diff mapping may outperform line-context anchors."},
     {"id":"THOUGHT-007","status":"investigate","text":"A shared local operation ledger could reconcile concurrent extension/desktop writes without a server."},
-    {"id":"THOUGHT-008","status":"investigate","text":"Retire the legacy manager after porting its clipboard heuristics; two lifecycle engines are a regression risk."}
+    {"id":"THOUGHT-008","status":"investigate","text":"Retire the legacy manager after porting its clipboard heuristics; two lifecycle engines are a regression risk."},
+    {"id":"THOUGHT-009","status":"accepted","text":"Tracking diagnostics must expose hashes and decisions without copying proprietary source text into reports."}
   ]
 };
