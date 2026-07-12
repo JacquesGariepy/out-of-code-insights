@@ -1384,6 +1384,56 @@ suite('AnnotationStore — onDidDispose', () => {
 });
 
 suite('AnnotationStore — sticky boundaries: editing the annotated line rebinds the anchor', () => {
+    test('redo after undo of a paste restores the same annotation id', () => {
+        const store = new AnnotationStore();
+        const beforeUndo = makeDoc('aaa\nbbb\nccc\n');
+        store.add({ ...defaultDraft(), message: 'original' }, { line: 0 }, asDoc(beforeUndo));
+        const pasted = store.add(
+            { ...defaultDraft(), message: 'pasted', origin: { kind: 'paste', sourceOpId: 'source-op' } },
+            { line: 1 },
+            asDoc(beforeUndo)
+        );
+
+        const afterUndo = makeDoc('aaa\nccc\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(
+                afterUndo,
+                [
+                    {
+                        range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+                        rangeOffset: 4,
+                        rangeLength: 4,
+                        text: '',
+                    },
+                ],
+                1
+            )
+        );
+        assert.strictEqual(store.get(pasted.id), undefined, 'undo removes the paste-derived annotation');
+
+        const afterRedo = makeDoc('aaa\nbbb\nccc\n', 'file:///test.ts', 3);
+        store.applyDocumentChange(
+            makeEvent(
+                afterRedo,
+                [
+                    {
+                        range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+                        rangeOffset: 4,
+                        rangeLength: 0,
+                        text: 'bbb\n',
+                    },
+                ],
+                2
+            )
+        );
+
+        const restored = store.get(pasted.id);
+        assert.ok(restored, 'redo restores the paste-derived annotation with the same id');
+        assert.strictEqual(restored.state, 'active');
+        assert.strictEqual(restored.startOffset, 4);
+        assert.strictEqual(restored.endOffset, 7);
+    });
+
     test('undoing ordinary typing keeps the annotation instead of undoing its creation', () => {
         const store = new AnnotationStore();
         const doc0 = makeDoc('aaa\nbbb\nccc');

@@ -16,6 +16,8 @@ Released: 2026-07-11
 
 - Fixed paste-over-selection operations dropping attached annotations.
 - Fixed Undo of ordinary typing removing the last-created annotation.
+- Fixed Redo after an undone paste failing to restore the copied annotation
+  with its original identity and offsets.
 - Fixed paste-generated annotations becoming ghost cut-buffer entries on Undo.
 - Fixed multi-cursor paste operations cloning a clone created earlier in the
   same event.

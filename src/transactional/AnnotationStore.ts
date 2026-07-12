@@ -86,8 +86,9 @@ export class NotImplementedError extends Error {
     }
 }
 
-// `vscode.TextDocumentChangeReason` enum: Undo = 1.
+// `vscode.TextDocumentChangeReason` enum: Undo = 1, Redo = 2.
 const REASON_UNDO = 1;
+const REASON_REDO = 2;
 
 /** Internal record stored in the suspended buffer. */
 interface SuspendedRecord {
@@ -113,6 +114,8 @@ export class AnnotationStore {
 
     /** Undone transactions awaiting mirrorRedo. Cleared on any new mutation. */
     private readonly redoStack: OpEntry[][] = [];
+    /** Paste-derived annotations removed by a document Undo, awaiting Redo. */
+    private readonly undonePastesById = new Map<string, AnnotationV2>();
 
     /** Suppresses redoStack-clearing while replaying ops via mirrorUndo/mirrorRedo. */
     private isMirroring = false;
@@ -442,6 +445,13 @@ export class AnnotationStore {
     applyDocumentChange(event: vscode.TextDocumentChangeEvent, relativeFilePath?: string): void {
         const reason = event.reason as number | undefined;
         const isUndo = reason === REASON_UNDO;
+        const isRedo = reason === REASON_REDO;
+
+        // Any fresh edit invalidates VS Code's redo branch. Mirror that rule
+        // for paste-derived annotations retained solely for document Redo.
+        if (!isUndo && !isRedo) {
+            this.undonePastesById.clear();
+        }
 
         // 0. Sweep expired suspended entries before any other processing.
         this.sweepExpiredSuspended(Date.now());
@@ -491,7 +501,7 @@ export class AnnotationStore {
                     // not enter the cut buffer, otherwise redo/another paste
                     // can resurrect a ghost annotation.
                     if (isUndo && ann.origin.kind === 'paste') {
-                        this.map.delete(ann.id);
+                        this.parkUndonePaste(ann);
                         continue;
                     }
                     this.suspend(ann.id, ann.lineHash);
@@ -543,7 +553,7 @@ export class AnnotationStore {
                 } else {
                     // Cas D — boundary crossing.
                     if (isUndo && ann.origin.kind === 'paste') {
-                        this.map.delete(ann.id);
+                        this.parkUndonePaste(ann);
                         continue;
                     }
                     //
@@ -593,6 +603,7 @@ export class AnnotationStore {
                     resumedThisCall,
                     pasteSources,
                     !isUndo,
+                    isRedo,
                     relativeFilePath
                 );
             }
@@ -958,6 +969,7 @@ export class AnnotationStore {
         this.map.clear();
         this.journal.length = 0;
         this.redoStack.length = 0;
+        this.undonePastesById.clear();
         this.activeTransaction = null;
         this.suspendedById.clear();
         this.suspendedByLineHash.clear();
@@ -1252,6 +1264,7 @@ export class AnnotationStore {
         this.suspendedByLineHash.clear();
         this.journal.length = 0;
         this.redoStack.length = 0;
+        this.undonePastesById.clear();
         this.activeTransaction = null;
         this._onDidChange.dispose();
         this._onDidSuspend.dispose();
@@ -1586,6 +1599,7 @@ export class AnnotationStore {
         resumedThisCall: Set<string>,
         pasteSources: readonly AnnotationV2[],
         allowClone: boolean,
+        restoreUndonePastes: boolean,
         relativeFilePath?: string
     ): void {
         if (change.text.length === 0) {
@@ -1655,6 +1669,30 @@ export class AnnotationStore {
             }
             if (resumed) {
                 continue;
+            }
+
+            // Document Redo after an undone copy-paste must restore the same
+            // annotation identity. Prefer the exact prior offset, then carry
+            // every companion annotation attached to that same source range.
+            if (restoreUndonePastes) {
+                const candidates = Array.from(this.undonePastesById.values()).filter(
+                    (annotation) =>
+                        annotation.fileUri === document.uri.toString() && annotation.lineHash === lineHashValue
+                );
+                const primary = candidates.find((annotation) => annotation.startOffset === lineOffset) ?? candidates[0];
+                if (primary) {
+                    const companions = candidates.filter(
+                        (annotation) =>
+                            annotation.fileUri === primary.fileUri &&
+                            annotation.startOffset === primary.startOffset &&
+                            annotation.endOffset === primary.endOffset
+                    );
+                    for (const annotation of companions) {
+                        this.restoreUndonePaste(annotation, document, lineOffset, relativeFilePath);
+                        resumedThisCall.add(annotation.id);
+                    }
+                    continue;
+                }
             }
 
             // 1b. Fallback resume — exact-hash lookup missed for THIS line
@@ -1783,6 +1821,39 @@ export class AnnotationStore {
         this.map.set(id, cloned);
         const snapshot = this.freezeAnnotation(cloned);
         this.commitOrQueue(this.makeAddOp(snapshot, document.version));
+    }
+
+    private parkUndonePaste(annotation: AnnotationV2): void {
+        this.undonePastesById.set(annotation.id, structuredClone(annotation));
+        this.map.delete(annotation.id);
+    }
+
+    private restoreUndonePaste(
+        snapshot: AnnotationV2,
+        document: vscode.TextDocument,
+        atOffset: number,
+        relativeFilePath?: string
+    ): void {
+        const length = snapshot.endOffset - snapshot.startOffset;
+        const lineIdx = this.offsetToLine(atOffset, document);
+        const captured = captureAnchor(document as unknown as TextDocumentLike, lineIdx, {
+            walkForward: 0,
+            walkBackward: 0,
+        });
+        const restored: AnnotationV2 = {
+            ...structuredClone(snapshot),
+            fileUri: document.uri.toString(),
+            file: relativeFilePath ?? snapshot.file,
+            languageId: document.languageId,
+            startOffset: atOffset,
+            endOffset: atOffset + length,
+            lineHash: captured.lineHash,
+            contextBefore: captured.contextBefore,
+            contextAfter: captured.contextAfter,
+            state: 'active',
+        };
+        this.undonePastesById.delete(restored.id);
+        this.map.set(restored.id, restored);
     }
 
     /** Walk the journal back-to-front for the most recent `add` op of `annotationId`. */
