@@ -57,6 +57,21 @@ export class AnnotationsTreeDataProvider implements vscode.TreeDataProvider<vsco
         return element;
     }
 
+    getStats(): AnnotationTreeStats {
+        const all = this.store.list();
+        const visible = all.filter((annotation) => this.visibilityFilter.isVisible(annotation));
+        return {
+            total: all.length,
+            visible: visible.length,
+            open: visible.filter((annotation) => !annotation.resolved).length,
+            resolved: visible.filter((annotation) => annotation.resolved).length,
+            attention: visible.filter((annotation) =>
+                ['warning', 'error', 'critical'].includes(annotation.severity ?? 'info')
+            ).length,
+            files: new Set(visible.map((annotation) => annotation.file)).size,
+        };
+    }
+
     async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
         await this.store.waitUntilInitialized();
 
@@ -84,18 +99,8 @@ export class AnnotationsTreeDataProvider implements vscode.TreeDataProvider<vsco
         }
 
         if (!element) {
-            const navigateToPanelItem = new vscode.TreeItem(
-                localize('openPanel', 'Show Annotations Panel'),
-                vscode.TreeItemCollapsibleState.None
-            );
-            navigateToPanelItem.command = {
-                command: 'annotations.show',
-                title: localize('openPanel', 'Show Annotations Panel'),
-            };
-            navigateToPanelItem.iconPath = new vscode.ThemeIcon('notebook-render-output');
-
             const groupedEntries = Array.from(grouped.entries()).map(([file, arr]) => new FileTreeItem(file, arr));
-            return [navigateToPanelItem, ...groupedEntries];
+            return groupedEntries.sort((left, right) => left.file.localeCompare(right.file));
         }
         if (element instanceof FileTreeItem) {
             return element.entries.map((e) => new AnnotationTreeItem(e.annotation, e.line, resolved));
@@ -104,16 +109,43 @@ export class AnnotationsTreeDataProvider implements vscode.TreeDataProvider<vsco
     }
 }
 
+export interface AnnotationTreeStats {
+    total: number;
+    visible: number;
+    open: number;
+    resolved: number;
+    attention: number;
+    files: number;
+}
+
 export class FileTreeItem extends vscode.TreeItem {
     constructor(
         public readonly file: string,
         public readonly entries: ResolvedAnnotation[]
     ) {
         super(file, vscode.TreeItemCollapsibleState.Expanded);
-        this.tooltip = loc('fileTooltip', `{0} ({1} annotations)`, file, entries.length);
-        this.description = loc('annotationCount', `{0} annotations`, entries.length);
+        const resolved = entries.filter(({ annotation }) => annotation.resolved).length;
+        const attention = entries.filter(({ annotation }) =>
+            ['warning', 'error', 'critical'].includes(annotation.severity ?? 'info')
+        ).length;
+        const open = entries.length - resolved;
+        this.tooltip = new vscode.MarkdownString(
+            loc(
+                'fileTreeTooltip',
+                `**{0}**\n\n{1} open · {2} resolved · {3} need attention`,
+                file,
+                open,
+                resolved,
+                attention
+            )
+        );
+        this.description = loc('fileTreeDescription', `{0} open · {1} resolved`, open, resolved);
         this.iconPath = new vscode.ThemeIcon('file-code');
         this.contextValue = 'file';
+        this.accessibilityInformation = {
+            label: loc('fileTreeAccessibility', '{0}, {1} annotations, {2} open', file, entries.length, open),
+            role: 'treeitem',
+        };
     }
 }
 
@@ -123,7 +155,12 @@ export class AnnotationTreeItem extends vscode.TreeItem {
         public readonly resolvedLine: number | null,
         siblings: readonly ResolvedAnnotation[] = []
     ) {
-        super(annotation.message, vscode.TreeItemCollapsibleState.None);
+        const firstLine = annotation.message
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find(Boolean);
+        const summary = firstLine && firstLine.length > 96 ? `${firstLine.slice(0, 93)}…` : firstLine || annotation.id;
+        super(summary, vscode.TreeItemCollapsibleState.None);
 
         const date = new Date(annotation.timestamp);
         const formattedDate = date.toLocaleDateString(undefined, {
@@ -154,19 +191,18 @@ export class AnnotationTreeItem extends vscode.TreeItem {
         }
 
         const hasLinks = hasOutgoingLinks || hasIncomingLinks;
-        const linkIndicator = hasLinks ? '🔗 ' : '';
 
         const lineLabel = resolvedLine === null ? '?' : String(resolvedLine + 1);
+        const stateLabel = annotation.resolved ? loc('resolved', 'resolved') : loc('open', 'open');
+        const replyCount = annotation.thread?.length ?? 0;
 
         this.description = loc(
-            'annotationDescription',
-            `{0}Line {1} • {2} • {3} • {4} {5}`,
-            linkIndicator,
+            'annotationTreeDescription',
+            `L{0} · {1} · {2}{3}`,
             lineLabel,
-            annotation.author || loc('anonymous', 'Anonymous'),
             annotation.severity || 'info',
-            formattedDate,
-            formattedTime
+            stateLabel,
+            replyCount > 0 ? loc('treeReplySuffix', ' · {0} replies', replyCount) : ''
         );
 
         let tooltipContent =
@@ -229,9 +265,32 @@ export class AnnotationTreeItem extends vscode.TreeItem {
                 break;
         }
 
-        this.iconPath = new vscode.ThemeIcon(iconName);
+        const iconColor = annotation.resolved
+            ? new vscode.ThemeColor('testing.iconPassed')
+            : annotation.severity === 'error' || annotation.severity === 'critical'
+              ? new vscode.ThemeColor('problemsErrorIcon.foreground')
+              : annotation.severity === 'warning'
+                ? new vscode.ThemeColor('problemsWarningIcon.foreground')
+                : annotation.pinned
+                  ? new vscode.ThemeColor('charts.yellow')
+                  : undefined;
+        this.iconPath = new vscode.ThemeIcon(iconName, iconColor);
+        this.checkboxState = annotation.resolved
+            ? vscode.TreeItemCheckboxState.Checked
+            : vscode.TreeItemCheckboxState.Unchecked;
         this.contextValue = hasLinks ? 'annotation-linked' : 'annotation';
         this.resourceUri = vscode.Uri.parse(`annotation:${annotation.id}`);
+        this.accessibilityInformation = {
+            label: loc(
+                'annotationTreeAccessibility',
+                '{0}, line {1}, severity {2}, {3}',
+                summary,
+                lineLabel,
+                annotation.severity || 'info',
+                stateLabel
+            ),
+            role: 'treeitem',
+        };
         this.command = {
             command: 'annotations.navigate',
             title: loc('navigateToAnnotation', 'Navigate to Annotation'),

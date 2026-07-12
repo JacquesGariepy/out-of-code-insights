@@ -124,8 +124,7 @@ suite('Lot 5 R2 worktree A — AnnotationsTreeDataProvider', () => {
         subscriptions.push(provider);
 
         const roots = await provider.getChildren();
-        // First root is the "Show Annotations Panel" command item; second is the file group.
-        assert.ok(roots.length >= 2, 'expected at least one file group + the navigate item');
+        assert.strictEqual(roots.length, 1, 'the native tree root should contain file groups only');
         const fileItem = roots.find((r) => r instanceof FileTreeItem) as FileTreeItem;
         assert.ok(fileItem, 'expected a FileTreeItem');
         assert.strictEqual(fileItem.entries.length, 3);
@@ -136,6 +135,27 @@ suite('Lot 5 R2 worktree A — AnnotationsTreeDataProvider', () => {
             ids,
             [a1.id, a2.id, a3.id],
             'children must be sorted by startOffset, not insertion order'
+        );
+
+        store.update(a1.id, { resolved: true });
+        store.update(a2.id, { severity: 'warning' });
+        const stats = provider.getStats();
+        assert.deepStrictEqual(stats, {
+            total: 3,
+            visible: 3,
+            open: 2,
+            resolved: 1,
+            attention: 1,
+            files: 1,
+        });
+
+        const refreshedRoots = await provider.getChildren();
+        const refreshedFile = refreshedRoots[0] as FileTreeItem;
+        const refreshedChildren = (await provider.getChildren(refreshedFile)) as AnnotationTreeItem[];
+        assert.strictEqual(
+            refreshedChildren.find((item) => item.annotation.id === a1.id)?.checkboxState,
+            vscode.TreeItemCheckboxState.Checked,
+            'resolved state should be exposed through the native TreeView checkbox'
         );
     });
 

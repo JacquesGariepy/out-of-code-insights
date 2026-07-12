@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
@@ -93,6 +93,11 @@
                 "command": "annotations.showTrackingDiagnostics",
                 "title": "Show Annotation Tracking Diagnostics",
                 "icon": "$(pulse)"
+            },
+            {
+                "command": "annotations.bulkActions",
+                "title": "Bulk Actions for Selected Annotations",
+                "icon": "$(checklist)"
             },
             {
                 "command": "annotations.toggleDisplay",
@@ -621,6 +626,11 @@
             ],
             "view/item/context": [
                 {
+                    "command": "annotations.bulkActions",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "navigation@0"
+                },
+                {
                     "command": "annotations.reanchorToCursor",
                     "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "inline",
@@ -692,9 +702,14 @@
             ],
             "view/title": [
                 {
+                    "command": "annotations.bulkActions",
+                    "when": "view == annotationsView && outOfCodeInsights.treeSelectionCount > 0",
+                    "group": "navigation@0"
+                },
+                {
                     "command": "annotations.showTrackingDiagnostics",
                     "when": "view == annotationsView",
-                    "group": "navigation@0"
+                    "group": "navigation@1"
                 },
                 {
                     "command": "annotations.toggleDisplay",

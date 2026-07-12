@@ -31,21 +31,21 @@ local or be versioned and shared with the team.
 | Native VS Code experience     | Gutter decorations, CodeLens, Comments API threads, Tree View, commands, and keyboard access                 |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-## What is new in 1.3.0
+## What is new in 1.4.0
 
-- **Re-anchor Annotation to Current Cursor** repairs an orphaned annotation,
-  including across files, while preserving its identity and discussion.
-- **Show Annotation Tracking Diagnostics** opens a local JSON report containing
-  anchor decisions, hashes, offsets, and issue codes without copying source text.
-- The annotations panel offers persisted **Comfortable** and **Compact** density
-  modes.
-- Multi-line cut/paste no longer leaves a stale original plus a duplicate at
-  the destination when the editor fragments the deletion event.
-- The Marketplace package is reduced to the runtime files actually needed by
-  the extension.
+- The native annotation tree now has open/resolved summaries, attention badges,
+  theme-aware severity icons, accessible labels, and a useful empty state.
+- Select multiple tree rows and run one native bulk action, or use each row's
+  checkbox to resolve and reopen annotations immediately.
+- The annotations panel now supports persistent multi-selection, **Select
+  visible**, and bulk Resolve, Reopen, Severity, and Delete actions.
+- Tree and panel bulk updates use one transactional command path, with native
+  VS Code Quick Picks and modal confirmation for destructive operations.
+- The 1.3 recovery tools remain available: manual re-anchoring, privacy-safe
+  tracking diagnostics, density modes, and corrected multi-line cut/paste.
 
-See the [1.3.0 release notes](./docs/CHANGELOG-1.3.0.md) or the
-[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.3.0).
+See the [1.4.0 release notes](./docs/CHANGELOG-1.4.0.md) or the
+[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.0).
 
 ## Start in 60 seconds
 
@@ -246,6 +246,10 @@ Attach and execute code directly from annotations:
 - **Choose panel density**:
     - Select **Comfortable** for more breathing room or **Compact** for large
       annotation sets. The choice is retained when the panel is reopened.
+- **Triage several annotations at once**:
+    - Multi-select rows in the native tree and use **Bulk Actions for Selected
+      Annotations**, or select cards in the full panel and use its bulk toolbar.
+    - Toggle a tree row's native checkbox to resolve or reopen it directly.
 
 ### Moving Annotations
 
