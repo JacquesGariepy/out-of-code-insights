@@ -27,6 +27,16 @@ suite('VisibilityFilter — global enable', () => {
         cfg = configure({ enableAnnotations: false });
         assert.strictEqual(filter.isGloballyEnabled(), false);
     });
+
+    test('runtime display state hides native projections without changing configuration', () => {
+        const filter = new VisibilityFilter(() => configure({ enableAnnotations: true }));
+        filter.setRuntimeEnabled(false);
+        assert.strictEqual(filter.isGloballyEnabled(), false);
+        assert.strictEqual(filter.isVisible(ann()), false);
+        filter.setRuntimeEnabled(true);
+        assert.strictEqual(filter.isGloballyEnabled(), true);
+        assert.strictEqual(filter.isVisible(ann()), true);
+    });
 });
 
 suite('VisibilityFilter — disabled tags', () => {
@@ -101,5 +111,19 @@ suite('VisibilityFilter — events', () => {
         filter.refresh();
         sub.dispose();
         assert.strictEqual(events.length, 2);
+    });
+
+    test('runtime filter refreshes once and overrides the configured filter', () => {
+        const filter = new VisibilityFilter(() => configure({ currentFilter: 'all' }));
+        let events = 0;
+        const sub = filter.onDidChange(() => events++);
+
+        filter.setCurrentFilter('severity:error');
+        filter.setCurrentFilter('severity:error');
+
+        assert.strictEqual(events, 1);
+        assert.strictEqual(filter.isVisible(ann({ severity: 'warning' })), false);
+        assert.strictEqual(filter.isVisible(ann({ severity: 'error' })), true);
+        sub.dispose();
     });
 });

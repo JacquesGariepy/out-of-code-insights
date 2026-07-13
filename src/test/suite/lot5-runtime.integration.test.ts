@@ -90,6 +90,25 @@ function readPersistedRaw(): unknown {
     }
 }
 
+async function waitForPersistedAnnotation(
+    id: string,
+    predicate: (annotation: Record<string, unknown>) => boolean,
+    timeoutMs = 5000
+): Promise<Record<string, unknown> | undefined> {
+    const deadline = Date.now() + timeoutMs;
+    do {
+        const payload = readPersistedRaw();
+        if (isStoreV2Envelope(payload)) {
+            const annotation = payload.annotations.find((entry) => entry.id === id);
+            if (annotation && predicate(annotation)) {
+                return annotation;
+            }
+        }
+        await delay(100);
+    } while (Date.now() < deadline);
+    return undefined;
+}
+
 interface SchemaV2Envelope {
     schemaVersion: 2;
     annotations: ReadonlyArray<Record<string, unknown>>;
@@ -270,6 +289,31 @@ suite('Lot 5 R2 runtime integration — failing-first until consumers re-wired',
             (a) => (a as { message?: unknown }).message === 'lot5-r2-test-message'
         );
         assert.ok(found, 'annotation just added via annotations.add must appear in the v2 envelope');
+    });
+
+    test('2b. annotations.resolve preserves the annotation and marks it resolved', async function () {
+        this.timeout(20000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+        const uri = await ensureFixture('lot5-r2-resolve-flow.ts', 'zero\nresolve target\nlast\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document);
+
+        const createdId = await vscode.commands.executeCommand<string>('annotations.add', {
+            line: 1,
+            message: 'lot5-r2-resolve-without-delete',
+        });
+        assert.ok(typeof createdId === 'string');
+
+        const resolvedCount = await vscode.commands.executeCommand<number>('annotations.resolve', createdId);
+        assert.strictEqual(resolvedCount, 1);
+        const resolved = await waitForPersistedAnnotation(createdId, (entry) => entry.resolved === true);
+        assert.ok(resolved, 'resolve must not delete the annotation');
+        assert.strictEqual(resolved.resolved, true);
     });
 
     test('3. AnnotationStore.upsert exists and inserts an annotation programmatically (AI adapter contract)', function () {

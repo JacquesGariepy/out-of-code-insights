@@ -94,6 +94,20 @@ function makeTmpPersistence(): AnnotationPersistence {
     return new AnnotationPersistence({ uri: { fsPath: tmpRoot } });
 }
 
+class FailingAnnotationPersistence extends AnnotationPersistence {
+    override async save(): Promise<void> {
+        throw new Error('simulated persistence failure');
+    }
+}
+
+function makeFailingPersistence(): AnnotationPersistence {
+    const tmpRoot = path.join(
+        os.tmpdir(),
+        `out-of-code-insights-lot5-failing-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    return new FailingAnnotationPersistence({ uri: { fsPath: tmpRoot } });
+}
+
 // ---------------------------------------------------------------------------
 // AnnotationsTreeDataProvider
 // ---------------------------------------------------------------------------
@@ -256,8 +270,11 @@ suite('Lot 5 R2 worktree A — AnnotationCodeLensProvider', () => {
         subscriptions.push(provider);
 
         const lenses = provider.provideCodeLenses(document);
-        assert.strictEqual(lenses.length, 1);
+        assert.strictEqual(lenses.length, 2);
         assert.strictEqual(lenses[0].range.start.line, 2);
+        assert.strictEqual(lenses[0].command?.command, 'annotations.manage');
+        assert.strictEqual(lenses[1].command?.command, 'annotations.pickUpForMove');
+        assert.strictEqual(lenses[1].range.start.line, 2);
     });
 
     test('returns no lenses when globally disabled', async function () {
@@ -395,6 +412,33 @@ suite('Lot 5 R2 worktree A — AnnotationsDragAndDropController contract', () =>
         assert.strictEqual(store.get(target.id)?.startOffset, target.startOffset, 'drop target must not move');
     });
 
+    test('rolls the in-memory anchors back when move persistence fails', async function () {
+        this.timeout(10000);
+        const sourceUri = await ensureFixture('lot5-move-rollback-source.ts', 'zero\nsource\nlast\n');
+        const targetUri = await ensureFixture('lot5-move-rollback-target.ts', 'zero\none\ntwo\n');
+        const sourceDocument = await vscode.workspace.openTextDocument(sourceUri);
+        const targetDocument = await vscode.workspace.openTextDocument(targetUri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const annotation = store.add(makeDraft(sourceUri, 'rollback me'), { line: 1 }, sourceDocument);
+        const service = new AnnotationMoveService(store, makeFailingPersistence());
+
+        await assert.rejects(
+            service.move({
+                ids: [annotation.id],
+                targetUri: targetUri.toString(),
+                targetFile: relPath(targetUri),
+                targetLine: 2,
+            }),
+            /simulated persistence failure/
+        );
+
+        const restored = store.get(annotation.id);
+        assert.strictEqual(restored?.fileUri, sourceUri.toString());
+        assert.strictEqual(sourceDocument.positionAt(restored?.startOffset ?? -1).line, 1);
+        assert.notStrictEqual(restored?.fileUri, targetDocument.uri.toString());
+    });
+
     test('moves a tree annotation onto the exact editor drop line without inserting text', async function () {
         this.timeout(10000);
         const sourceUri = await ensureFixture('lot5-drag-editor-source.ts', 'source zero\nsource annotation\n');
@@ -421,11 +465,11 @@ suite('Lot 5 R2 worktree A — AnnotationsDragAndDropController contract', () =>
             transfer,
             cancellation.token
         );
-        cancellation.dispose();
 
         assert.ok(edit, 'the custom tree payload should produce a native DocumentDropEdit');
         assert.strictEqual(edit.insertText, '', 'moving metadata must not insert text into source code');
         assert.deepStrictEqual(annotationDocumentDropMetadata.dropMimeTypes, ['application/vnd.code.tree.annotation']);
+        cancellation.dispose();
         const moved = store.get(annotation.id);
         assert.strictEqual(moved?.fileUri, targetUri.toString());
         assert.strictEqual(targetDocument.positionAt(moved?.startOffset ?? -1).line, 3);

@@ -43,56 +43,11 @@ suite('Extension activation', () => {
 
         const commands = await vscode.commands.getCommands(true);
 
-        // All command IDs declared in package.json contributes.commands
-        const allExpected = [
-            'annotations.add',
-            'annotations.addKanbanColumn',
-            'annotations.addSnippet',
-            'annotations.aiAnalyzeFile',
-            'annotations.aiAnalyzeFileWithProfile',
-            'annotations.aiBatchAnnotate',
-            'annotations.aiSuggest',
-            'annotations.aiSuggestWithProfile',
-            'annotations.applySnippet',
-            'annotations.applyTemplate',
-            'annotations.batchCreateMixed',
-            'annotations.batchEdit',
-            'annotations.clearAll',
-            'annotations.createLink',
-            'annotations.createTemplate',
-            'annotations.delete',
-            'annotations.edit',
-            'annotations.exportJSON',
-            'annotations.importJSON',
-            'annotations.keywordSearch',
-            'annotations.manageAIProfiles',
-            'annotations.manageProfiles',
-            'annotations.manageTemplates',
-            'annotations.markAsViewed',
-            'annotations.moveDown',
-            'annotations.moveToColumn',
-            'annotations.moveUp',
-            'annotations.navigate',
-            'annotations.navigateToLinked',
-            'annotations.nextAnnotation',
-            'annotations.pinToggle',
-            'annotations.previewSnippet',
-            'annotations.previousAnnotation',
-            'annotations.removeLink',
-            'annotations.reply',
-            'annotations.reviewMode.filter',
-            'annotations.selectProfile',
-            'annotations.setSeverity',
-            'annotations.show',
-            'annotations.showKanban',
-            'annotations.showLinks',
-            'annotations.startReview',
-            'annotations.stopReview',
-            'annotations.toggleDisplay',
-            'annotations.updateApiKey',
-            'stack.back',
-            'stack.forward',
-        ];
+        const contributions = ext.packageJSON.contributes?.commands as Array<{ command?: unknown }> | undefined;
+        assert.ok(Array.isArray(contributions), 'package.json must contribute commands');
+        const allExpected = contributions
+            .map(({ command }) => command)
+            .filter((command): command is string => typeof command === 'string');
 
         const missing = allExpected.filter((cmd) => !commands.includes(cmd));
         assert.strictEqual(missing.length, 0, `The following commands are not registered: ${missing.join(', ')}`);

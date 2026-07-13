@@ -838,7 +838,10 @@ suite('AnnotationStore — auto paste detection', () => {
         assert.strictEqual(all.length, 4, 'two originals + two co-located copies');
         assert.strictEqual(all.filter((a) => a.origin.kind === 'paste').length, 2);
         assert.deepStrictEqual(
-            all.filter((a) => a.origin.kind === 'paste').map((a) => a.message).sort(),
+            all
+                .filter((a) => a.origin.kind === 'paste')
+                .map((a) => a.message)
+                .sort(),
             ['first', 'second']
         );
     });
@@ -846,8 +849,16 @@ suite('AnnotationStore — auto paste detection', () => {
     test('cut → cross-file paste moves every co-located annotation and updates file metadata', () => {
         const store = new AnnotationStore();
         const source = makeDoc('aaa\nTARGET\nzzz\n', 'file:///source.ts');
-        const first = store.add({ ...defaultDraft('file:///source.ts', 'source.ts'), message: 'first' }, { line: 1 }, asDoc(source));
-        const second = store.add({ ...defaultDraft('file:///source.ts', 'source.ts'), message: 'second' }, { line: 1 }, asDoc(source));
+        const first = store.add(
+            { ...defaultDraft('file:///source.ts', 'source.ts'), message: 'first' },
+            { line: 1 },
+            asDoc(source)
+        );
+        const second = store.add(
+            { ...defaultDraft('file:///source.ts', 'source.ts'), message: 'second' },
+            { line: 1 },
+            asDoc(source)
+        );
 
         const sourceAfterCut = makeDoc('aaa\nzzz\n', 'file:///source.ts', 2);
         store.applyDocumentChange(
