@@ -2949,7 +2949,7 @@ export class AnnotationManager extends EventEmitter {
                         <div class="title">${loc('annotationsTitle', 'Out-of-Code Insights')}</div>
                     </div>
                     <div class="drag-hint">
-                        ${loc('dragHint', 'Drag an annotation by its handle onto another card or file. Multi-selected annotations move together and keep their identity.')}
+                        ${loc('dragHint', 'Drag an annotation by its handle onto another card, file, or code editor line. Multi-selected annotations move together and keep their identity.')}
                     </div>
                 </div>
 
@@ -3244,10 +3244,9 @@ export class AnnotationManager extends EventEmitter {
                     draggedAnnotationIds = selectedIds.has(id) ? Array.from(selectedIds) : [id];
                     event.dataTransfer.effectAllowed = 'move';
                     event.dataTransfer.setData(
-                        'application/vnd.out-of-code-insights.annotations+json',
+                        'application/vnd.code.tree.annotation',
                         JSON.stringify({ version: 1, ids: draggedAnnotationIds })
                     );
-                    event.dataTransfer.setData('text/plain', draggedAnnotationIds.join(','));
                     handle.closest('.annotation-card')?.classList.add('dragging');
                     document.body.classList.add('annotation-drag-active');
                 });

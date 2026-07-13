@@ -26,9 +26,12 @@ import {
     AnnotationsTreeDataProvider,
     FileTreeItem,
     AnnotationTreeItem,
-    parseAnnotationDragIds,
 } from '../../tree/AnnotationsTree';
-import { AnnotationMoveService } from '../../commands/AnnotationMoveService';
+import { AnnotationMoveService, parseAnnotationDragIds } from '../../commands/AnnotationMoveService';
+import {
+    AnnotationDocumentDropEditProvider,
+    annotationDocumentDropMetadata,
+} from '../../providers/AnnotationDocumentDropEditProvider';
 import { NavigationStackDataProvider } from '../../tree/NavigationStackTree';
 import { AnnotationCodeLensProvider } from '../../providers/AnnotationCodeLensProvider';
 import { AnnotationPersistence } from '../../transactional/AnnotationPersistence';
@@ -390,6 +393,42 @@ suite('Lot 5 R2 worktree A — AnnotationsDragAndDropController contract', () =>
         assert.strictEqual(targetDocument.positionAt(movedFirst?.startOffset ?? -1).line, 2);
         assert.strictEqual(targetDocument.positionAt(movedSecond?.startOffset ?? -1).line, 4);
         assert.strictEqual(store.get(target.id)?.startOffset, target.startOffset, 'drop target must not move');
+    });
+
+    test('moves a tree annotation onto the exact editor drop line without inserting text', async function () {
+        this.timeout(10000);
+        const sourceUri = await ensureFixture('lot5-drag-editor-source.ts', 'source zero\nsource annotation\n');
+        const targetUri = await ensureFixture(
+            'lot5-drag-editor-target.ts',
+            'target zero\ntarget one\ntarget two\ntarget three\n'
+        );
+        const sourceDocument = await vscode.workspace.openTextDocument(sourceUri);
+        const targetDocument = await vscode.workspace.openTextDocument(targetUri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const annotation = store.add(makeDraft(sourceUri, 'drop into editor'), { line: 1 }, sourceDocument);
+        const provider = new AnnotationDocumentDropEditProvider(new AnnotationMoveService(store, makeTmpPersistence()));
+        const transfer = new vscode.DataTransfer();
+        transfer.set(
+            'application/vnd.code.tree.annotation',
+            new vscode.DataTransferItem(JSON.stringify({ version: 1, ids: [annotation.id] }))
+        );
+        const cancellation = new vscode.CancellationTokenSource();
+
+        const edit = await provider.provideDocumentDropEdits(
+            targetDocument,
+            new vscode.Position(3, 4),
+            transfer,
+            cancellation.token
+        );
+        cancellation.dispose();
+
+        assert.ok(edit, 'the custom tree payload should produce a native DocumentDropEdit');
+        assert.strictEqual(edit.insertText, '', 'moving metadata must not insert text into source code');
+        assert.deepStrictEqual(annotationDocumentDropMetadata.dropMimeTypes, ['application/vnd.code.tree.annotation']);
+        const moved = store.get(annotation.id);
+        assert.strictEqual(moved?.fileUri, targetUri.toString());
+        assert.strictEqual(targetDocument.positionAt(moved?.startOffset ?? -1).line, 3);
     });
 });
 

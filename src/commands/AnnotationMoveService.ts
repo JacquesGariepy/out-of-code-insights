@@ -7,10 +7,26 @@ import type { AnnotationV2 } from '../transactional/types';
 
 export const ANNOTATION_DRAG_MIME = 'application/vnd.code.tree.annotation';
 
+export function parseAnnotationDragIds(value: unknown): string[] {
+    if (typeof value !== 'string') {
+        return [];
+    }
+    try {
+        const payload = JSON.parse(value) as { ids?: unknown };
+        if (Array.isArray(payload.ids)) {
+            return payload.ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+        }
+    } catch {
+        // v1.4.0 and earlier encoded ids as a comma-separated string.
+    }
+    return value.split(',').filter((id) => id.trim().length > 0);
+}
+
 export interface MoveAnnotationsRequest {
     ids: readonly string[];
     targetAnnotationId?: string;
     targetFile?: string;
+    targetUri?: string;
     targetLine?: number;
 }
 
@@ -111,6 +127,17 @@ export class AnnotationMoveService {
             if (!targetAnnotation) {
                 return undefined;
             }
+        }
+
+        if (!targetAnnotation && request.targetUri) {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(request.targetUri));
+            let line = request.targetLine;
+            if (line === undefined) {
+                line = await this.pickDestinationLine(document, 0);
+            }
+            return line === undefined
+                ? undefined
+                : { document, line: Math.max(0, Math.min(document.lineCount - 1, line)) };
         }
 
         const fileCandidate = targetAnnotation
