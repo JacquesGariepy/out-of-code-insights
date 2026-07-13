@@ -7,6 +7,89 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-07-13
+
+### Added
+
+- Interactive inline annotation hints: click the annotation to open it or its
+  Move handle to enter an exact-line, cross-file pick-up/drop mode.
+- Destination-line preview, status-bar feedback, Enter/`Ctrl+Alt+M` drop and
+  Escape cancellation, with multi-annotation support.
+- Move actions in CodeLens, decoration hovers and native Comments threads.
+- Grouped right-click annotation actions across editor, tree and comment
+  surfaces.
+
+### Fixed
+
+- CodeLens configuration now reads `annotation.codelens.*`, matching the
+  settings contributed by the extension.
+- Failed move persistence now rolls back the in-memory store, avoiding a split
+  between editor state and `annotations.json`.
+- Direct editor moves preserve identity and collaboration metadata and never
+  insert source text.
+- Resolve marks the annotation resolved instead of deleting it.
+- Debounced persistence is serialized, retryable and flushed during extension
+  shutdown; failed moves also roll their in-memory anchors back.
+- The active v2 path now consumes the configured storage path, username,
+  severity and per-file limit settings.
+- Duplicate Chat Participant activation was removed.
+
+See [the focused 1.4.3 release notes](./docs/CHANGELOG-1.4.3.md).
+
+## [1.4.2] - 2026-07-12
+
+### Added
+
+- Native TreeView annotations can be dropped on an exact editor line through
+  `DocumentDropEditProvider`, including multi-selection and relative spacing.
+- Tree and panel share a versioned annotation drag payload that inserts no
+  source text.
+
+See [the focused 1.4.2 release notes](./docs/CHANGELOG-1.4.2.md).
+
+## [1.4.1] - 2026-07-12
+
+### Added
+
+- Tree and panel drag handles perform identity-preserving, cross-file moves.
+- Multi-selection movement, file-group destination picking and an accessible
+  keyboard Move command were added.
+
+See [the focused 1.4.1 release notes](./docs/CHANGELOG-1.4.1.md).
+
+## [1.4.0] - 2026-07-12
+
+### Added
+
+- The native tree gained badges, summaries, multi-selection, checkboxes,
+  accessibility metadata and bulk operations.
+- The panel gained persistent selection and transactional bulk triage.
+
+See [the focused 1.4.0 release notes](./docs/CHANGELOG-1.4.0.md).
+
+## [1.3.0] - 2026-07-12
+
+### Added
+
+- Cross-file manual re-anchoring, tracking diagnostics and panel density modes.
+
+### Fixed
+
+- Range validation and fragmented cut/paste tracking were hardened.
+
+See [the focused 1.3.0 release notes](./docs/CHANGELOG-1.3.0.md).
+
+## [1.2.1] - 2026-07-11
+
+### Fixed
+
+- Annotation identity now follows copy, cut, paste, replacement, Undo, Redo
+  and native editor movement more reliably across files.
+- The annotation panel gained summary filters, responsive accessibility and
+  reduced-motion support.
+
+See [the focused 1.2.1 release notes](./docs/CHANGELOG-1.2.1.md).
+
 ## [1.2.0] - 2026-07-01
 
 ### Added

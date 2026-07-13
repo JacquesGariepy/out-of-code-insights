@@ -84,13 +84,15 @@ export class AnnotationMoveService {
                     vscode.workspace.asRelativePath(target.document.uri)
                 );
             });
+            // Persist while the store transaction is still reversible. If
+            // disk I/O fails, rollback restores the original anchors instead
+            // of leaving memory and annotations.json out of sync.
+            await this.persistence.save(this.store.serialize());
             this.store.commit();
         } catch (error) {
             this.store.rollback();
             throw error;
         }
-
-        await this.persistence.save(this.store.serialize());
         return {
             movedIds: sourceLocations.map((entry) => entry.annotation.id),
             file: vscode.workspace.asRelativePath(target.document.uri),

@@ -27,8 +27,8 @@ export class AnnotationCodeLensProvider implements vscode.CodeLensProvider {
         this.subscriptions.push(
             vscode.workspace.onDidChangeConfiguration((e) => {
                 if (
-                    e.affectsConfiguration('outOfCodeInsights.codelens') ||
-                    e.affectsConfiguration('outOfCodeInsights.enableAnnotations')
+                    e.affectsConfiguration('annotation.codelens') ||
+                    e.affectsConfiguration('annotation.enableAnnotations')
                 ) {
                     this._onDidChangeCodeLenses.fire();
                 }
@@ -79,6 +79,16 @@ export class AnnotationCodeLensProvider implements vscode.CodeLensProvider {
                     arguments: [lineAnnotations],
                 })
             );
+            if (this.codelensCommandsEnabled()) {
+                lenses.push(
+                    new vscode.CodeLens(range, {
+                        title: `$(move) Pick up ${lineAnnotations.length > 1 ? `${lineAnnotations.length} annotations` : 'to move'}`,
+                        tooltip: 'Move the cursor to a destination line, then press Enter to drop',
+                        command: 'annotations.pickUpForMove',
+                        arguments: [lineAnnotations.map((annotation) => annotation.id)],
+                    })
+                );
+            }
         }
 
         return lenses;
@@ -93,6 +103,10 @@ export class AnnotationCodeLensProvider implements vscode.CodeLensProvider {
     }
 
     private codelensEnabled(): boolean {
-        return vscode.workspace.getConfiguration('outOfCodeInsights').get<boolean>('codelens.enable', true) === true;
+        return vscode.workspace.getConfiguration('annotation').get<boolean>('codelens.enable', true) === true;
+    }
+
+    private codelensCommandsEnabled(): boolean {
+        return vscode.workspace.getConfiguration('annotation').get<boolean>('codelens.showCommands', true) === true;
     }
 }

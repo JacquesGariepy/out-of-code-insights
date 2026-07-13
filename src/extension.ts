@@ -27,10 +27,13 @@ import { initializeLogger, getLogger } from './utils/logger';
 
 // ── Lot 5 R2 — new transactional stack ─────────────────────────────────────
 import { AnnotationStore } from './transactional/AnnotationStore';
-import { AnnotationPersistence } from './transactional/AnnotationPersistence';
+import { AnnotationPersistence, DEFAULT_ANNOTATION_FILE_RELATIVE_PATH } from './transactional/AnnotationPersistence';
+import { AnnotationSaveCoordinator } from './transactional/AnnotationSaveCoordinator';
+import type { AnnotationStoreFileV2 } from './transactional/types';
 import { VisibilityFilter } from './transactional/VisibilityFilter';
 import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
+import { AnnotationInlayHintsProvider } from './providers/AnnotationInlayHintsProvider';
 import {
     AnnotationDocumentDropEditProvider,
     annotationDocumentDropMetadata,
@@ -41,6 +44,7 @@ import { languageOfPath } from './comments/languageOfPath';
 import { captureAnchor } from './anchoring/anchor';
 import { TextBuffer } from './anchoring/textBuffer';
 import { AnnotationMoveService, type MoveAnnotationsRequest } from './commands/AnnotationMoveService';
+import { AnnotationEditorMoveController } from './commands/AnnotationEditorMoveController';
 import { toFileUriString } from './common/fileUri';
 import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
 import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
@@ -70,6 +74,7 @@ let visibilityFilter: VisibilityFilter | undefined;
 let kanbanColumnStore: KanbanColumnStore | undefined;
 let annotationSyncService: AnnotationSyncService | undefined;
 let annotationMoveService: AnnotationMoveService | undefined;
+let annotationSaveCoordinator: AnnotationSaveCoordinator<AnnotationStoreFileV2> | undefined;
 let selectedTreeAnnotationIds: string[] = [];
 
 /** Reentrancy guard for {@link generateDocumentationNow}. */
@@ -156,7 +161,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // off so the two layers do not race for the same file during R2.
         await bootstrapTransactionalStack(context, logger);
 
-        annotationManager = new AnnotationManager(context);
+        annotationManager = new AnnotationManager(context, visibilityFilter);
         // Stub the legacy disk paths during R2: the v2 envelope on disk is
         // owned by AnnotationStore now. Without this, AnnotationManager
         // would crash on the v2 shape and pop a "failed to load" toast.
@@ -174,6 +179,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
         const treeStore = annotationStore;
         annotationMoveService = new AnnotationMoveService(treeStore, annotationPersistence);
+        context.subscriptions.push(
+            new AnnotationEditorMoveController(treeStore, annotationMoveService, {
+                visibilityFilter,
+                selectedIds: () => selectedTreeAnnotationIds,
+            })
+        );
         context.subscriptions.push(
             vscode.languages.registerDocumentDropEditProvider(
                 { scheme: 'file' },
@@ -309,7 +320,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         logger.info('Waiting for AnnotationManager initialization');
         await annotationManager.waitUntilInitialized();
         logger.info('AnnotationManager initialized');
-        annotationManager.createChatParticipant(context);
 
         // Lot 5 R2 hot-fix: bridge AnnotationStore → legacy
         // AnnotationManager.annotations Map. Without this, the legacy
@@ -723,7 +733,19 @@ function registerLicenseCommands(context: vscode.ExtensionContext): void {
     );
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
+    const saveCoordinator = annotationSaveCoordinator;
+    annotationSaveCoordinator = undefined;
+    if (saveCoordinator) {
+        try {
+            await saveCoordinator.flush();
+        } catch (error) {
+            // The coordinator already logged and surfaced the failure. Keep
+            // teardown moving so the extension host can close cleanly.
+            console.error('Final annotation save failed during deactivation', error);
+        }
+        saveCoordinator.dispose();
+    }
     if (licenseManager) {
         licenseManager.dispose();
         licenseManager = undefined;
@@ -795,13 +817,32 @@ function readCutRecoveryWindowMs(): number {
     return Math.min(600, Math.max(5, seconds)) * 1000;
 }
 
+function configuredAnnotationPath(workspaceFolder: vscode.WorkspaceFolder): string {
+    const configured = vscode.workspace
+        .getConfiguration('annotation')
+        .get<string>('path', DEFAULT_ANNOTATION_FILE_RELATIVE_PATH)
+        .trim();
+    let candidate = configured || DEFAULT_ANNOTATION_FILE_RELATIVE_PATH;
+    if (path.isAbsolute(candidate)) {
+        const relative = path.relative(workspaceFolder.uri.fsPath, candidate);
+        if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+            throw new Error(loc('annotationPathOutsideWorkspace', 'Annotation path must stay inside the workspace.'));
+        }
+        candidate = relative;
+    }
+    if (path.extname(candidate).toLowerCase() !== '.json') {
+        candidate = path.join(candidate, 'annotations.json');
+    }
+    return candidate;
+}
+
 async function bootstrapTransactionalStack(context: vscode.ExtensionContext, logger: ActivationLogger): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 
     annotationStore = new AnnotationStore({ suspendTtlMs: readCutRecoveryWindowMs() });
 
     if (workspaceFolder) {
-        annotationPersistence = new AnnotationPersistence(workspaceFolder);
+        annotationPersistence = new AnnotationPersistence(workspaceFolder, configuredAnnotationPath(workspaceFolder));
         try {
             const payload = await annotationPersistence.load();
             annotationStore.deserialize(payload);
@@ -854,35 +895,46 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     );
 
     // Wire store.onDidChange → debounced persistence.save (100 ms).
-    // 100 ms is enough to coalesce within-event mutations (keystroke bursts,
-    // multi-cursor inserts) without racing the typical 500 ms wait used by
-    // the EDH integration suite when it reads back the persisted file.
-    let saveTimer: NodeJS.Timeout | undefined;
+    // The configured delay coalesces mutation bursts. The coordinator keeps
+    // writes serialized and exposes a flush barrier used by deactivate().
     let lastSelfWriteAt = 0;
-    const flushSave = (): void => {
-        saveTimer = undefined;
-        if (!annotationStore || !annotationPersistence) {
-            return;
-        }
-        const payload = annotationStore.serialize();
-        lastSelfWriteAt = Date.now();
-        annotationPersistence
-            .save(payload)
-            .then(() => {
+    if (annotationPersistence) {
+        const store = annotationStore;
+        const persistence = annotationPersistence;
+        const coordinator = new AnnotationSaveCoordinator<AnnotationStoreFileV2>(
+            () => store.serialize(),
+            async (payload) => {
                 lastSelfWriteAt = Date.now();
-            })
-            .catch((err: unknown) => {
-                logger.error('AnnotationPersistence.save failed', err);
-            });
-    };
-    context.subscriptions.push(
-        annotationStore.onDidChange(() => {
-            if (saveTimer) {
-                clearTimeout(saveTimer);
+                await persistence.save(payload);
+            },
+            100,
+            () => {
+                lastSelfWriteAt = Date.now();
+            },
+            (error) => {
+                logger.error('AnnotationPersistence.save failed', error);
+                const retryLabel = loc('retryAnnotationSave', 'Retry save');
+                void vscode.window
+                    .showErrorMessage(
+                        loc(
+                            'annotationSaveFailedDirty',
+                            'Annotations could not be saved. Changes remain in memory and will be retried.'
+                        ),
+                        retryLabel
+                    )
+                    .then((choice) => {
+                        if (choice === retryLabel) {
+                            void annotationSaveCoordinator?.flush().catch(() => undefined);
+                        }
+                    });
             }
-            saveTimer = setTimeout(flushSave, 100);
-        })
-    );
+        );
+        annotationSaveCoordinator = coordinator;
+        context.subscriptions.push(
+            store.onDidChange(() => coordinator.schedule()),
+            coordinator
+        );
+    }
 
     // Live external-change watcher: the MCP server (or any other tool)
     // writes the same annotations.json. Reload the store when the file
@@ -1081,6 +1133,16 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
         codeLensProvider
     );
 
+    // Interactive inline annotations. Inlay hint label parts are one of the
+    // few stable VS Code editor surfaces that can invoke extension commands,
+    // so the message opens the panel and the adjacent move handle starts the
+    // native pick-up/drop workflow.
+    const inlayHintsProvider = new AnnotationInlayHintsProvider(annotationStore, visibilityFilter);
+    context.subscriptions.push(
+        vscode.languages.registerInlayHintsProvider({ scheme: 'file' }, inlayHintsProvider),
+        inlayHintsProvider
+    );
+
     // ── Comments API controller ─────────────────────────────────────────
     // Renders annotations as native editor comment threads. Gated by
     // `annotation.commentsView`; the setting is read once at activation
@@ -1088,10 +1150,6 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     if (vscode.workspace.getConfiguration('annotation').get<boolean>('commentsView', true)) {
         context.subscriptions.push(new AnnotationCommentsController(annotationStore));
     }
-
-    // The save-timer flush helper is reachable through the closure above; the
-    // variable declaration here keeps lint happy without a leaked unused-var.
-    void flushSave;
 }
 
 /**
@@ -1311,15 +1369,32 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.commands.registerCommand(
             'annotations.add',
-            async (args?: { line?: number; offset?: number; message?: string; tags?: string[] }) => {
+            async (args?: {
+                line?: number;
+                offset?: number;
+                message?: string;
+                tags?: string[];
+            }): Promise<string | undefined> => {
                 if (!annotationStore) {
                     vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
-                    return;
+                    return undefined;
                 }
                 const editor = vscode.window.activeTextEditor;
                 if (!editor) {
                     vscode.window.showErrorMessage(localize('noActiveEditor', 'No active editor found.'));
-                    return;
+                    return undefined;
+                }
+                if (
+                    editor.document.uri.scheme !== 'file' ||
+                    vscode.workspace.getWorkspaceFolder(editor.document.uri) === undefined
+                ) {
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'annotationSavedFileRequired',
+                            'Open a saved file inside the workspace before adding an annotation.'
+                        )
+                    );
+                    return undefined;
                 }
                 const message =
                     args?.message ??
@@ -1330,32 +1405,45 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                             text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
                     }));
                 if (!message) {
-                    return;
+                    return undefined;
                 }
                 const document = editor.document;
                 const fileUri = document.uri.toString();
                 const file = vscode.workspace.asRelativePath(document.uri);
+                const annotationConfig = vscode.workspace.getConfiguration('annotation');
+                const maxPerFile = annotationConfig.get<number>('maxAnnotationsPerFile', 1000);
+                if (maxPerFile > 0 && annotationStore.listForFile(fileUri).length >= maxPerFile) {
+                    vscode.window.showWarningMessage(
+                        loc('maxAnnotationsReached', 'This file has reached its limit of {0} annotations.', maxPerFile)
+                    );
+                    return undefined;
+                }
                 const draft = {
                     fileUri,
                     file,
                     origin: { kind: 'manual' } as const,
                     message,
+                    author: annotationConfig.get<string>('username', 'Anonymous').trim() || 'Anonymous',
                     timestamp: new Date().toISOString(),
+                    severity: annotationConfig.get<string>('defaultSeverity', 'info'),
                     languageId: document.languageId,
                     ...(args?.tags && args.tags.length > 0 ? { tags: args.tags } : {}),
                 };
                 try {
+                    let created: Readonly<{ id: string }>;
                     if (typeof args?.offset === 'number') {
-                        annotationStore.add(draft, { offset: args.offset }, document);
+                        created = annotationStore.add(draft, { offset: args.offset }, document);
                     } else {
                         const line = args?.line ?? editor.selection.active.line;
-                        annotationStore.add(draft, { line }, document);
+                        created = annotationStore.add(draft, { line }, document);
                     }
+                    return created.id;
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
                     vscode.window.showErrorMessage(
                         localize('addAnnotationError', 'Failed to add annotation') + `: ${msg}`
                     );
+                    return undefined;
                 }
             }
         )
@@ -1384,6 +1472,34 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             for (const ann of annotationStore.serialize().annotations) {
                 annotationStore.remove(ann.id);
             }
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.resolve', (commandArg?: unknown) => {
+            const store = annotationStore;
+            if (!store) {
+                return 0;
+            }
+            let annotationId = annotationIdFromCommandArg(commandArg);
+            if (!annotationId) {
+                const editor = vscode.window.activeTextEditor;
+                if (editor) {
+                    const line = editor.selection.active.line;
+                    annotationId = store
+                        .listForFile(editor.document.uri.toString())
+                        .find((annotation) => editor.document.positionAt(annotation.startOffset).line === line)?.id;
+                }
+            }
+            if (!annotationId || !store.get(annotationId)) {
+                vscode.window.showInformationMessage(
+                    loc('noAnnotationResolve', 'No annotation found to resolve at the current location.')
+                );
+                return 0;
+            }
+            store.update(annotationId, { resolved: true, timestamp: new Date().toISOString() });
+            vscode.window.setStatusBarMessage(loc('annotationResolved', 'Annotation resolved.'), 3000);
+            return 1;
         })
     );
 
@@ -1505,6 +1621,59 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             );
             vscode.window.setStatusBarMessage(loc('bulkActionComplete', 'Updated {0} annotations.', ids.length), 4000);
             return ids.length;
+        })
+    );
+
+    // TreeItem-aware commands. Legacy edit/delete/pin commands resolve from
+    // the active cursor, which is unsafe when a context menu belongs to a
+    // different tree row or file.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.treeEdit', async (commandArg?: unknown) => {
+            const store = annotationStore;
+            const id = annotationIdFromCommandArg(commandArg);
+            const annotation = id ? store?.get(id) : undefined;
+            if (!store || !annotation) {
+                return 0;
+            }
+            const message = await vscode.window.showInputBox({
+                title: loc('treeEditTitle', 'Edit annotation'),
+                value: annotation.message,
+                validateInput: (value) =>
+                    value.trim().length === 0 ? loc('emptyMessageError', 'Message cannot be empty') : undefined,
+            });
+            if (!message || message === annotation.message) {
+                return 0;
+            }
+            store.update(annotation.id, { message, timestamp: new Date().toISOString() });
+            return 1;
+        }),
+        vscode.commands.registerCommand('annotations.treeDelete', async (commandArg?: unknown) => {
+            const ids = treeSelectionIds(commandArg);
+            return vscode.commands.executeCommand<number>('annotations.bulkActions', { ids, action: 'delete' });
+        }),
+        vscode.commands.registerCommand('annotations.treeSetSeverity', async (commandArg?: unknown) => {
+            const ids = treeSelectionIds(commandArg);
+            return vscode.commands.executeCommand<number>('annotations.bulkActions', { ids, action: 'severity' });
+        }),
+        vscode.commands.registerCommand('annotations.treeTogglePin', (commandArg?: unknown) => {
+            const store = annotationStore;
+            const clickedId = annotationIdFromCommandArg(commandArg);
+            const clicked = clickedId ? store?.get(clickedId) : undefined;
+            if (!store || !clicked) {
+                return 0;
+            }
+            const ids = treeSelectionIds(commandArg);
+            store.beginTransaction();
+            try {
+                for (const id of ids) {
+                    store.update(id, { pinned: !clicked.pinned });
+                }
+                store.commit();
+                return ids.length;
+            } catch (error) {
+                store.rollback();
+                throw error;
+            }
         })
     );
 
@@ -2066,6 +2235,14 @@ function annotationIdFromCommandArg(value: unknown): string | undefined {
         return candidate.annotation.id;
     }
     return typeof candidate.id === 'string' ? candidate.id : undefined;
+}
+
+function treeSelectionIds(value: unknown): string[] {
+    const clickedId = annotationIdFromCommandArg(value);
+    if (!clickedId) {
+        return [...selectedTreeAnnotationIds];
+    }
+    return selectedTreeAnnotationIds.includes(clickedId) ? [...selectedTreeAnnotationIds] : [clickedId];
 }
 
 /**

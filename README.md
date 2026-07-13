@@ -16,7 +16,8 @@ local or be versioned and shared with the team.
 **[Install from VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=jacquesgariepy.out-of-code-insights)** ·
 **[Install from Open VSX](https://open-vsx.org/extension/jacquesgariepy/out-of-code-insights)** ·
 **[Download the latest VSIX](https://github.com/JacquesGariepy/out-of-code-insights/releases/latest)** ·
-**[Read the documentation](./docs/README.md)**
+**[Read the documentation](./docs/README.md)** ·
+**[Audit the complete feature catalogue](./docs/FEATURE-CATALOG.md)**
 
 ![Annotations panel and editor decorations](https://github.com/user-attachments/assets/beedc87b-c914-48d0-b7fa-cfe8194074f5)
 
@@ -28,23 +29,26 @@ local or be versioned and shared with the team.
 | Resilient tracking            | Annotations follow typing, line moves, copy/cut/paste, drag-and-drop, Undo/Redo, renames, and external edits |
 | Recovery instead of data loss | Orphaned annotations stay recoverable and can be attached to the current cursor                              |
 | One workspace for discussion  | Threads, tags, severities, filters, pagination, review mode, and Kanban                                      |
-| Native VS Code experience     | Gutter decorations, CodeLens, Comments API threads, Tree View, commands, and keyboard access                 |
+| Native VS Code experience     | Interactive Inlay Hints, gutter, CodeLens, Comments, Tree View, grouped menus, commands, and keyboard access |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-## What is new in 1.4.2
+## What is new in 1.4.3
 
-- Drag annotations from the native tree directly onto the exact destination
-  line in a code editor.
-- Multi-selected annotations move together and preserve their identity,
-  discussions, metadata, and relative line spacing.
-- The move uses VS Code's native **Drop Into Editor** API and inserts no text in
-  the source document.
-- Panel drag handles emit the same annotation payload where the host supports
-  webview-to-editor dragging; **Move** remains the accessible fallback.
-- The 1.4.1 tree/panel card and file-group drop targets remain available.
+- Click the **Move** handle directly beside an inline annotation, move the
+  cursor to any line or file, then press **Enter** to drop or **Escape** to
+  cancel. The target line and status bar show the active move state.
+- Click the annotation message itself to open it in the panel. CodeLens, hover
+  links and native Comments threads expose the same move workflow.
+- Annotation actions in right-click menus are grouped by capture, edit/move,
+  organization, links, AI, tools and destructive operations.
+- Move transactions now roll back in memory if persistence fails, preventing
+  the editor state and `annotations.json` from disagreeing.
+- The documented `annotation.codelens.*` settings now work as configured.
+- Resolve keeps the record and marks it resolved; shutdown flushes pending
+  saves, and failed writes remain retryable instead of being silently lost.
 
-See the [1.4.2 release notes](./docs/CHANGELOG-1.4.2.md) or the
-[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.2).
+See the [1.4.3 release notes](./docs/CHANGELOG-1.4.3.md) or open the
+[v1.4.3 GitHub release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.3).
 
 ## Start in 60 seconds
 
@@ -254,6 +258,12 @@ Attach and execute code directly from annotations:
 
 - Drag or move code normally in the editor; attached annotations follow the
   affected lines and blocks.
+- To start directly from the annotation shown beside the code, click its
+  **Move** handle. Move the cursor to the target line and press **Enter** (or
+  `Ctrl+Alt+M`; `Cmd+Alt+M` on macOS). Press **Escape** to cancel.
+- Click the inline annotation message to open its full thread and metadata in
+  the panel. A CodeLens action, hover link and native Comments action expose the
+  same pick-up operation when Inlay Hints are hidden by editor preferences.
 - Drag an annotation row onto another row in the native tree, or use the drag
   handle on a panel card, to move the annotation to that code location.
 - Drag a native tree row directly onto a line in an open code editor to attach
@@ -265,6 +275,11 @@ Attach and execute code directly from annotations:
   one-line adjustment.
 - To recover an orphan or deliberately move it elsewhere, place the cursor on
   the destination and run **Re-anchor Annotation to Current Cursor**.
+
+> VS Code API note: extensions cannot receive mouse-drag events from text
+> decorations, CodeLens, Comments threads or Inlay Hints. Literal drag starts
+> from the native Tree View. The inline **Move** handle uses the supported
+> command API and reaches the same exact line without changing source text.
 
 ### Replying to an Annotation
 

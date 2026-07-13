@@ -14,6 +14,7 @@ import { TemplateManager, AnnotationTemplate } from './TemplateManager';
 import { ReviewModeManager } from './ReviewModeManager';
 import { SnippetManager, SnippetHistoryEntry } from './SnippetManager';
 import { AnnotationStore } from '../transactional/AnnotationStore';
+import type { VisibilityFilter } from '../transactional/VisibilityFilter';
 import { KanbanView } from '../views/KanbanView';
 import { AnnotationManagerErrorHandling } from './AnnotationManagerErrorHandling';
 import { escapeHtml, generateNonce } from '../common/utils';
@@ -155,7 +156,10 @@ export class AnnotationManager extends EventEmitter {
         vscode.window.showInformationMessage(localize('searchReset', 'Search reset.'));
     }
 
-    constructor(private readonly context: vscode.ExtensionContext) {
+    constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly sharedVisibilityFilter?: VisibilityFilter
+    ) {
         super();
         this.configManager = new ConfigurationManager();
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
@@ -221,7 +225,10 @@ export class AnnotationManager extends EventEmitter {
         this.loadConfiguration();
 
         this.currentUser = this.config.username?.trim() || 'Anonymous';
-        this.annotationsEnabled = this.config.enableAnnotations === true;
+        const storedDisplayState = this.context.globalState.get<boolean>('annotationsEnabled');
+        this.annotationsEnabled =
+            this.config.enableAnnotations === true && (storedDisplayState === undefined || storedDisplayState);
+        this.sharedVisibilityFilter?.setRuntimeEnabled(this.annotationsEnabled);
         this.createChatParticipant(this.context);
 
         try {
@@ -869,7 +876,6 @@ export class AnnotationManager extends EventEmitter {
             }),
             vscode.commands.registerCommand('annotations.manage', this.manageAnnotationCommand.bind(this)),
             vscode.commands.registerCommand('annotations.showActivityBar', this.showAnnotationsPanel.bind(this)),
-            vscode.commands.registerCommand('annotations.resolve', this.resolveAnnotation.bind(this)),
             vscode.commands.registerCommand(
                 'annotations.autoResolveStale',
                 this.autoResolveStaleAnnotations.bind(this)
@@ -1589,6 +1595,7 @@ export class AnnotationManager extends EventEmitter {
         });
         if (!severity) return;
         this.currentFilter = `severity:${severity}`;
+        this.sharedVisibilityFilter?.setCurrentFilter(this.currentFilter);
         this.updateAnnotationsPanel();
         vscode.window.showInformationMessage(localize('severityFilter', 'Filter by severity applied.'));
     }
@@ -1608,6 +1615,7 @@ export class AnnotationManager extends EventEmitter {
 
     private handleFilter(filterValue: string): void {
         this.currentFilter = filterValue;
+        this.sharedVisibilityFilter?.setCurrentFilter(this.currentFilter);
         this.currentPage = 0;
         this.updateAnnotationsPanel();
     }
@@ -1697,19 +1705,40 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async manageAnnotationCommand(annotations: Annotation[]): Promise<void> {
-        const options = annotations.flatMap((annotation) => [
-            { label: `Edit: ${annotation.message}`, action: () => this.modifyAnnotation(annotation.id) },
-            { label: `Delete: ${annotation.message}`, action: () => this.deleteAnnotation(annotation.id) },
-        ]);
+        const options = annotations.flatMap((annotation) => {
+            const description = inlineLabel(annotation.message, 80) || annotation.id;
+            const detail = `${annotation.author || localize('unknownAuthor', 'Unknown author')} · ${annotation.file}:${annotation.line + 1}`;
+            return [
+                {
+                    label: '$(edit) Edit annotation',
+                    description,
+                    detail,
+                    action: () => this.modifyAnnotation(annotation.id),
+                },
+                {
+                    label: '$(move) Move annotation',
+                    description,
+                    detail,
+                    action: () => vscode.commands.executeCommand('annotations.pickUpForMove', annotation.id),
+                },
+                {
+                    label: '$(trash) Delete annotation',
+                    description,
+                    detail,
+                    action: () => this.deleteAnnotation(annotation.id),
+                },
+            ];
+        });
 
-        const selected = await vscode.window.showQuickPick(
-            options.map((opt) => opt.label),
-            { placeHolder: localize('chooseAction', 'Choose an action for annotations on this line') }
-        );
+        const selected = await vscode.window.showQuickPick(options, {
+            title: localize('manageAnnotationsTitle', 'Manage annotations on this line'),
+            placeHolder: localize('chooseAction', 'Choose an annotation and action'),
+            matchOnDescription: true,
+            matchOnDetail: true,
+        });
 
-        const selectedOption = options.find((opt) => opt.label === selected);
-        if (selectedOption) {
-            await selectedOption.action();
+        if (selected) {
+            await selected.action();
         }
     }
 
@@ -2117,6 +2146,7 @@ export class AnnotationManager extends EventEmitter {
         const tag = await vscode.window.showInputBox({ prompt: localize('enterTag', 'Enter a tag to search') });
         if (!tag) return;
         this.currentFilter = tag;
+        this.sharedVisibilityFilter?.setCurrentFilter(this.currentFilter);
         this.updateAnnotationsPanel();
         vscode.window.showInformationMessage(localize('tagFilterApplied', 'Filter by tag applied.'));
     }
@@ -5769,7 +5799,10 @@ export class AnnotationManager extends EventEmitter {
         return true;
     }
 
-    private createDecorationForAnnotation(annotation: Annotation): vscode.TextEditorDecorationType {
+    private createDecorationForAnnotation(
+        annotation: Annotation,
+        document: vscode.TextDocument
+    ): vscode.TextEditorDecorationType {
         const isDark = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark;
         const colors = isDark ? this.config.colors.dark : this.config.colors.light;
 
@@ -5785,14 +5818,25 @@ export class AnnotationManager extends EventEmitter {
             tagStyles: styleSettings.get<Record<string, StyleSpec>>('tagStyles', {}),
         });
 
+        const nativeInlayHintSetting = vscode.workspace
+            .getConfiguration('editor', document)
+            .get<unknown>('inlayHints.enabled', 'on');
+        const nativeInlayHintsVisible = nativeInlayHintSetting !== false && nativeInlayHintSetting !== 'off';
+        const interactiveInlayHints = styleSettings.get<boolean>('inlayHints.enable', true) && nativeInlayHintsVisible;
         return vscode.window.createTextEditorDecorationType({
             isWholeLine: true,
             backgroundColor: style.backgroundColor ?? colors.highlightBackground,
-            after: {
-                contentText: ` 💬 ${severityIcon} ${inlineLabel(annotation.message)}${annotation.pinned ? '📌' : ''}`,
-                color: style.annotationColor ?? colors.annotation,
-                margin: '0 0 0 1em',
-            },
+            // Decoration text cannot receive mouse/drag events. When native
+            // interactive hints are enabled, the InlayHintsProvider owns the
+            // visible label and its clickable move handle. Keep this legacy
+            // projection as a configurable fallback.
+            after: interactiveInlayHints
+                ? undefined
+                : {
+                      contentText: ` 💬 ${severityIcon} ${inlineLabel(annotation.message)}${annotation.pinned ? '📌' : ''}`,
+                      color: style.annotationColor ?? colors.annotation,
+                      margin: '0 0 0 1em',
+                  },
             borderColor: style.border ?? colors.commentBorder,
             borderWidth: '0 0 0 2px',
             borderStyle: 'solid',
@@ -5829,15 +5873,16 @@ export class AnnotationManager extends EventEmitter {
             existingDecoration.dispose();
         }
 
-        const decorationType = this.createDecorationForAnnotation(annotation);
+        const decorationType = this.createDecorationForAnnotation(annotation, editor.document);
         this.decorationTypes.set(annotation.id, decorationType);
         // Single-line zero-width range: gutter icon only on the anchor line.
         const range = new vscode.Range(renderLine, 0, renderLine, 0);
 
         const snippet = annotation.message.substring(0, 15);
         const viewInPanelLabel = localize('viewInPanelLabel', 'View in Panel →');
+        const moveAnnotationLabel = localize('moveAnnotationLabel', 'Pick up to move ↔');
         const hoverMessage = new vscode.MarkdownString(
-            `${snippet}... [${viewInPanelLabel}](command:annotations.navigateToPanel?${encodeURIComponent(JSON.stringify(annotation.id))})`
+            `${snippet}... [${viewInPanelLabel}](command:annotations.navigateToPanel?${encodeURIComponent(JSON.stringify(annotation.id))}) · [${moveAnnotationLabel}](command:annotations.pickUpForMove?${encodeURIComponent(JSON.stringify(annotation.id))})`
         );
         hoverMessage.isTrusted = true;
 
@@ -6289,19 +6334,29 @@ export class AnnotationManager extends EventEmitter {
     }
 
     private async handleConfigurationChange(event: vscode.ConfigurationChangeEvent): Promise<void> {
-        if (event.affectsConfiguration('annotation')) {
-            this.loadConfiguration();
-            this.annotationsEnabled = this.config.enableAnnotations === true;
+        const annotationChanged = event.affectsConfiguration('annotation');
+        const nativeInlayHintsChanged = event.affectsConfiguration('editor.inlayHints.enabled');
+        if (annotationChanged || nativeInlayHintsChanged) {
+            if (annotationChanged) {
+                this.loadConfiguration();
+                const storedDisplayState = this.context.globalState.get<boolean>('annotationsEnabled');
+                this.annotationsEnabled =
+                    this.config.enableAnnotations === true && (storedDisplayState === undefined || storedDisplayState);
+                this.sharedVisibilityFilter?.setRuntimeEnabled(this.annotationsEnabled);
+            }
             await this.refreshAnnotations();
             this.updateStatusBar();
-            vscode.window.showInformationMessage(
-                localize('configurationUpdated', 'Annotation settings have been updated.')
-            );
+            if (annotationChanged) {
+                vscode.window.showInformationMessage(
+                    localize('configurationUpdated', 'Annotation settings have been updated.')
+                );
+            }
         }
     }
 
     public toggleAnnotationsDisplay(): void {
         this.annotationsEnabled = !this.annotationsEnabled;
+        this.sharedVisibilityFilter?.setRuntimeEnabled(this.annotationsEnabled);
 
         // Persist state in globalState
         this.context.globalState.update('annotationsEnabled', this.annotationsEnabled);
@@ -6379,7 +6434,11 @@ export class AnnotationManager extends EventEmitter {
             }
             const annotation = this.annotations.get(annotationId);
             if (!annotation) return;
-            await this.deleteAnnotation(annotationId);
+            annotation.resolved = true;
+            annotation.timestamp = new Date().toISOString();
+            await this.saveAnnotations();
+            await this.refreshAnnotations();
+            this.emit('annotationChanged');
             vscode.window.showInformationMessage(localize('annotationResolved', 'Annotation resolved successfully!'));
         } catch (error) {
             this.handleError(localize('resolveAnnotationError', 'Failed to resolve annotation'), error);

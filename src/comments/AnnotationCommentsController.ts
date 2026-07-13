@@ -148,6 +148,7 @@ export class AnnotationCommentsController implements vscode.Disposable {
             vscode.commands.registerCommand('annotations.commentUnresolve', (arg: ThreadArg) =>
                 this.handleSetResolved(arg, false)
             ),
+            vscode.commands.registerCommand('annotations.commentPickUp', (arg: ThreadArg) => this.handlePickUp(arg)),
             vscode.commands.registerCommand('annotations.commentDelete', (arg: ThreadArg) => this.handleDelete(arg))
         );
     }
@@ -246,6 +247,13 @@ export class AnnotationCommentsController implements vscode.Disposable {
         // Ephemeral gutter thread without a backing annotation: just drop it.
         if (typeof arg === 'object' && arg !== null && typeof (arg as vscode.CommentThread).dispose === 'function') {
             (arg as vscode.CommentThread).dispose();
+        }
+    }
+
+    private async handlePickUp(arg: ThreadArg): Promise<void> {
+        const annotationId = this.annotationIdFromArg(arg);
+        if (annotationId) {
+            await vscode.commands.executeCommand('annotations.pickUpForMove', annotationId);
         }
     }
 

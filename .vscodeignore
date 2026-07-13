@@ -30,8 +30,8 @@ desktop/**
 .gitattributes
 .git/**
 
-# Project documentation that lives on the repo, not the package
-docs/**
+# Keep docs/** in the VSIX because README and CHANGELOG link to the release,
+# command, onboarding and architecture guides.
 CONTRIBUTING.md
 SECURITY.md
 CODE_OF_CONDUCT.md

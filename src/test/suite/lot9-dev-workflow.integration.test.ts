@@ -149,6 +149,16 @@ function viewFor(document: vscode.TextDocument, fileUri: string): View {
     return { count: 1, state: a.state ?? 'active', line, attached };
 }
 
+async function waitForAttachedView(document: vscode.TextDocument, fileUri: string, timeoutMs = 5000): Promise<View> {
+    const deadline = Date.now() + timeoutMs;
+    let latest = viewFor(document, fileUri);
+    while ((latest.count !== 1 || !latest.attached) && Date.now() < deadline) {
+        await delay(100);
+        latest = viewFor(document, fileUri);
+    }
+    return latest;
+}
+
 async function openFixture(
     name: string
 ): Promise<{ uri: vscode.Uri; document: vscode.TextDocument; editor: vscode.TextEditor }> {
@@ -202,7 +212,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         await vscode.commands.executeCommand('type', { text: 'b' });
         await delay(800);
 
-        const v = viewFor(document, uri.toString());
+        const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
         assert.strictEqual(v.state, 'active');
         assert.strictEqual(v.line, CONTEXT_LINE);
@@ -220,7 +230,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         });
         await delay(800);
 
-        const v = viewFor(document, uri.toString());
+        const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
         assert.strictEqual(v.state, 'active');
         assert.strictEqual(v.line, CONTEXT_LINE + 1, 'one line was inserted above');
@@ -240,7 +250,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         await vscode.workspace.applyEdit(edit);
         await delay(800);
 
-        const v = viewFor(document, uri.toString());
+        const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
         assert.strictEqual(v.state, 'active');
         assert.strictEqual(v.line, CONTEXT_LINE);
@@ -260,7 +270,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         await vscode.workspace.applyEdit(edit);
         await delay(800);
 
-        const v = viewFor(document, uri.toString());
+        const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
         assert.strictEqual(v.state, 'active', 'survival check must rescue, not suspend');
         assert.strictEqual(v.line, CONTEXT_LINE, 'normalized hash ignores the new indentation');
@@ -276,7 +286,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         await vscode.commands.executeCommand('editor.action.moveLinesDownAction');
         await delay(800);
 
-        const v = viewFor(document, uri.toString());
+        const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
         assert.strictEqual(v.state, 'active');
         assert.strictEqual(v.line, CONTEXT_LINE + 1, 'annotation must follow the moved line');
@@ -299,7 +309,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         await vscode.window.showTextDocument(document);
         await delay(1200);
 
-        const v = viewFor(document, uri.toString());
+        const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
         assert.strictEqual(v.state, 'active');
         assert.strictEqual(v.line, CONTEXT_LINE + 3, 'annotation must re-anchor to the shifted line');

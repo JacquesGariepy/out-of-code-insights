@@ -39,12 +39,14 @@ export interface AnnotationVisibilityInput {
 export class VisibilityFilter {
     private readonly _onDidChange = new TypedEventEmitter<void>();
     readonly onDidChange = this._onDidChange.event;
+    private runtimeEnabled: boolean | undefined;
+    private runtimeFilter: string | undefined;
 
     constructor(private readonly getConfig: () => AnnotationVisibilityConfig) {}
 
     /** Global enable/disable from `outOfCodeInsights.enableAnnotations`. */
     isGloballyEnabled(): boolean {
-        return this.getConfig().enableAnnotations;
+        return this.getConfig().enableAnnotations && this.runtimeEnabled !== false;
     }
 
     /**
@@ -53,11 +55,14 @@ export class VisibilityFilter {
      */
     isVisible(annotation: AnnotationVisibilityInput): boolean {
         const config = this.getConfig();
+        if (!config.enableAnnotations || this.runtimeEnabled === false) {
+            return false;
+        }
         if (annotation.tags && annotation.tags.some((t) => config.disabledTags.includes(t))) {
             return false;
         }
 
-        const filter = (config.currentFilter ?? 'all').trim();
+        const filter = (this.runtimeFilter ?? config.currentFilter ?? 'all').trim();
         if (filter === '' || filter === 'all') {
             return true;
         }
@@ -92,6 +97,24 @@ export class VisibilityFilter {
      */
     refresh(): void {
         this._onDidChange.fire();
+    }
+
+    /** Keep native projections aligned with the runtime Toggle Display state. */
+    setRuntimeEnabled(enabled: boolean): void {
+        if (this.runtimeEnabled === enabled) {
+            return;
+        }
+        this.runtimeEnabled = enabled;
+        this.refresh();
+    }
+
+    /** Keep Tree, CodeLens and Inlay Hints aligned with panel/legacy filters. */
+    setCurrentFilter(filter: string): void {
+        if (this.runtimeFilter === filter) {
+            return;
+        }
+        this.runtimeFilter = filter;
+        this.refresh();
     }
 
     dispose(): void {
