@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
@@ -98,6 +98,11 @@
                 "command": "annotations.bulkActions",
                 "title": "Bulk Actions for Selected Annotations",
                 "icon": "$(checklist)"
+            },
+            {
+                "command": "annotations.moveByDragAndDrop",
+                "title": "Move Selected Annotations…",
+                "icon": "$(move)"
             },
             {
                 "command": "annotations.toggleDisplay",
@@ -629,6 +634,11 @@
                     "command": "annotations.bulkActions",
                     "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "navigation@0"
+                },
+                {
+                    "command": "annotations.moveByDragAndDrop",
+                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "navigation@1"
                 },
                 {
                     "command": "annotations.reanchorToCursor",

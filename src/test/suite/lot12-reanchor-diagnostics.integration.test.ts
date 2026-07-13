@@ -151,4 +151,30 @@ suite('Lot 12 — manual re-anchor and local diagnostics commands', () => {
         await waitForAnnotation((candidate) => candidate.id === first.id && candidate.severity === 'critical');
         await waitForAnnotation((candidate) => candidate.id === second.id && candidate.severity === 'critical');
     });
+
+    test('move command preserves identity while re-anchoring across files', async function () {
+        this.timeout(20_000);
+        const sourceUri = await fixture('lot12-drag-source.ts', 'source zero\nsource move\n');
+        const targetUri = await fixture('lot12-drag-target.ts', 'target zero\ntarget one\ntarget destination\n');
+        const sourceDocument = await vscode.workspace.openTextDocument(sourceUri);
+        const targetDocument = await vscode.workspace.openTextDocument(targetUri);
+        await vscode.window.showTextDocument(sourceDocument);
+        await vscode.commands.executeCommand('annotations.add', { line: 1, message: 'lot12 dragged identity' });
+        await vscode.window.showTextDocument(targetDocument);
+        await vscode.commands.executeCommand('annotations.add', { line: 2, message: 'lot12 drag destination' });
+        const moved = await waitForAnnotation((candidate) => candidate.message === 'lot12 dragged identity');
+        const target = await waitForAnnotation((candidate) => candidate.message === 'lot12 drag destination');
+        createdIds.push(moved.id, target.id);
+
+        const count = await vscode.commands.executeCommand<number>('annotations.moveByDragAndDrop', {
+            ids: [moved.id],
+            targetAnnotationId: target.id,
+        });
+        assert.strictEqual(count, 1);
+        const persisted = await waitForAnnotation(
+            (candidate) => candidate.id === moved.id && candidate.fileUri === targetUri.toString()
+        );
+        assert.strictEqual(persisted.id, moved.id);
+        assert.strictEqual(targetDocument.positionAt(persisted.startOffset).line, 2);
+    });
 });

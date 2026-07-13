@@ -36,6 +36,7 @@ import { scanLineComments } from './comments/commentScanner';
 import { languageOfPath } from './comments/languageOfPath';
 import { captureAnchor } from './anchoring/anchor';
 import { TextBuffer } from './anchoring/textBuffer';
+import { AnnotationMoveService, type MoveAnnotationsRequest } from './commands/AnnotationMoveService';
 import { toFileUriString } from './common/fileUri';
 import { MarkdownMessageEditor } from './views/MarkdownMessageEditor';
 import { firstMessageLine, formatAnnotationLocation } from './views/markdownMessageEditorHelpers';
@@ -64,6 +65,7 @@ let annotationPersistence: AnnotationPersistence | undefined;
 let visibilityFilter: VisibilityFilter | undefined;
 let kanbanColumnStore: KanbanColumnStore | undefined;
 let annotationSyncService: AnnotationSyncService | undefined;
+let annotationMoveService: AnnotationMoveService | undefined;
 let selectedTreeAnnotationIds: string[] = [];
 
 /** Reentrancy guard for {@link generateDocumentationNow}. */
@@ -167,8 +169,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             throw new Error('Lot 5 R2: transactional stack not bootstrapped before tree wiring');
         }
         const treeStore = annotationStore;
+        annotationMoveService = new AnnotationMoveService(treeStore, annotationPersistence);
         const treeDataProvider = new AnnotationsTreeDataProvider(treeStore, visibilityFilter);
-        const dragAndDropController = new AnnotationsDragAndDropController(treeStore, annotationPersistence);
+        const dragAndDropController = new AnnotationsDragAndDropController();
         const view = vscode.window.createTreeView('annotationsView', {
             treeDataProvider,
             dragAndDropController,
@@ -1491,6 +1494,76 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             );
             vscode.window.setStatusBarMessage(loc('bulkActionComplete', 'Updated {0} annotations.', ids.length), 4000);
             return ids.length;
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.moveByDragAndDrop', async (commandArg?: unknown) => {
+            const store = annotationStore;
+            const moveService = annotationMoveService;
+            if (!store || !moveService) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+
+            const raw = commandArg && typeof commandArg === 'object' ? (commandArg as Record<string, unknown>) : {};
+            let ids = Array.isArray(raw.ids)
+                ? raw.ids.filter((id): id is string => typeof id === 'string')
+                : selectedTreeAnnotationIds;
+            if (commandArg instanceof AnnotationTreeItem) {
+                ids = selectedTreeAnnotationIds.includes(commandArg.annotation.id)
+                    ? selectedTreeAnnotationIds
+                    : [commandArg.annotation.id];
+            }
+            if (ids.length === 0) {
+                const picked = await vscode.window.showQuickPick(
+                    store.list().map((annotation) => ({
+                        label: firstMessageLine(annotation.message) || annotation.id,
+                        description: annotation.file,
+                        id: annotation.id,
+                        picked: false,
+                    })),
+                    {
+                        canPickMany: true,
+                        title: loc('moveAnnotationsTitle', 'Move annotations'),
+                        placeHolder: loc('pickAnnotationsToMove', 'Select one or more annotations to move'),
+                        matchOnDescription: true,
+                    }
+                );
+                ids = picked?.map((item) => item.id) ?? [];
+            }
+            if (ids.length === 0) {
+                return 0;
+            }
+
+            const request: MoveAnnotationsRequest = {
+                ids,
+                ...(typeof raw.targetAnnotationId === 'string' ? { targetAnnotationId: raw.targetAnnotationId } : {}),
+                ...(typeof raw.targetFile === 'string' ? { targetFile: raw.targetFile } : {}),
+                ...(typeof raw.targetLine === 'number' ? { targetLine: raw.targetLine } : {}),
+            };
+            try {
+                const result = await moveService.move(request);
+                if (!result) {
+                    return 0;
+                }
+                vscode.window.setStatusBarMessage(
+                    loc(
+                        'annotationsMoved',
+                        'Moved {0} annotation(s) to {1}, line {2}.',
+                        result.movedIds.length,
+                        result.file,
+                        result.firstLine + 1
+                    ),
+                    5000
+                );
+                return result.movedIds.length;
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                getLogger().error('Annotation drag-and-drop move failed', error);
+                vscode.window.showErrorMessage(loc('annotationMoveFailed', 'Unable to move annotations: {0}', message));
+                return 0;
+            }
         })
     );
 

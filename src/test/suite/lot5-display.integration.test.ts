@@ -10,8 +10,7 @@
 //   2. AnnotationCodeLensProvider — lenses appear at correct lines, hidden
 //      when globally disabled.
 //   3. NavigationStackDataProvider — purges entries on store.onDidDispose.
-//   4. AnnotationsDragAndDropController contract — handleDrop reorders via
-//      store.setAnnotationLine and persists via AnnotationPersistence.
+//   4. Drag-and-drop contract and identity-preserving cross-file moves.
 //
 // Note on placement: under src/test/suite/, NOT src/test/integration/, so
 // the suite runs in EDH (vscode runtime available). `npm run test:unit`
@@ -27,7 +26,9 @@ import {
     AnnotationsTreeDataProvider,
     FileTreeItem,
     AnnotationTreeItem,
+    parseAnnotationDragIds,
 } from '../../tree/AnnotationsTree';
+import { AnnotationMoveService } from '../../commands/AnnotationMoveService';
 import { NavigationStackDataProvider } from '../../tree/NavigationStackTree';
 import { AnnotationCodeLensProvider } from '../../providers/AnnotationCodeLensProvider';
 import { AnnotationPersistence } from '../../transactional/AnnotationPersistence';
@@ -352,11 +353,43 @@ suite('Lot 5 R2 worktree A — NavigationStackDataProvider', () => {
 
 suite('Lot 5 R2 worktree A — AnnotationsDragAndDropController contract', () => {
     test('exposes mime types and constructs without throwing', () => {
-        const store = new AnnotationStore();
-        const persistence = makeTmpPersistence();
-        const controller = new AnnotationsDragAndDropController(store, persistence);
+        const controller = new AnnotationsDragAndDropController();
         assert.deepStrictEqual(controller.dragMimeTypes, ['application/vnd.code.tree.annotation']);
         assert.deepStrictEqual(controller.dropMimeTypes, ['application/vnd.code.tree.annotation']);
+    });
+
+    test('parses versioned and legacy drag payloads', () => {
+        assert.deepStrictEqual(parseAnnotationDragIds(JSON.stringify({ version: 1, ids: ['a', 'b'] })), ['a', 'b']);
+        assert.deepStrictEqual(parseAnnotationDragIds('legacy-a,legacy-b'), ['legacy-a', 'legacy-b']);
+        assert.deepStrictEqual(parseAnnotationDragIds({ ids: ['not-a-string-payload'] }), []);
+    });
+
+    test('moves multiple annotations across files while preserving identity and relative spacing', async function () {
+        this.timeout(10000);
+        const sourceUri = await ensureFixture('lot5-drag-source.ts', 's0\ns1\ns2\ns3\ns4\n');
+        const targetUri = await ensureFixture('lot5-drag-target.ts', 't0\nt1\nt2\nt3\nt4\nt5\n');
+        const sourceDocument = await vscode.workspace.openTextDocument(sourceUri);
+        const targetDocument = await vscode.workspace.openTextDocument(targetUri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const first = store.add(makeDraft(sourceUri, 'first dragged'), { line: 1 }, sourceDocument);
+        const second = store.add(makeDraft(sourceUri, 'second dragged'), { line: 3 }, sourceDocument);
+        const target = store.add(makeDraft(targetUri, 'drop target'), { line: 2 }, targetDocument);
+        const service = new AnnotationMoveService(store, makeTmpPersistence());
+
+        const result = await service.move({
+            ids: [first.id, second.id],
+            targetAnnotationId: target.id,
+        });
+
+        assert.deepStrictEqual(result?.movedIds, [first.id, second.id]);
+        const movedFirst = store.get(first.id);
+        const movedSecond = store.get(second.id);
+        assert.strictEqual(movedFirst?.fileUri, targetUri.toString());
+        assert.strictEqual(movedSecond?.fileUri, targetUri.toString());
+        assert.strictEqual(targetDocument.positionAt(movedFirst?.startOffset ?? -1).line, 2);
+        assert.strictEqual(targetDocument.positionAt(movedSecond?.startOffset ?? -1).line, 4);
+        assert.strictEqual(store.get(target.id)?.startOffset, target.startOffset, 'drop target must not move');
     });
 });
 

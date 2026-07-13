@@ -31,21 +31,21 @@ local or be versioned and shared with the team.
 | Native VS Code experience     | Gutter decorations, CodeLens, Comments API threads, Tree View, commands, and keyboard access                 |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-## What is new in 1.4.0
+## What is new in 1.4.1
 
-- The native annotation tree now has open/resolved summaries, attention badges,
-  theme-aware severity icons, accessible labels, and a useful empty state.
-- Select multiple tree rows and run one native bulk action, or use each row's
-  checkbox to resolve and reopen annotations immediately.
-- The annotations panel now supports persistent multi-selection, **Select
-  visible**, and bulk Resolve, Reopen, Severity, and Delete actions.
-- Tree and panel bulk updates use one transactional command path, with native
-  VS Code Quick Picks and modal confirmation for destructive operations.
-- The 1.3 recovery tools remain available: manual re-anchoring, privacy-safe
-  tracking diagnostics, density modes, and corrected multi-line cut/paste.
+- Drag annotations onto another annotation in the native tree or the full panel
+  to re-anchor them at the destination, including across files.
+- Multi-selected annotations move together while preserving their identity,
+  discussions, metadata, and relative line spacing.
+- Panel cards now provide dedicated drag handles and visible card/file drop
+  targets.
+- **Move Selected Annotations…** provides the same workflow through native VS
+  Code pickers for keyboard and assistive-technology users.
+- Tree drops no longer rewrite every annotation line according to its list
+  position; only the explicitly dragged annotations move.
 
-See the [1.4.0 release notes](./docs/CHANGELOG-1.4.0.md) or the
-[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.0).
+See the [1.4.1 release notes](./docs/CHANGELOG-1.4.1.md) or the
+[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.1).
 
 ## Start in 60 seconds
 
@@ -255,6 +255,11 @@ Attach and execute code directly from annotations:
 
 - Drag or move code normally in the editor; attached annotations follow the
   affected lines and blocks.
+- Drag an annotation row onto another row in the native tree, or use the drag
+  handle on a panel card, to move the annotation to that code location.
+- Multi-select annotations before dragging to move the set together. Drop on a
+  file group to choose an exact line with the native destination picker.
+- Run **Move Selected Annotations…** for the keyboard-accessible equivalent.
 - Use **Move Annotation Up** or **Move Annotation Down** for a deliberate
   one-line adjustment.
 - To recover an orphan or deliberately move it elsewhere, place the cursor on
