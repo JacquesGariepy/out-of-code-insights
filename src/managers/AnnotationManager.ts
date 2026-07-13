@@ -2271,6 +2271,13 @@ export class AnnotationManager extends EventEmitter {
                         action: message.action,
                     });
                     break;
+                case 'moveAnnotations':
+                    await vscode.commands.executeCommand('annotations.moveByDragAndDrop', {
+                        ids: message.annotationIds,
+                        targetAnnotationId: message.targetAnnotationId,
+                        targetFile: message.targetFile,
+                    });
+                    break;
                 case 'sort':
                     this.handleSort(message.value);
                     break;
@@ -2611,6 +2618,26 @@ export class AnnotationManager extends EventEmitter {
                 flex: 0 0 auto;
                 cursor: pointer;
             }
+            .drag-handle {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 1.7em;
+                height: 1.7em;
+                margin-right: 0.35em;
+                border: 1px solid transparent;
+                border-radius: 5px;
+                color: var(--vscode-descriptionForeground);
+                cursor: grab;
+                user-select: none;
+            }
+            .drag-handle:hover, .drag-handle:focus-visible {
+                color: var(--vscode-foreground);
+                border-color: var(--vscode-focusBorder);
+                background: var(--vscode-toolbar-hoverBackground);
+                outline: none;
+            }
+            .drag-handle:active { cursor: grabbing; }
             
             .file-group {
                 margin-bottom: 2em;
@@ -2664,6 +2691,19 @@ export class AnnotationManager extends EventEmitter {
                 background: var(--vscode-list-inactiveSelectionBackground);
                 box-shadow: 0 0 0 1px var(--vscode-focusBorder);
             }
+            .annotation-card.dragging { opacity: 0.48; transform: scale(0.99); }
+            .annotation-card.drop-target {
+                border-color: var(--vscode-focusBorder);
+                box-shadow: 0 0 0 2px var(--vscode-focusBorder), 0 10px 28px rgba(0, 0, 0, 0.18);
+                transform: translateY(-2px);
+            }
+            .file-group.drop-target > .file-header {
+                outline: 2px dashed var(--vscode-focusBorder);
+                outline-offset: 3px;
+                background: var(--vscode-list-inactiveSelectionBackground);
+            }
+            body.annotation-drag-active .annotation-card:not(.dragging),
+            body.annotation-drag-active .file-header { transition: outline 0.12s ease, transform 0.12s ease; }
             .annotation-card:focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
             
             /* Highlight enhancements during search */
@@ -2909,7 +2949,7 @@ export class AnnotationManager extends EventEmitter {
                         <div class="title">${loc('annotationsTitle', 'Out-of-Code Insights')}</div>
                     </div>
                     <div class="drag-hint">
-                        ${loc('dragHint', 'Move code with the editor’s native drag-and-drop: attached annotations now follow the block, including across files.')}
+                        ${loc('dragHint', 'Drag an annotation by its handle onto another card or file. Multi-selected annotations move together and keep their identity.')}
                     </div>
                 </div>
 
@@ -2971,6 +3011,7 @@ export class AnnotationManager extends EventEmitter {
                         ${loc('selectVisible', 'Select visible')}
                     </label>
                     <span id="selectedCount" class="bulk-count" role="status" aria-live="polite"></span>
+                    <button id="moveSelection" class="bulk-button" type="button">↔ ${loc('moveSelected', 'Move')}</button>
                     <button class="bulk-button" data-bulk-action="resolve" type="button">✓ ${loc('bulkResolve', 'Resolve')}</button>
                     <button class="bulk-button" data-bulk-action="reopen" type="button">○ ${loc('bulkReopen', 'Reopen')}</button>
                     <button class="bulk-button" data-bulk-action="severity" type="button">⚠ ${loc('bulkSeverity', 'Severity')}</button>
@@ -3015,6 +3056,13 @@ export class AnnotationManager extends EventEmitter {
                                  aria-label="${escapeHtml(`${annotation.file}, ${loc('line', 'Line')} ${annotation.line + 1}: ${annotation.message}`)}">
 
                                 <div class="annotation-header">
+                                    <span class="drag-handle"
+                                          draggable="true"
+                                          data-drag-annotation="${escapeHtml(annotation.id)}"
+                                          role="button"
+                                          tabindex="0"
+                                          title="${escapeHtml(loc('dragAnnotationTitle', 'Drag to move this annotation'))}"
+                                          aria-label="${escapeHtml(loc('dragAnnotationLabel', 'Move annotation: {0}', annotation.message))}">⋮⋮</span>
                                     <input class="annotation-select"
                                            type="checkbox"
                                            data-select-annotation="${escapeHtml(annotation.id)}"
@@ -3111,6 +3159,7 @@ export class AnnotationManager extends EventEmitter {
             const selectedCount = document.getElementById('selectedCount');
             const selectVisible = document.getElementById('selectVisible');
             const clearSelection = document.getElementById('clearSelection');
+            const moveSelection = document.getElementById('moveSelection');
             const selectionInputs = Array.from(document.querySelectorAll('[data-select-annotation]'));
             const selectedIds = new Set(Array.isArray(state.selectedAnnotationIds) ? state.selectedAnnotationIds : []);
 
@@ -3134,7 +3183,7 @@ export class AnnotationManager extends EventEmitter {
                     selectedCount.textContent = selectedIds.size + ' ${loc('selectedAnnotations', 'selected')}';
                 }
                 bulkToolbar?.classList.toggle('visible', selectedIds.size > 0);
-                document.querySelectorAll('[data-bulk-action], #clearSelection').forEach((button) => {
+                document.querySelectorAll('[data-bulk-action], #clearSelection, #moveSelection').forEach((button) => {
                     button.disabled = selectedIds.size === 0;
                 });
                 state.selectedAnnotationIds = Array.from(selectedIds);
@@ -3160,6 +3209,9 @@ export class AnnotationManager extends EventEmitter {
                 selectedIds.clear();
                 updateSelectionControls();
             });
+            moveSelection?.addEventListener('click', () => {
+                vscode.postMessage({ command: 'moveAnnotations', annotationIds: Array.from(selectedIds) });
+            });
             document.querySelectorAll('[data-bulk-action]').forEach((button) => {
                 button.addEventListener('click', () => {
                     vscode.postMessage({
@@ -3168,6 +3220,70 @@ export class AnnotationManager extends EventEmitter {
                         annotationIds: Array.from(selectedIds),
                     });
                 });
+            });
+
+            let draggedAnnotationIds = [];
+            function clearDropFeedback() {
+                document.body.classList.remove('annotation-drag-active');
+                document.querySelectorAll('.dragging, .drop-target').forEach((element) => {
+                    element.classList.remove('dragging', 'drop-target');
+                });
+            }
+            document.querySelectorAll('[data-drag-annotation]').forEach((handle) => {
+                handle.addEventListener('click', (event) => event.stopPropagation());
+                handle.addEventListener('keydown', (event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const id = handle.dataset.dragAnnotation;
+                    const ids = selectedIds.has(id) ? Array.from(selectedIds) : [id];
+                    vscode.postMessage({ command: 'moveAnnotations', annotationIds: ids });
+                });
+                handle.addEventListener('dragstart', (event) => {
+                    const id = handle.dataset.dragAnnotation;
+                    draggedAnnotationIds = selectedIds.has(id) ? Array.from(selectedIds) : [id];
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData(
+                        'application/vnd.out-of-code-insights.annotations+json',
+                        JSON.stringify({ version: 1, ids: draggedAnnotationIds })
+                    );
+                    event.dataTransfer.setData('text/plain', draggedAnnotationIds.join(','));
+                    handle.closest('.annotation-card')?.classList.add('dragging');
+                    document.body.classList.add('annotation-drag-active');
+                });
+                handle.addEventListener('dragend', () => {
+                    draggedAnnotationIds = [];
+                    clearDropFeedback();
+                });
+            });
+            document.addEventListener('dragover', (event) => {
+                if (draggedAnnotationIds.length === 0) return;
+                const card = event.target.closest?.('.annotation-card');
+                const group = event.target.closest?.('.file-group');
+                if (!card && !group) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                document.querySelectorAll('.drop-target').forEach((element) => element.classList.remove('drop-target'));
+                if (card) card.classList.add('drop-target');
+                else group?.classList.add('drop-target');
+            });
+            document.addEventListener('drop', (event) => {
+                if (draggedAnnotationIds.length === 0) return;
+                const card = event.target.closest?.('.annotation-card');
+                const group = event.target.closest?.('.file-group');
+                if (!card && !group) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const targetAnnotationId = card?.dataset.annotationId;
+                const targetFile = card ? undefined : group?.dataset.file;
+                vscode.postMessage({
+                    command: 'moveAnnotations',
+                    annotationIds: draggedAnnotationIds,
+                    targetAnnotationId,
+                    targetFile,
+                });
+                draggedAnnotationIds = [];
+                clearDropFeedback();
             });
 
             // Restore state
@@ -3479,7 +3595,7 @@ export class AnnotationManager extends EventEmitter {
 
             // Event delegation replaces all inline onclick/onblur handlers.
             document.addEventListener('click', function(e) {
-                if (e.target.closest('[data-select-annotation], [data-bulk-action], #clearSelection, #selectVisible')) {
+                if (e.target.closest('[data-select-annotation], [data-drag-annotation], [data-bulk-action], #clearSelection, #moveSelection, #selectVisible')) {
                     return;
                 }
                 const btn = e.target.closest('[data-action]');

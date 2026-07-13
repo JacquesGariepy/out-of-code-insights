@@ -59,6 +59,7 @@ test-fixtures/lot10-*.md
 test-fixtures/docs/
 
 test-fixtures/lot10-*.ts
+test-fixtures/lot5-drag-*
 
 # Agent worktrees
 .claude/worktrees/

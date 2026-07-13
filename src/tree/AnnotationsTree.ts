@@ -10,12 +10,11 @@
 // `null`, which the UI renders as `?`.
 
 import * as vscode from 'vscode';
-import { localize } from '../common/localize';
+import { ANNOTATION_DRAG_MIME } from '../commands/AnnotationMoveService';
 import { loc } from '../managers/LocalizationManager';
 import type { AnnotationV2 } from '../transactional/types';
 import type { AnnotationStore } from '../transactional/AnnotationStore';
 import type { VisibilityFilter } from '../transactional/VisibilityFilter';
-import type { AnnotationPersistence } from '../transactional/AnnotationPersistence';
 
 /** Line+annotation pair used by the tree to render with already-resolved lines. */
 interface ResolvedAnnotation {
@@ -132,7 +131,7 @@ export class FileTreeItem extends vscode.TreeItem {
         this.tooltip = new vscode.MarkdownString(
             loc(
                 'fileTreeTooltip',
-                `**{0}**\n\n{1} open · {2} resolved · {3} need attention`,
+                `**{0}**\n\n{1} open · {2} resolved · {3} need attention\n\nDrop annotations here to choose a destination line.`,
                 file,
                 open,
                 resolved,
@@ -247,6 +246,10 @@ export class AnnotationTreeItem extends vscode.TreeItem {
         }
 
         tooltipContent += `\n${annotation.message}`;
+        tooltipContent += loc(
+            'annotationDragTooltip',
+            '\n\n---\nDrag onto another annotation to move it while preserving its identity.'
+        );
         this.tooltip = new vscode.MarkdownString(tooltipContent);
 
         let iconName = 'comment';
@@ -300,13 +303,8 @@ export class AnnotationTreeItem extends vscode.TreeItem {
 }
 
 export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropController<vscode.TreeItem> {
-    public readonly dropMimeTypes = ['application/vnd.code.tree.annotation'];
-    public readonly dragMimeTypes = ['application/vnd.code.tree.annotation'];
-
-    constructor(
-        private readonly store: AnnotationStore,
-        private readonly persistence: AnnotationPersistence
-    ) {}
+    public readonly dropMimeTypes = [ANNOTATION_DRAG_MIME];
+    public readonly dragMimeTypes = [ANNOTATION_DRAG_MIME];
 
     async handleDrag(
         source: vscode.TreeItem[],
@@ -316,8 +314,10 @@ export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropC
         const items = source.filter((s) => s instanceof AnnotationTreeItem) as AnnotationTreeItem[];
         if (items.length > 0) {
             dataTransfer.set(
-                'application/vnd.code.tree.annotation',
-                new vscode.DataTransferItem(items.map((i) => i.annotation.id).join(','))
+                ANNOTATION_DRAG_MIME,
+                new vscode.DataTransferItem(
+                    JSON.stringify({ version: 1, ids: items.map((item) => item.annotation.id) })
+                )
             );
         }
     }
@@ -327,99 +327,41 @@ export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropC
         dataTransfer: vscode.DataTransfer,
         _token: vscode.CancellationToken
     ): Promise<void> {
-        const transferItem = dataTransfer.get('application/vnd.code.tree.annotation');
+        const transferItem = dataTransfer.get(ANNOTATION_DRAG_MIME);
         if (!transferItem) {
             return;
         }
 
-        const draggedAnnotationIds = (transferItem.value as string).split(',').filter((id) => id.trim().length > 0);
+        const draggedAnnotationIds = parseAnnotationDragIds(transferItem.value);
         if (draggedAnnotationIds.length === 0) {
             return;
         }
 
-        const draggedAnnotations = draggedAnnotationIds
-            .map((id) => this.store.get(id))
-            .filter((a): a is Readonly<AnnotationV2> => a !== undefined);
-        if (draggedAnnotations.length === 0) {
-            return;
-        }
-
-        let targetAnnotation: AnnotationV2 | undefined;
-        let targetFile: string | undefined;
-
         if (target instanceof AnnotationTreeItem) {
-            targetAnnotation = target.annotation;
-            targetFile = target.annotation.file;
+            await vscode.commands.executeCommand('annotations.moveByDragAndDrop', {
+                ids: draggedAnnotationIds,
+                targetAnnotationId: target.annotation.id,
+            });
         } else if (target instanceof FileTreeItem) {
-            targetFile = target.file;
-        } else {
-            return;
+            await vscode.commands.executeCommand('annotations.moveByDragAndDrop', {
+                ids: draggedAnnotationIds,
+                targetFile: target.file,
+            });
         }
-
-        const allSameFile = draggedAnnotations.every((a) => a.file === draggedAnnotations[0].file);
-        if (!allSameFile) {
-            vscode.window.showErrorMessage(
-                localize('cannotReorderDifferentFiles', 'Cannot reorder annotations from different files together.')
-            );
-            return;
-        }
-
-        const draggedFile = draggedAnnotations[0].file;
-        if (targetFile && targetFile !== draggedFile) {
-            vscode.window.showErrorMessage(
-                localize('cannotMoveToDifferentFile', 'Cannot move annotations to a different file via drag and drop.')
-            );
-            return;
-        }
-
-        const fileAnnotations = this.store
-            .list()
-            .filter((a) => a.file === draggedFile)
-            .slice()
-            .sort((a, b) => a.startOffset - b.startOffset);
-
-        for (const da of draggedAnnotations) {
-            const idx = fileAnnotations.findIndex((fa) => fa.id === da.id);
-            if (idx >= 0) {
-                fileAnnotations.splice(idx, 1);
-            }
-        }
-
-        let targetIndex: number;
-        if (targetAnnotation) {
-            const idx = fileAnnotations.findIndex((a) => a.id === targetAnnotation?.id);
-            targetIndex = idx >= 0 ? idx : fileAnnotations.length;
-        } else {
-            targetIndex = fileAnnotations.length;
-        }
-
-        fileAnnotations.splice(targetIndex + 1, 0, ...draggedAnnotations);
-
-        // Resolve the source document once for the offset recalc. Drag-drop
-        // preserves the legacy "line as panel-rank" semantics: each entry is
-        // re-anchored to its post-reorder index. This is intentional — the
-        // semantic was already overloaded in v1 and a behaviour-preserving
-        // port is the safer choice here. A clean rank-vs-anchor split is
-        // tracked as Q2 in the worktree A handoff.
-        const fileUri = draggedAnnotations[0].fileUri;
-        let document: vscode.TextDocument | undefined;
-        try {
-            document = await vscode.workspace.openTextDocument(vscode.Uri.parse(fileUri));
-        } catch {
-            vscode.window.showErrorMessage(
-                localize('cannotOpenDocumentForReorder', 'Cannot open the source document to reorder annotations.')
-            );
-            return;
-        }
-
-        for (let i = 0; i < fileAnnotations.length; i++) {
-            const a = fileAnnotations[i];
-            const targetLine = Math.min(i, document.lineCount - 1);
-            this.store.setAnnotationLine(a.id, targetLine, document);
-        }
-
-        await this.persistence.save(this.store.serialize());
-        this.store.notifyChanged();
-        vscode.window.showInformationMessage(localize('annotationsReordered', 'Annotations reordered successfully.'));
     }
+}
+
+export function parseAnnotationDragIds(value: unknown): string[] {
+    if (typeof value !== 'string') {
+        return [];
+    }
+    try {
+        const payload = JSON.parse(value) as { ids?: unknown };
+        if (Array.isArray(payload.ids)) {
+            return payload.ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+        }
+    } catch {
+        // v1.4.0 and earlier encoded ids as a comma-separated string.
+    }
+    return value.split(',').filter((id) => id.trim().length > 0);
 }
