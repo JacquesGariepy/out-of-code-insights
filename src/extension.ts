@@ -31,6 +31,10 @@ import { AnnotationPersistence } from './transactional/AnnotationPersistence';
 import { VisibilityFilter } from './transactional/VisibilityFilter';
 import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
+import {
+    AnnotationDocumentDropEditProvider,
+    annotationDocumentDropMetadata,
+} from './providers/AnnotationDocumentDropEditProvider';
 import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerator';
 import { scanLineComments } from './comments/commentScanner';
 import { languageOfPath } from './comments/languageOfPath';
@@ -170,6 +174,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }
         const treeStore = annotationStore;
         annotationMoveService = new AnnotationMoveService(treeStore, annotationPersistence);
+        context.subscriptions.push(
+            vscode.languages.registerDocumentDropEditProvider(
+                { scheme: 'file' },
+                new AnnotationDocumentDropEditProvider(annotationMoveService),
+                annotationDocumentDropMetadata
+            )
+        );
         const treeDataProvider = new AnnotationsTreeDataProvider(treeStore, visibilityFilter);
         const dragAndDropController = new AnnotationsDragAndDropController();
         const view = vscode.window.createTreeView('annotationsView', {
@@ -1540,6 +1551,7 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 ids,
                 ...(typeof raw.targetAnnotationId === 'string' ? { targetAnnotationId: raw.targetAnnotationId } : {}),
                 ...(typeof raw.targetFile === 'string' ? { targetFile: raw.targetFile } : {}),
+                ...(typeof raw.targetUri === 'string' ? { targetUri: raw.targetUri } : {}),
                 ...(typeof raw.targetLine === 'number' ? { targetLine: raw.targetLine } : {}),
             };
             try {

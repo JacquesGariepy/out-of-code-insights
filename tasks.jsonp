@@ -1,7 +1,7 @@
 globalThis.OOCI_TASKS = {
   "schemaVersion": 1,
   "project": "Out-of-Code Insights augmented platform",
-  "updatedAt": "2026-07-12T21:13:22-04:00",
+  "updatedAt": "2026-07-12T21:43:05-04:00",
   "statuses": ["todo", "in_progress", "blocked", "done", "accepted", "investigate"],
   "tasks": [
     {"id":"TRACK-001","area":"tracking","title":"Recognize paste over a selected range","status":"done"},
@@ -31,6 +31,8 @@ globalThis.OOCI_TASKS = {
     {"id":"DND-EXT-003","area":"drag-drop","title":"Add keyboard-accessible Move Selected Annotations command and destination picker","status":"done"},
     {"id":"UI-EXT-010","area":"vscode-ui","title":"Add panel drag handles, dragging state and card/file drop-target feedback","status":"done"},
     {"id":"SDK-VSCODE-002","area":"microsoft-sdk","title":"Centralize TreeView, webview and command-palette moves behind one transactional VS Code command","status":"done"},
+    {"id":"DND-EXT-004","area":"drag-drop","title":"Move TreeView and panel annotations onto the exact line dropped in the code editor","status":"done"},
+    {"id":"SDK-VSCODE-003","area":"microsoft-sdk","title":"Integrate DocumentDropEditProvider and custom annotation MIME without inserting source text","status":"done"},
     {"id":"DESKTOP-001","area":"tauri","title":"Align desktop envelope and migrations 1:1 with extension","status":"in_progress"},
     {"id":"DESKTOP-002","area":"tauri","title":"Add direct drag-and-drop re-anchoring from table to code preview","status":"done"},
     {"id":"DESKTOP-003","area":"tauri","title":"Add bulk select/resolve/reopen/severity/delete workflows","status":"done"},
@@ -49,15 +51,17 @@ globalThis.OOCI_TASKS = {
     {"id":"QA-005","area":"quality","title":"Visual QA: desktop/narrow/high-contrast/reduced-motion","status":"blocked","blocker":"In-app browser runtime did not start; retry after environment recovery."},
     {"id":"QA-006","area":"quality","title":"Validate v1.4.0 native TreeView and panel bulk workflows","status":"done"},
     {"id":"QA-007","area":"quality","title":"Validate v1.4.1 cross-file multi-annotation drag-and-drop workflows","status":"done"},
+    {"id":"QA-008","area":"quality","title":"Validate v1.4.2 Drop Into Editor movement and zero-text insertion","status":"done"},
     {"id":"DOC-001","area":"documentation","title":"Modernize README positioning, onboarding, 1.3 recovery workflows, commands and troubleshooting","status":"done"},
     {"id":"DOC-002","area":"documentation","title":"Document v1.4.0 native tree, panel selection and Microsoft SDK workflows","status":"done"},
     {"id":"REL-001","area":"release","title":"Publish extension v1.2.1 to GitHub, VS Code Marketplace and Open VSX","status":"done"},
     {"id":"REL-002","area":"release","title":"Publish desktop v0.1.1 with NSIS and MSI installers","status":"done"},
     {"id":"REL-003","area":"release","title":"Publish extension v1.3.0 recovery, diagnostics and density release","status":"done"},
     {"id":"REL-004","area":"release","title":"Publish extension v1.4.0 native tree and bulk panel release","status":"done"},
-    {"id":"REL-005","area":"release","title":"Publish extension v1.4.1 drag-and-drop movement release","status":"in_progress"},
-    {"id":"REL-006","area":"release","title":"Publish v1.4.2 deeper panel visual hierarchy and incremental rendering release","status":"todo"},
-    {"id":"REL-007","area":"release","title":"Publish v1.5.0 advanced editor-drop and workspace workflow release","status":"todo"}
+    {"id":"REL-005","area":"release","title":"Publish extension v1.4.1 drag-and-drop movement release","status":"done"},
+    {"id":"REL-006","area":"release","title":"Publish v1.4.2 Drop Into Editor movement release","status":"in_progress"},
+    {"id":"REL-007","area":"release","title":"Publish v1.5.0 advanced workspace workflow release","status":"todo"},
+    {"id":"REL-008","area":"release","title":"Publish v1.4.3 deeper panel visual hierarchy and incremental rendering release","status":"todo"}
   ],
   "productThoughts": [
     {"id":"THOUGHT-001","status":"accepted","text":"Identity must follow semantic code movement; line numbers and hashes alone are insufficient."},

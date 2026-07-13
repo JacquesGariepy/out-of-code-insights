@@ -31,21 +31,20 @@ local or be versioned and shared with the team.
 | Native VS Code experience     | Gutter decorations, CodeLens, Comments API threads, Tree View, commands, and keyboard access                 |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-## What is new in 1.4.1
+## What is new in 1.4.2
 
-- Drag annotations onto another annotation in the native tree or the full panel
-  to re-anchor them at the destination, including across files.
-- Multi-selected annotations move together while preserving their identity,
+- Drag annotations from the native tree directly onto the exact destination
+  line in a code editor.
+- Multi-selected annotations move together and preserve their identity,
   discussions, metadata, and relative line spacing.
-- Panel cards now provide dedicated drag handles and visible card/file drop
-  targets.
-- **Move Selected Annotations…** provides the same workflow through native VS
-  Code pickers for keyboard and assistive-technology users.
-- Tree drops no longer rewrite every annotation line according to its list
-  position; only the explicitly dragged annotations move.
+- The move uses VS Code's native **Drop Into Editor** API and inserts no text in
+  the source document.
+- Panel drag handles emit the same annotation payload where the host supports
+  webview-to-editor dragging; **Move** remains the accessible fallback.
+- The 1.4.1 tree/panel card and file-group drop targets remain available.
 
-See the [1.4.1 release notes](./docs/CHANGELOG-1.4.1.md) or the
-[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.1).
+See the [1.4.2 release notes](./docs/CHANGELOG-1.4.2.md) or the
+[published release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.2).
 
 ## Start in 60 seconds
 
@@ -257,6 +256,8 @@ Attach and execute code directly from annotations:
   affected lines and blocks.
 - Drag an annotation row onto another row in the native tree, or use the drag
   handle on a panel card, to move the annotation to that code location.
+- Drag a native tree row directly onto a line in an open code editor to attach
+  it to that exact line without modifying the source text.
 - Multi-select annotations before dragging to move the set together. Drop on a
   file group to choose an exact line with the native destination picker.
 - Run **Move Selected Annotations…** for the keyboard-accessible equivalent.
@@ -990,6 +991,14 @@ These features enhance annotation management by providing an overview and manage
 4. Check the report for `line-hash-mismatch`, `offset-out-of-document`, or
    `awaiting-paste`. The report contains no source text and is safe to inspect
    locally before sharing.
+
+#### "Dropping an annotation into the code editor does nothing"
+
+- Confirm the VS Code setting `editor.dropIntoEditor.enabled` is enabled.
+- Start the drag from an annotation row in the native Out-of-Code Insights
+  Tree View, then release it on the destination code line.
+- Use **Move Selected Annotations…** or the panel's **Move** button when drag
+  transfer is unavailable in the current host.
 
 #### "Template variables not working"
 

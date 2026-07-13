@@ -10,7 +10,7 @@
 // `null`, which the UI renders as `?`.
 
 import * as vscode from 'vscode';
-import { ANNOTATION_DRAG_MIME } from '../commands/AnnotationMoveService';
+import { ANNOTATION_DRAG_MIME, parseAnnotationDragIds } from '../commands/AnnotationMoveService';
 import { loc } from '../managers/LocalizationManager';
 import type { AnnotationV2 } from '../transactional/types';
 import type { AnnotationStore } from '../transactional/AnnotationStore';
@@ -248,7 +248,7 @@ export class AnnotationTreeItem extends vscode.TreeItem {
         tooltipContent += `\n${annotation.message}`;
         tooltipContent += loc(
             'annotationDragTooltip',
-            '\n\n---\nDrag onto another annotation to move it while preserving its identity.'
+            '\n\n---\nDrag onto another annotation or directly onto a code editor line to move it while preserving its identity.'
         );
         this.tooltip = new vscode.MarkdownString(tooltipContent);
 
@@ -349,19 +349,4 @@ export class AnnotationsDragAndDropController implements vscode.TreeDragAndDropC
             });
         }
     }
-}
-
-export function parseAnnotationDragIds(value: unknown): string[] {
-    if (typeof value !== 'string') {
-        return [];
-    }
-    try {
-        const payload = JSON.parse(value) as { ids?: unknown };
-        if (Array.isArray(payload.ids)) {
-            return payload.ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
-        }
-    } catch {
-        // v1.4.0 and earlier encoded ids as a comma-separated string.
-    }
-    return value.split(',').filter((id) => id.trim().length > 0);
 }
