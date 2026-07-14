@@ -1,7 +1,7 @@
 globalThis.OOCI_TASKS = {
   "schemaVersion": 1,
   "project": "Out-of-Code Insights augmented platform",
-  "updatedAt": "2026-07-14T00:34:13-04:00",
+  "updatedAt": "2026-07-14T01:01:45-04:00",
   "statuses": ["todo", "in_progress", "blocked", "done", "accepted", "investigate"],
   "continuousImprovementMandate": {
     "status": "accepted",
@@ -14,7 +14,7 @@ globalThis.OOCI_TASKS = {
     "source": "user",
     "confirmationRequired": true,
     "confirmationReceivedAt": "2026-07-13T21:36:17-04:00",
-    "publishedExtensionVersion": "1.4.3",
+    "publishedExtensionVersion": "1.4.4",
     "sourceCandidateVersion": "1.4.4",
     "text": "Do not create a release, tag or marketplace publication until the user gives explicit confirmation."
   },
@@ -215,7 +215,7 @@ globalThis.OOCI_TASKS = {
     {"id":"REL-006","area":"release","title":"Publish v1.4.2 Drop Into Editor movement release","status":"done"},
     {"id":"REL-007","area":"release","title":"Publish extension v1.4.7 advanced workspace workflow release","status":"todo"},
     {"id":"REL-008","area":"release","title":"Publish extension v1.4.3 direct inline move and organized native menus release","status":"done"},
-    {"id":"REL-009","area":"release","title":"Publish extension v1.4.4 Documentation Studio, guided source conversion and integrity-hardening release","status":"in_progress","note":"Explicit user confirmation was received on 2026-07-13. The tag will be pushed only after the final branch and merge-commit CI are green; release.yml then publishes Marketplace, Open VSX and the GitHub release sequentially."},
+    {"id":"REL-009","area":"release","title":"Publish extension v1.4.4 Documentation Studio, guided source conversion and integrity-hardening release","status":"done","note":"PR #73 merged as d5ee8c4 after green branch CI and CodeQL; the same main commit passed Linux/Windows CI and CodeQL before the annotated v1.4.4 tag was pushed. Release workflow 29306913551 published 1.4.4 to Visual Studio Marketplace and Open VSX and created the GitHub release with its VSIX; all three public channels were independently verified."},
     {"id":"REL-010","area":"release","title":"Publish extension v1.4.5 deterministic native copy/paste and data-safety release","status":"todo"},
     {"id":"REL-011","area":"release","title":"Publish extension v1.4.6 developer inbox and SCM filters release","status":"todo"},
     {"id":"REL-012","area":"release","title":"Publish extension v1.5.0 team schema and review workflow release","status":"todo"},
