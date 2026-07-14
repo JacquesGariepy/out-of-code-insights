@@ -188,4 +188,11 @@ bridges.
   input, mocked GitHub transaction and AI credential lifecycle: passed without
   a real network mutation.
 
-Registry links are verified after the release workflow completes.
+## Published channels
+
+- [GitHub release and VSIX](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.4)
+- [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=jacquesgariepy.out-of-code-insights)
+- [Open VSX Registry](https://open-vsx.org/extension/JacquesGariepy/out-of-code-insights)
+
+All three channels were independently verified at version 1.4.4 after release
+workflow `29306913551` completed successfully.
