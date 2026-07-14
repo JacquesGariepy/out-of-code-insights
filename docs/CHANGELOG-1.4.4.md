@@ -181,9 +181,12 @@ bridges.
 - Root extension, MCP server and license server production audits: zero known
   vulnerabilities; both standalone services build and the license server passes
   51/51 tests.
-- Exact `out-of-code-insights-1.4.4.vsix`: 95 entries, no source, test,
-  workspace ledger, dependency tree or source-map leakage; isolated VS Code
-  installation reports `jacquesgariepy.out-of-code-insights@1.4.4`.
+- Exact published `out-of-code-insights-1.4.4.vsix`: 2,285,630 bytes, 80
+  entries and SHA-256
+  `a6800af25fab3901a1001ee6742331f263ec92ec17d7fce01a0af5a962902581`;
+  no source, test, workspace ledger, dependency tree or source-map leakage;
+  isolated VS Code installation reports
+  `jacquesgariepy.out-of-code-insights@1.4.4`.
 - JSONP task-ledger parse, generated-bundle inspection, stale cleanup, hostile
   input, mocked GitHub transaction and AI credential lifecycle: passed without
   a real network mutation.
