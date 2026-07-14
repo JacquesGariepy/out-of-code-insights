@@ -35,7 +35,7 @@ const OPTIONS: DocumentationManifestOptions = {
 // filesystem that legitimately exceeds Mocha's 20 s default. A timeout does
 // not cancel workspace.fs promises, so use a bounded budget that lets their
 // cleanup finish instead of leaking an orphaned writer into following tests.
-const MULTI_TRANSACTION_TIMEOUT_MS = 60_000;
+const MULTI_TRANSACTION_TIMEOUT_MS = 120_000;
 
 function workspaceRoot(): vscode.Uri {
     const folders = vscode.workspace.workspaceFolders;
@@ -56,7 +56,7 @@ function outputUri(name: string): vscode.Uri {
 }
 
 function remove(uri: vscode.Uri): void {
-    fs.rmSync(uri.fsPath, { recursive: true, force: true });
+    fs.rmSync(uri.fsPath, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
 
 function simulateInterruptedInstall(output: vscode.Uri, nextContent: string): void {

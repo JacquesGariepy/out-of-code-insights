@@ -173,8 +173,8 @@ suite('DocumentationBundles - Wiki', () => {
     test('GitHub profile flattens nested pages and creates sidebar and escaped footer', () => {
         const bundle = createWikiBundle(sourceFiles(), {
             flavor: 'github',
-            title: 'Team [Docs] <script>',
-            footer: 'Built *safely* by the team',
+            title: 'Team [Docs] <script> \\ root',
+            footer: 'Built *safely* by_the \\ team',
         });
         assert.ok(bundle.files.has('api-parser.md'));
         assert.ok(!bundle.files.has('api/parser.md'));
@@ -184,8 +184,8 @@ suite('DocumentationBundles - Wiki', () => {
         assert.ok((bundle.files.get('api-parser.md') ?? '').includes('[home](<Home.md>)'));
         assert.ok((bundle.files.get('api-parser.md') ?? '').includes('![Logo](<images/logo.svg>)'));
         assert.ok((bundle.files.get('_Sidebar.md') ?? '').includes('[Parser](<api-parser.md>)'));
-        assert.ok((bundle.files.get('_Sidebar.md') ?? '').startsWith('## Team \\[Docs\\] &lt;script&gt;'));
-        assert.strictEqual(bundle.files.get('_Footer.md'), '_Built \\*safely\\* by the team_\n');
+        assert.ok((bundle.files.get('_Sidebar.md') ?? '').startsWith('## Team \\[Docs\\] &lt;script&gt; \\\\ root'));
+        assert.strictEqual(bundle.files.get('_Footer.md'), '_Built \\*safely\\* by\\_the \\\\ team_\n');
     });
 
     test('Azure profile preserves folders and emits ordered root and child manifests', () => {

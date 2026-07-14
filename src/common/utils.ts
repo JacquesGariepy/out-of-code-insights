@@ -23,3 +23,19 @@ export function escapeHtml(value: unknown): string {
 export function generateNonce(): string {
     return crypto.randomBytes(16).toString('base64');
 }
+
+/**
+ * Render untrusted text as a CommonMark code span without relying on partial
+ * character escaping. The delimiter is always longer than every backtick run
+ * in the value, and the surrounding spaces keep delimiter-like content
+ * unambiguous. CommonMark removes that one padding space when rendering.
+ */
+export function markdownCodeSpan(value: unknown): string {
+    const normalized = String(value ?? '').replace(/[\r\n]+/g, ' ');
+    let delimiterLength = 1;
+    for (const run of normalized.match(/`+/g) ?? []) {
+        delimiterLength = Math.max(delimiterLength, run.length + 1);
+    }
+    const delimiter = '`'.repeat(delimiterLength);
+    return `${delimiter} ${normalized} ${delimiter}`;
+}

@@ -61,16 +61,45 @@ import {
 } from './docs/OpenApiDocumentation';
 import { scanLineComments } from './comments/commentScanner';
 import {
+    canSafelyRemoveSourceComment,
     encodeSourceComment,
     scanSourceComments,
     sourceCommentAnnotationIdFragment,
+    sourceCommentAnnotationIdFingerprint,
     sourceCommentAnnotationMarker,
+    sourceCommentMarkerMatchesAnnotation,
+    sourceCommentImportTags,
+    safeSourceCommentInsertionLine,
     supportsSourceCommentEncoding,
     supportsSourceCommentLanguage,
     type SourceCommentEncodingStyle,
     type SourceCommentKind,
     type SourceCommentRecord,
 } from './comments/sourceCommentCodec';
+import {
+    encodedSourceCommentRoundTripsAnnotation,
+    sourceCommentsRoundTripAnnotations,
+} from './comments/sourceCommentRoundTrip';
+import {
+    DurableDestinationError,
+    lineBreaksOnly,
+    runDurableDestinationMutation,
+    runSourceFirstConversion,
+    restoreSourceOrKeepDestination,
+    SourceConversionTransactionError,
+} from './comments/sourceConversionTransaction';
+import { chooseConversionAnnotationLine, type ConversionSourceDisposition } from './comments/sourceConversionAnchor';
+import { unrepresentedSourceCommentRecords } from './comments/sourceConversionDeduplication';
+import { sameConversionBusinessSnapshot, sameConversionSnapshot } from './comments/sourceConversionSnapshot';
+import { minimalTextReplacement } from './comments/sourceConversionTextEdit';
+import { allConversionSnapshotsAbsent, sourceStateStillMatches } from './comments/sourceConversionDurability';
+import {
+    SourceConversionUndoJournal,
+    type RecordSourceConversion,
+    type SourceConversionHistoryPhase,
+    type SourceConversionTransitionPlan,
+    type SourceHistoryReason,
+} from './comments/sourceConversionUndoJournal';
 import { languageOfPath } from './comments/languageOfPath';
 import { captureAnchor } from './anchoring/anchor';
 import { TextBuffer } from './anchoring/textBuffer';
@@ -111,6 +140,18 @@ let selectedTreeAnnotationItems: AnnotationTreeItem[] = [];
 
 /** Serialized generation tail: watch/manual requests never overwrite each other. */
 let docsGenerationQueue: Promise<void> = Promise.resolve();
+
+/** Bounded native Undo/Redo history for destructive source conversions. */
+const sourceConversionUndoJournal = new SourceConversionUndoJournal<Readonly<AnnotationV2>>(8);
+let sourceConversionHistoryPersistenceQueue: Promise<void> = Promise.resolve();
+let annotationPersistenceGate: Promise<void> | undefined;
+const suppressedSourceHistoryEdits = new Set<string>();
+
+interface AnnotationPersistenceGateHandle {
+    readonly promise: Promise<void>;
+    readonly released: () => boolean;
+    release(): void;
+}
 
 /** Quiet period between the last annotation change and a watch-mode regeneration. */
 const DOCS_WATCH_DEBOUNCE_MS = 2000;
@@ -156,7 +197,42 @@ export function getAnnotationPersistence(): AnnotationPersistence | undefined {
     return annotationPersistence;
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+/** Narrow Extension Host hooks for exercising the native conversion journal. */
+export function __recordSourceConversionForTest(input: RecordSourceConversion<Readonly<AnnotationV2>>): string {
+    return sourceConversionUndoJournal.record(input);
+}
+
+export function __sourceConversionPhaseForTest(entryId: string): SourceConversionHistoryPhase | undefined {
+    return sourceConversionUndoJournal.phase(entryId);
+}
+
+export async function __waitForSourceConversionPersistenceForTest(): Promise<void> {
+    await sourceConversionHistoryPersistenceQueue;
+}
+
+/** Force the canonical annotation coordinator through its strict durability barrier. */
+export async function __flushAnnotationPersistenceForTest(): Promise<void> {
+    await awaitAnnotationSaveBarrierStrict();
+}
+
+export function __clearSourceConversionHistoryForTest(uri?: string): void {
+    if (uri) {
+        sourceConversionUndoJournal.clearUri(uri);
+    } else {
+        sourceConversionUndoJournal.clear();
+    }
+}
+
+export interface ExtensionApi {
+    getAnnotationStore: typeof getAnnotationStore;
+    __recordSourceConversionForTest: typeof __recordSourceConversionForTest;
+    __sourceConversionPhaseForTest: typeof __sourceConversionPhaseForTest;
+    __waitForSourceConversionPersistenceForTest: typeof __waitForSourceConversionPersistenceForTest;
+    __flushAnnotationPersistenceForTest: typeof __flushAnnotationPersistenceForTest;
+    __clearSourceConversionHistoryForTest: typeof __clearSourceConversionHistoryForTest;
+}
+
+export async function activate(context: vscode.ExtensionContext): Promise<ExtensionApi> {
     const logger = initializeLogger('Out-of-Code Insights', context);
     context.subscriptions.push({ dispose: () => logger.dispose() });
     if (context.logUri) {
@@ -375,6 +451,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // case loadAnnotations becomes a no-op until a folder appears.
         context.subscriptions.push(
             vscode.workspace.onDidChangeWorkspaceFolders(async () => {
+                sourceConversionUndoJournal.clear();
                 if (annotationManager) {
                     await annotationManager.loadAnnotations();
                     await annotationManager.refreshAnnotations();
@@ -498,6 +575,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             error
         );
     }
+    return {
+        getAnnotationStore,
+        __recordSourceConversionForTest,
+        __sourceConversionPhaseForTest,
+        __waitForSourceConversionPersistenceForTest,
+        __flushAnnotationPersistenceForTest,
+        __clearSourceConversionHistoryForTest,
+    };
 }
 
 /**
@@ -725,6 +810,10 @@ function registerLicenseCommands(context: vscode.ExtensionContext): void {
 }
 
 export async function deactivate(): Promise<void> {
+    await sourceConversionHistoryPersistenceQueue.catch(() => undefined);
+    sourceConversionHistoryPersistenceQueue = Promise.resolve();
+    sourceConversionUndoJournal.clear();
+    annotationPersistenceGate = undefined;
     const saveCoordinator = annotationSaveCoordinator;
     annotationSaveCoordinator = undefined;
     if (saveCoordinator) {
@@ -873,15 +962,98 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     // to disk.
     context.subscriptions.push(
         vscode.workspace.onDidChangeTextDocument((event) => {
-            if (!annotationStore) {
+            const store = annotationStore;
+            if (!store) {
                 return;
             }
+            // VS Code also emits this event when a save only changes the dirty
+            // state. Treating that metadata-only notification as an ordinary
+            // edit invalidates the conversion journal while its durability
+            // save is still completing, causing a safe native Undo/Redo to be
+            // rolled back. There is no anchor or source-history work to apply
+            // without an actual content change.
+            if (event.contentChanges.length === 0) {
+                return;
+            }
+            const uri = event.document.uri.toString();
+            const historyReason = sourceHistoryReason(event.reason);
+            const transition = historyReason
+                ? sourceConversionUndoJournal.beginNative(
+                      uri,
+                      historyReason,
+                      event.document.getText(),
+                      event.contentChanges.map((change) => ({
+                          rangeOffset: change.rangeOffset,
+                          rangeLength: change.rangeLength,
+                          text: change.text,
+                      })),
+                      sourceConversionUndoJournal.trackedIds(uri, historyReason).flatMap((id) => {
+                          const snapshot = store.get(id);
+                          return snapshot ? [snapshot] : [];
+                      })
+                  )
+                : { kind: 'none' as const };
+
+            if (transition.kind === 'diverged') {
+                try {
+                    store.applyDocumentChange(event, vscode.workspace.asRelativePath(event.document.uri));
+                    store.notifyChanged();
+                } catch (err) {
+                    logger.error('applyDocumentChange threw while refusing conversion history', err);
+                }
+                void vscode.window.showWarningMessage(
+                    loc(
+                        'conversionHistoryDiverged',
+                        'Code Undo/Redo was applied, but the related annotations were not added or removed because they changed after conversion. Review both representations before continuing. Details: {0}',
+                        transition.message
+                    )
+                );
+                return;
+            }
+
+            if (transition.kind === 'matched') {
+                const { plan } = transition;
+                const gate = holdAnnotationPersistence();
+                try {
+                    if (plan.order === 'before-tracking') {
+                        applySourceConversionStorePlan(store, plan);
+                    }
+                    store.applyDocumentChange(event, vscode.workspace.asRelativePath(event.document.uri));
+                    if (plan.order === 'after-tracking') {
+                        applySourceConversionStorePlan(store, plan);
+                    }
+                    store.notifyChanged();
+                    sourceConversionUndoJournal.complete(plan.entryId, plan.reason, true);
+                    scheduleSourceConversionPersistence(store, event.document, plan, logger, gate);
+                } catch (err) {
+                    gate?.release();
+                    sourceConversionUndoJournal.complete(plan.entryId, plan.reason, false);
+                    logger.error('Conversion-aware source Undo/Redo failed', err);
+                    void vscode.window.showErrorMessage(
+                        loc(
+                            'conversionHistoryTransitionFailed',
+                            'Code Undo/Redo was applied, but annotations could not be mirrored safely. Review both representations before continuing. Details: {0}',
+                            err instanceof Error ? err.message : String(err)
+                        )
+                    );
+                }
+                return;
+            }
+
             try {
-                annotationStore.applyDocumentChange(event, vscode.workspace.asRelativePath(event.document.uri));
-                annotationStore.notifyChanged();
+                store.applyDocumentChange(event, vscode.workspace.asRelativePath(event.document.uri));
+                store.notifyChanged();
+                if (!historyReason && !suppressedSourceHistoryEdits.has(uri)) {
+                    sourceConversionUndoJournal.observeOrdinaryEdit(uri);
+                }
             } catch (err) {
                 logger.error('applyDocumentChange threw', err);
             }
+        })
+    );
+    context.subscriptions.push(
+        vscode.workspace.onDidCloseTextDocument((document) => {
+            sourceConversionUndoJournal.clearUri(document.uri.toString());
         })
     );
 
@@ -895,9 +1067,11 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
         const coordinator = new AnnotationSaveCoordinator<AnnotationStoreFileV2>(
             () => store.serialize(),
             async (payload) => {
-                const fingerprint = writeFingerprints.begin(payload);
+                const waitedForConversion = await waitForAnnotationPersistenceGates();
+                const durablePayload = waitedForConversion ? store.serialize() : payload;
+                const fingerprint = writeFingerprints.begin(durablePayload);
                 try {
-                    await persistence.save(payload);
+                    await persistence.save(durablePayload);
                     writeFingerprints.commit(fingerprint);
                 } catch (error) {
                     writeFingerprints.fail(fingerprint);
@@ -959,6 +1133,7 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
                     return;
                 }
                 annotationStore.deserialize(payload);
+                sourceConversionUndoJournal.clear();
                 writeFingerprints.observeExternal(payload);
                 annotationStore.notifyChanged();
                 logger.info(
@@ -1245,6 +1420,268 @@ async function awaitAnnotationSaveBarrier(): Promise<void> {
         // the latest snapshot dirty. Do not misreport an accepted in-memory
         // mutation as rejected merely because its durable retry is pending.
     }
+}
+
+/** Persistence barrier for destructive conversions; failures must propagate. */
+async function awaitAnnotationSaveBarrierStrict(): Promise<void> {
+    if (!annotationPersistence || !annotationSaveCoordinator) {
+        throw new Error('Annotation persistence is unavailable for this workspace.');
+    }
+    // Force a snapshot even when an earlier onDidChange listener threw before
+    // the coordinator's listener could schedule the committed transaction.
+    annotationSaveCoordinator.schedule();
+    await annotationSaveCoordinator.flush();
+}
+
+/** Commit one synchronous AnnotationStore transaction with rollback on mutation failure. */
+function commitAnnotationStoreMutation(store: AnnotationStore, mutation: () => void): void {
+    let transactionStarted = false;
+    try {
+        store.beginTransaction();
+        transactionStarted = true;
+        mutation();
+        store.commit();
+        transactionStarted = false;
+    } catch (error) {
+        if (transactionStarted) {
+            try {
+                store.rollback();
+            } catch {
+                // Preserve the original mutation/commit failure.
+            }
+        }
+        throw error;
+    }
+}
+
+function holdAnnotationPersistence(): AnnotationPersistenceGateHandle {
+    const previous = annotationPersistenceGate ?? Promise.resolve();
+    let resolveOwn!: () => void;
+    let isReleased = false;
+    const own = new Promise<void>((resolve) => {
+        resolveOwn = resolve;
+    });
+    const promise = Promise.all([previous, own]).then(() => undefined);
+    annotationPersistenceGate = promise;
+    void promise.then(() => {
+        if (annotationPersistenceGate === promise) {
+            annotationPersistenceGate = undefined;
+        }
+    });
+    return {
+        promise,
+        released: () => isReleased,
+        release: () => {
+            if (!isReleased) {
+                isReleased = true;
+                resolveOwn();
+            }
+        },
+    };
+}
+
+async function waitForAnnotationPersistenceGates(): Promise<boolean> {
+    let waited = false;
+    while (annotationPersistenceGate) {
+        waited = true;
+        const gate = annotationPersistenceGate;
+        await gate;
+        if (annotationPersistenceGate === gate) {
+            break;
+        }
+    }
+    return waited;
+}
+
+function applySourceConversionStorePlan(
+    store: AnnotationStore,
+    plan: SourceConversionTransitionPlan<Readonly<AnnotationV2>>
+): void {
+    commitAnnotationStoreMutation(store, () => {
+        for (const id of plan.removeIds) {
+            if (!store.get(id)) {
+                throw new Error(`Conversion history annotation ${id} is no longer available.`);
+            }
+            store.remove(id);
+        }
+        for (const snapshot of plan.upsertSnapshots) {
+            const current = store.get(snapshot.id);
+            if (current && !sameConversionBusinessSnapshot(snapshot, current)) {
+                throw new Error(`Conversion history annotation ${snapshot.id} changed before replay.`);
+            }
+            store.upsert(structuredClone(snapshot));
+        }
+    });
+}
+
+function rollbackSourceConversionStorePlan(
+    store: AnnotationStore,
+    plan: SourceConversionTransitionPlan<Readonly<AnnotationV2>>
+): void {
+    commitAnnotationStoreMutation(store, () => {
+        for (const id of plan.rollbackRemoveIds) {
+            if (store.get(id)) {
+                store.remove(id);
+            }
+        }
+        for (const snapshot of plan.rollbackUpsertSnapshots) {
+            const current = store.get(snapshot.id);
+            if (current && !sameConversionBusinessSnapshot(snapshot, current)) {
+                throw new Error(`Conversion history annotation ${snapshot.id} changed before durability rollback.`);
+            }
+            store.upsert(structuredClone(snapshot));
+        }
+    });
+}
+
+function conversionRollbackSnapshotsAreAbsent(
+    store: AnnotationStore,
+    plan: SourceConversionTransitionPlan<Readonly<AnnotationV2>>
+): boolean {
+    const expectedIds = plan.rollbackUpsertSnapshots.map((snapshot) => snapshot.id);
+    const presentIds = expectedIds.filter((id) => store.get(id) !== undefined);
+    return allConversionSnapshotsAbsent(expectedIds, presentIds);
+}
+
+function ensureConversionSnapshots(store: AnnotationStore, snapshots: readonly Readonly<AnnotationV2>[]): void {
+    commitAnnotationStoreMutation(store, () => {
+        for (const snapshot of snapshots) {
+            const current = store.get(snapshot.id);
+            if (current) {
+                if (!sameConversionBusinessSnapshot(snapshot, current)) {
+                    throw new Error(`Conversion annotation ${snapshot.id} changed before conservative restore.`);
+                }
+                continue;
+            }
+            store.upsert(structuredClone(snapshot));
+        }
+    });
+}
+
+function scheduleSourceConversionPersistence(
+    store: AnnotationStore,
+    document: vscode.TextDocument,
+    plan: SourceConversionTransitionPlan<Readonly<AnnotationV2>>,
+    logger: ActivationLogger,
+    gate: AnnotationPersistenceGateHandle | undefined
+): void {
+    const expectedPhase = plan.reason === 'undo' ? 'undone' : 'applied';
+    const task = (async (): Promise<void> => {
+        const targetStillCurrent = (): boolean =>
+            sourceConversionUndoJournal.phase(plan.entryId) === expectedPhase &&
+            document.getText() === plan.sourceTextAfterEvent;
+        const targetAddsAnnotations = plan.upsertSnapshots.length > 0;
+        if (!targetStillCurrent()) {
+            const mustRestoreRemovedRepresentation =
+                !targetAddsAnnotations && conversionRollbackSnapshotsAreAbsent(store, plan);
+            if (mustRestoreRemovedRepresentation) {
+                rollbackSourceConversionStorePlan(store, plan);
+                sourceConversionUndoJournal.invalidate(plan.entryId);
+            }
+            gate?.release();
+            if (mustRestoreRemovedRepresentation) {
+                try {
+                    await awaitAnnotationSaveBarrierStrict();
+                } catch {
+                    // The coordinator keeps the conservative snapshot dirty for retry.
+                }
+            }
+            return;
+        }
+
+        try {
+            if (targetAddsAnnotations) {
+                // Make the newly restored annotation representation durable
+                // before saving a source edit that removes its comment copy.
+                gate?.release();
+                await awaitAnnotationSaveBarrierStrict();
+                if (!targetStillCurrent()) {
+                    return;
+                }
+            }
+
+            const versionBeforeSave = document.version;
+            if (!(await document.save()) || document.isDirty) {
+                throw new Error('VS Code could not save the source side of the conversion history transition.');
+            }
+            if (document.version !== versionBeforeSave || !targetStillCurrent()) {
+                const phaseStillTargetsThisTransition =
+                    sourceConversionUndoJournal.phase(plan.entryId) === expectedPhase;
+                const mustRestoreRemovedRepresentation =
+                    !targetAddsAnnotations && conversionRollbackSnapshotsAreAbsent(store, plan);
+                if (mustRestoreRemovedRepresentation) {
+                    rollbackSourceConversionStorePlan(store, plan);
+                    sourceConversionUndoJournal.invalidate(plan.entryId);
+                } else if (phaseStillTargetsThisTransition) {
+                    sourceConversionUndoJournal.invalidate(plan.entryId);
+                }
+                gate?.release();
+                if (mustRestoreRemovedRepresentation) {
+                    await awaitAnnotationSaveBarrierStrict();
+                }
+                void vscode.window.showWarningMessage(
+                    loc(
+                        'conversionHistorySaveParticipantChangedText',
+                        'A save participant changed the source during Undo/Redo. The conversion history entry was disabled; review both representations.'
+                    )
+                );
+                return;
+            }
+
+            if (!targetAddsAnnotations) {
+                // The source comment copy is durable; annotation removal may
+                // now be persisted without creating a no-representation gap.
+                gate?.release();
+                await awaitAnnotationSaveBarrierStrict();
+            }
+        } catch (error) {
+            if (!targetAddsAnnotations && (targetStillCurrent() || conversionRollbackSnapshotsAreAbsent(store, plan))) {
+                try {
+                    rollbackSourceConversionStorePlan(store, plan);
+                    sourceConversionUndoJournal.invalidate(plan.entryId);
+                } catch (rollbackError) {
+                    logger.error('Conversion-aware source Undo/Redo durability rollback failed', rollbackError);
+                }
+            }
+            gate?.release();
+            logger.error('Conversion-aware source Undo/Redo durability failed', error);
+            void vscode.window.showErrorMessage(
+                loc(
+                    'conversionHistoryDurabilityFailed',
+                    'Undo/Redo changed the editor, but its durable two-resource save could not finish. The previous annotation state was kept when safe; review both representations before saving manually. Details: {0}',
+                    error instanceof Error ? error.message : String(error)
+                )
+            );
+            try {
+                await awaitAnnotationSaveBarrierStrict();
+            } catch {
+                // The shared coordinator already keeps the final snapshot dirty for retry.
+            }
+        }
+    })();
+    sourceConversionHistoryPersistenceQueue = Promise.all([
+        sourceConversionHistoryPersistenceQueue.catch(() => undefined),
+        task.catch(() => undefined),
+    ]).then(() => undefined);
+}
+
+function sourceHistoryReason(reason: vscode.TextDocumentChangeReason | undefined): SourceHistoryReason | undefined {
+    if (reason === vscode.TextDocumentChangeReason.Undo) {
+        return 'undo';
+    }
+    if (reason === vscode.TextDocumentChangeReason.Redo) {
+        return 'redo';
+    }
+    return undefined;
+}
+
+function conversionRollbackIncomplete(error: unknown): boolean {
+    if (!(error instanceof SourceConversionTransactionError)) {
+        return false;
+    }
+    return (
+        !error.sourceRestored || (error.cause instanceof DurableDestinationError && !error.cause.destinationRestored)
+    );
 }
 
 /**
@@ -2355,38 +2792,39 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 );
                 return 0;
             }
-            const records = scanSourceComments(document.getText(), document.languageId);
+            const previewDocumentVersion = document.version;
+            const previewSourceText = document.getText();
+            const records = scanSourceComments(previewSourceText, document.languageId);
+            const importTags = sourceCommentImportTags(
+                document.uri.toString(),
+                document.languageId,
+                previewSourceText,
+                records
+            );
+            const importTagByRecord = new Map(records.map((record, index) => [record, importTags[index]]));
             const existing = store.getByFile(document.uri.toString()).map((annotation) => ({
                 idFragment: sourceCommentAnnotationIdFragment(annotation.id),
+                idFingerprint: sourceCommentAnnotationIdFingerprint(annotation.id),
                 line: document.positionAt(annotation.startOffset).line,
                 message: normalizedConversionText(annotation.message),
+                tags: new Set(annotation.tags ?? []),
             }));
-            const candidates = records.filter((record) => {
-                if (record.text.trim().length === 0) {
-                    return false;
-                }
-                if (record.annotationIdFragment) {
-                    const idMatches = existing.filter(
-                        (annotation) => annotation.idFragment === record.annotationIdFragment
-                    );
-                    if (
-                        idMatches.length === 1 ||
-                        idMatches.some((annotation) => annotation.message === normalizedConversionText(record.text))
-                    ) {
-                        return false;
-                    }
-                }
-                return !existing.some(
-                    (annotation) =>
-                        annotation.line >= record.startLine &&
-                        annotation.line <= record.endLine &&
-                        annotation.message === normalizedConversionText(record.text)
-                );
-            });
+            const candidateRecords = records
+                .filter((record) => record.text.trim().length > 0)
+                .map((record) => ({
+                    value: record,
+                    importTag: importTagByRecord.get(record),
+                    annotationIdFragment: record.annotationIdFragment,
+                    annotationIdFingerprint: record.annotationIdFingerprint,
+                    startLine: record.startLine,
+                    endLine: record.endLine,
+                    message: normalizedConversionText(record.text),
+                }));
+            const candidates = unrepresentedSourceCommentRecords(candidateRecords, existing);
             if (candidates.length === 0) {
                 vscode.window.showInformationMessage(
                     records.length === 0
-                        ? loc('noSourceCommentsFound', 'No standalone comments or file headers were found.')
+                        ? loc('noSourceCommentsFound', 'No supported source comments or file headers were found.')
                         : loc('sourceCommentsAlreadyImported', 'All detected comments already have annotations.')
                 );
                 return 0;
@@ -2425,21 +2863,6 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 return 0;
             }
 
-            const createLabel = loc('createAnnotations', 'Create Annotations');
-            const confirmation = await vscode.window.showWarningMessage(
-                loc(
-                    'confirmSourceCommentConversion',
-                    'Create {0} annotation(s) from selected comments in {1}? The source code will not be changed.',
-                    selected.length,
-                    vscode.workspace.asRelativePath(document.uri)
-                ),
-                { modal: true },
-                createLabel
-            );
-            if (confirmation !== createLabel) {
-                return 0;
-            }
-
             const configuration = vscode.workspace.getConfiguration('annotation');
             const maxPerFile = configuration.get<number>('maxAnnotationsPerFile', 1000);
             if (maxPerFile > 0 && store.listForFile(document.uri.toString()).length + selected.length > maxPerFile) {
@@ -2449,42 +2872,402 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 return 0;
             }
 
-            let conversionTransactionStarted = false;
-            try {
-                store.beginTransaction();
-                conversionTransactionStarted = true;
-                for (const { record } of selected) {
-                    store.add(
-                        {
-                            fileUri: document.uri.toString(),
-                            file: vscode.workspace.asRelativePath(document.uri),
-                            origin: { kind: 'manual' },
-                            message: record.text,
-                            author: configuration.get<string>('username', 'Anonymous').trim() || 'Anonymous',
-                            timestamp: new Date().toISOString(),
-                            languageId: document.languageId,
-                            tags: ['imported-source-comment', `source-comment:${record.kind}`],
-                            severity: sourceCommentSeverity(record),
-                        },
-                        { line: record.startLine },
-                        document
+            const sourceDisposition = await pickConversionSourceDisposition(
+                'comments',
+                selected.every(({ record }) => canSafelyRemoveSourceComment(document.languageId, record))
+            );
+            if (!sourceDisposition) {
+                return 0;
+            }
+            if (sourceDisposition === 'remove' && hasConfiguredSaveParticipant(document)) {
+                warnConfiguredSaveParticipant();
+                return 0;
+            }
+            if (sourceDisposition === 'remove' && document.isDirty) {
+                const saveAndContinueLabel = loc('saveAndContinue', 'Save & Continue');
+                const saveChoice = await vscode.window.showWarningMessage(
+                    loc(
+                        'saveDirtySourceBeforeCommentMove',
+                        'This file has unsaved changes. Save it before moving comments into annotations? Cancel keeps the source and annotations unchanged.'
+                    ),
+                    { modal: true },
+                    saveAndContinueLabel
+                );
+                if (saveChoice !== saveAndContinueLabel) {
+                    return 0;
+                }
+                if (!(await document.save()) || document.isDirty) {
+                    vscode.window.showErrorMessage(
+                        loc(
+                            'sourceSaveBeforeCommentConversionFailed',
+                            'The source file could not be saved. No comments or annotations were changed.'
+                        )
                     );
+                    return 0;
                 }
-                store.commit();
-                conversionTransactionStarted = false;
-            } catch (error) {
-                if (conversionTransactionStarted) {
-                    store.rollback();
-                }
-                const message = error instanceof Error ? error.message : String(error);
-                vscode.window.showErrorMessage(
-                    loc('sourceCommentConversionFailed', 'Could not convert the selected comments: {0}', message)
+            }
+            if (document.version !== previewDocumentVersion || document.getText() !== previewSourceText) {
+                vscode.window.showWarningMessage(
+                    loc(
+                        'sourceCommentsChangedDuringPreview',
+                        'The source file changed while the conversion preview was open. Run the command again to rescan safely.'
+                    )
                 );
                 return 0;
             }
-            vscode.window.showInformationMessage(
-                loc('sourceCommentsConverted', '{0} code comment(s) converted to annotations.', selected.length)
+            const currentAnnotations = store.getByFile(document.uri.toString()).map((annotation) => ({
+                idFragment: sourceCommentAnnotationIdFragment(annotation.id),
+                idFingerprint: sourceCommentAnnotationIdFingerprint(annotation.id),
+                line: document.positionAt(annotation.startOffset).line,
+                message: normalizedConversionText(annotation.message),
+                tags: new Set(annotation.tags ?? []),
+            }));
+            const currentCandidates = new Set(unrepresentedSourceCommentRecords(candidateRecords, currentAnnotations));
+            const duplicateAppeared = selected.some(({ record }) => !currentCandidates.has(record));
+            if (duplicateAppeared) {
+                vscode.window.showWarningMessage(
+                    loc(
+                        'annotationsChangedDuringCommentPreview',
+                        'Annotations changed while the conversion preview was open. Run the command again to avoid duplicates.'
+                    )
+                );
+                return 0;
+            }
+            const anchorLineByRecord = new Map(
+                selected.map(({ record }) => [
+                    record,
+                    chooseConversionAnnotationLine(previewSourceText, record, records, sourceDisposition),
+                ])
             );
+
+            const createdAnnotations: Readonly<AnnotationV2>[] = [];
+            const createAnnotations = (): void => {
+                createdAnnotations.length = 0;
+                commitAnnotationStoreMutation(store, () => {
+                    for (const { record } of selected) {
+                        createdAnnotations.push(
+                            store.add(
+                                {
+                                    fileUri: document.uri.toString(),
+                                    file: vscode.workspace.asRelativePath(document.uri),
+                                    origin: { kind: 'manual' },
+                                    message: record.text,
+                                    author: configuration.get<string>('username', 'Anonymous').trim() || 'Anonymous',
+                                    timestamp: new Date().toISOString(),
+                                    languageId: document.languageId,
+                                    tags: [
+                                        'imported-source-comment',
+                                        `source-comment:${record.kind}`,
+                                        ...(importTagByRecord.get(record)
+                                            ? [importTagByRecord.get(record) as string]
+                                            : []),
+                                    ],
+                                    severity: sourceCommentSeverity(record),
+                                },
+                                { line: anchorLineByRecord.get(record) ?? record.startLine },
+                                document
+                            )
+                        );
+                    }
+                });
+            };
+
+            let removalOriginalText: string | undefined;
+            let removalConvertedEditText: string | undefined;
+            let removalSavedText: string | undefined;
+            let removalDocumentVersion = document.version;
+            let removalSourceVersionBeforeSave: number | undefined;
+            let removalSourceTextBeforeSave: string | undefined;
+            let removalPersistenceGate: AnnotationPersistenceGateHandle | undefined;
+            let removalHistoryEntryId: string | undefined;
+            try {
+                if (sourceDisposition === 'keep') {
+                    createAnnotations();
+                } else {
+                    const persistenceGate = holdAnnotationPersistence();
+                    removalPersistenceGate = persistenceGate;
+                    const sourceEdit = new vscode.WorkspaceEdit();
+                    for (const { record } of selected) {
+                        const range = new vscode.Range(
+                            new vscode.Position(record.startLine, record.startCharacter),
+                            new vscode.Position(record.endLine, record.endCharacter)
+                        );
+                        sourceEdit.replace(document.uri, range, lineBreaksOnly(document.getText(range)));
+                    }
+                    removalOriginalText = document.getText();
+                    const result = await runSourceFirstConversion({
+                        applySource: async () => {
+                            await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
+                            if (
+                                document.version !== previewDocumentVersion ||
+                                document.getText() !== previewSourceText
+                            ) {
+                                return false;
+                            }
+                            const applied = await vscode.workspace.applyEdit(sourceEdit);
+                            removalDocumentVersion = document.version;
+                            removalConvertedEditText = document.getText();
+                            return applied;
+                        },
+                        makeSourceDurable: async () => {
+                            if (removalOriginalText === undefined || removalConvertedEditText === undefined) {
+                                throw new Error('The source conversion state is incomplete.');
+                            }
+                            removalSourceVersionBeforeSave = document.version;
+                            removalSourceTextBeforeSave = removalConvertedEditText;
+                            createAnnotations();
+                            removalHistoryEntryId = sourceConversionUndoJournal.record({
+                                uri: document.uri.toString(),
+                                direction: 'comments-to-annotations',
+                                beforeText: removalOriginalText,
+                                afterText: removalConvertedEditText,
+                                beforeSnapshots: [],
+                                afterSnapshots: createdAnnotations,
+                                undoInstallSnapshots: [],
+                                redoInstallSnapshots: createdAnnotations,
+                            });
+                            const versionBeforeSave = removalSourceVersionBeforeSave;
+                            const saved = await document.save();
+                            const savedText = document.getText();
+                            if (!saved || document.isDirty) {
+                                throw new Error('VS Code could not save the source file after removing comments.');
+                            }
+                            if (
+                                !sourceStateStillMatches(
+                                    versionBeforeSave,
+                                    removalConvertedEditText,
+                                    document.version,
+                                    savedText
+                                ) ||
+                                sourceConversionUndoJournal.phase(removalHistoryEntryId) !== 'applied'
+                            ) {
+                                throw new Error(
+                                    'A save participant reformatted the source. Move was cancelled because that combined Undo step cannot be mirrored safely.'
+                                );
+                            }
+                            removalDocumentVersion = versionBeforeSave;
+                            removalSavedText = savedText;
+                            for (const annotation of createdAnnotations) {
+                                const current = store.get(annotation.id);
+                                if (!current || !sameConversionBusinessSnapshot(annotation, current)) {
+                                    throw new Error(
+                                        `Converted annotation ${annotation.id} changed while the source file was being saved.`
+                                    );
+                                }
+                            }
+                            persistenceGate.release();
+                        },
+                        applyDestination: () => {
+                            if (
+                                document.version !== removalDocumentVersion ||
+                                document.getText() !== removalSavedText ||
+                                !removalHistoryEntryId ||
+                                sourceConversionUndoJournal.phase(removalHistoryEntryId) !== 'applied'
+                            ) {
+                                throw new Error('The source changed before annotations could be saved.');
+                            }
+                            return runDurableDestinationMutation({
+                                mutate: () => undefined,
+                                persist: awaitAnnotationSaveBarrierStrict,
+                                compensate: () => {
+                                    commitAnnotationStoreMutation(store, () => {
+                                        for (const annotation of createdAnnotations) {
+                                            const current = store.get(annotation.id);
+                                            if (!current) {
+                                                continue;
+                                            }
+                                            if (!sameConversionBusinessSnapshot(annotation, current)) {
+                                                throw new Error(
+                                                    'A newly created annotation changed before persistence compensation.'
+                                                );
+                                            }
+                                            store.remove(annotation.id);
+                                        }
+                                    });
+                                },
+                                persistCompensation: awaitAnnotationSaveBarrierStrict,
+                            });
+                        },
+                        restoreSource: async () => {
+                            const sourceCanBeRestored =
+                                removalSourceVersionBeforeSave !== undefined &&
+                                removalSourceTextBeforeSave !== undefined &&
+                                sourceStateStillMatches(
+                                    removalSourceVersionBeforeSave,
+                                    removalSourceTextBeforeSave,
+                                    document.version,
+                                    document.getText()
+                                );
+                            if (!sourceCanBeRestored) {
+                                const restored = await restoreSourceOrKeepDestination({
+                                    restoreSource: async () => false,
+                                    ensureDestination: () => ensureConversionSnapshots(store, createdAnnotations),
+                                    releasePersistence: () => persistenceGate.release(),
+                                    persistDestination: awaitAnnotationSaveBarrierStrict,
+                                });
+                                void vscode.window.showWarningMessage(
+                                    loc(
+                                        'commentConversionRollbackSourceChanged',
+                                        'The source changed while it was being saved, so rollback left your text untouched and kept the converted annotations.'
+                                    )
+                                );
+                                return restored;
+                            }
+                            return restoreSourceOrKeepDestination({
+                                restoreSource: async () => {
+                                    commitAnnotationStoreMutation(store, () => {
+                                        for (const annotation of createdAnnotations) {
+                                            const current = store.get(annotation.id);
+                                            if (!current) {
+                                                continue;
+                                            }
+                                            if (!sameConversionBusinessSnapshot(annotation, current)) {
+                                                throw new Error(
+                                                    `Converted annotation ${annotation.id} changed before source rollback.`
+                                                );
+                                            }
+                                            store.remove(annotation.id);
+                                        }
+                                    });
+                                    return restoreAndSaveSourceDocument(
+                                        document,
+                                        removalSourceVersionBeforeSave as number,
+                                        removalOriginalText ?? ''
+                                    );
+                                },
+                                ensureDestination: () => ensureConversionSnapshots(store, createdAnnotations),
+                                releasePersistence: () => persistenceGate.release(),
+                                persistDestination: awaitAnnotationSaveBarrierStrict,
+                            });
+                        },
+                    });
+                    persistenceGate.release();
+                    if (result === 'source-edit-rejected') {
+                        vscode.window.showErrorMessage(
+                            loc(
+                                'sourceCommentRemovalEditRejected',
+                                'VS Code could not remove the selected source comments. No annotations were created.'
+                            )
+                        );
+                        return 0;
+                    }
+                }
+            } catch (error) {
+                if (removalHistoryEntryId) {
+                    sourceConversionUndoJournal.discard(removalHistoryEntryId);
+                }
+                removalPersistenceGate?.release();
+                await awaitAnnotationSaveBarrier();
+                const message = conversionRollbackIncomplete(error)
+                    ? loc(
+                          'sourceCommentConversionRollbackFailed',
+                          'Annotation creation failed and one or more rollback steps could not be persisted. Use source control and inspect the annotation file before continuing. Details: {0}',
+                          error instanceof Error ? error.message : String(error)
+                      )
+                    : loc(
+                          'sourceCommentConversionFailed',
+                          'Could not convert the selected comments. No partial conversion was kept. Details: {0}',
+                          error instanceof Error ? error.message : String(error)
+                      );
+                vscode.window.showErrorMessage(message);
+                return 0;
+            }
+            if (sourceDisposition === 'keep') {
+                await awaitAnnotationSaveBarrier();
+                vscode.window.showInformationMessage(
+                    loc(
+                        'sourceCommentsCopiedToAnnotations',
+                        '{0} code comment(s) copied to annotations; the source comments were kept.',
+                        selected.length
+                    )
+                );
+                return selected.length;
+            }
+
+            if (
+                removalOriginalText === undefined ||
+                removalConvertedEditText === undefined ||
+                removalSavedText === undefined
+            ) {
+                vscode.window.showErrorMessage(
+                    loc(
+                        'conversionHistoryNotRecorded',
+                        'The conversion completed, but its native Undo/Redo history could not be recorded.'
+                    )
+                );
+                return selected.length;
+            }
+            const historyEntryId = removalHistoryEntryId;
+            if (!historyEntryId) {
+                vscode.window.showErrorMessage(
+                    loc(
+                        'conversionHistoryNotRecorded',
+                        'The conversion completed, but its native Undo/Redo history could not be recorded.'
+                    )
+                );
+                return selected.length;
+            }
+            if (sourceConversionUndoJournal.phase(historyEntryId) !== 'applied') {
+                await sourceConversionHistoryPersistenceQueue;
+                vscode.window.showInformationMessage(
+                    loc(
+                        'conversionUndoneDuringCompletion',
+                        'The conversion was undone while its durable save was completing; the original representation remains active.'
+                    )
+                );
+                return 0;
+            }
+            const undoConversionLabel = loc('undoConversion', 'Undo Conversion');
+            const action = await vscode.window.showInformationMessage(
+                loc(
+                    'sourceCommentsMovedToAnnotations',
+                    '{0} code comment(s) moved to annotations. Native Undo and Redo now keep code and annotations synchronized.',
+                    selected.length
+                ),
+                undoConversionLabel
+            );
+            if (action === undoConversionLabel) {
+                if (
+                    document.version !== removalDocumentVersion ||
+                    document.getText() !== removalSavedText ||
+                    !createdAnnotations.every((annotation) =>
+                        sameConversionBusinessSnapshot(annotation, store.get(annotation.id))
+                    )
+                ) {
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'conversionUndoStateChanged',
+                            'Undo Conversion was not run because the source file or converted annotations changed.'
+                        )
+                    );
+                    return selected.length;
+                }
+                await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
+                await vscode.commands.executeCommand('undo');
+                if (
+                    sourceConversionUndoJournal.phase(historyEntryId) === 'applied' &&
+                    removalSavedText !== removalConvertedEditText &&
+                    document.getText() === removalConvertedEditText
+                ) {
+                    await vscode.commands.executeCommand('undo');
+                }
+                await sourceConversionHistoryPersistenceQueue;
+                if (sourceConversionUndoJournal.phase(historyEntryId) === 'undone') {
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'commentConversionUndoComplete',
+                            'Conversion undone: source comments restored and converted annotations removed.'
+                        )
+                    );
+                } else {
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'commentConversionUndoNotReached',
+                            'The editor did not reach the recorded conversion step. Use Undo again to pass any formatter edit.'
+                        )
+                    );
+                }
+            }
             return selected.length;
         })
     );
@@ -2521,7 +3304,9 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 return 0;
             }
 
-            const sourceComments = scanSourceComments(document.getText(), document.languageId);
+            const previewDocumentVersion = document.version;
+            const previewSourceText = document.getText();
+            const sourceComments = scanSourceComments(previewSourceText, document.languageId);
             const clickedAnnotationId = annotationIdFromCommandArg(argument);
             const candidates = store
                 .getByFile(document.uri.toString())
@@ -2531,9 +3316,8 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 }))
                 .filter(
                     ({ annotation, line }) =>
-                        !sourceComments.some(
-                            (comment) =>
-                                comment.annotationIdFragment === sourceCommentAnnotationIdFragment(annotation.id)
+                        !sourceComments.some((comment) =>
+                            sourceCommentMarkerMatchesAnnotation(comment, annotation.id)
                         ) &&
                         !sourceComments.some(
                             (comment) =>
@@ -2612,42 +3396,91 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                 return 0;
             }
 
-            const writeLabel = loc('writeCodeComments', 'Write Code Comments');
-            const confirmation = await vscode.window.showWarningMessage(
-                loc(
-                    'confirmWriteAnnotations',
-                    'Insert {0} comment(s) into {1}? This changes the source file and can be undone once with Undo.',
-                    selected.length,
-                    vscode.workspace.asRelativePath(document.uri)
-                ),
-                { modal: true },
-                writeLabel
-            );
-            if (confirmation !== writeLabel) {
+            const sourceDisposition = await pickConversionSourceDisposition('annotations', true);
+            if (!sourceDisposition) {
+                return 0;
+            }
+            if (sourceDisposition === 'remove' && hasConfiguredSaveParticipant(document)) {
+                warnConfiguredSaveParticipant();
+                return 0;
+            }
+
+            if (sourceDisposition === 'remove' && document.isDirty) {
+                const saveAndContinueLabel = loc('saveAndContinue', 'Save & Continue');
+                const saveChoice = await vscode.window.showWarningMessage(
+                    loc(
+                        'saveDirtySourceBeforeMove',
+                        'This file has unsaved changes. Save it before moving annotations into source comments? Cancel keeps every annotation and leaves the file untouched.'
+                    ),
+                    { modal: true },
+                    saveAndContinueLabel
+                );
+                if (saveChoice !== saveAndContinueLabel) {
+                    return 0;
+                }
+                if (!(await document.save()) || document.isDirty) {
+                    vscode.window.showErrorMessage(
+                        loc(
+                            'sourceSaveBeforeConversionFailed',
+                            'The source file could not be saved. No comments were inserted and all annotations were kept.'
+                        )
+                    );
+                    return 0;
+                }
+            }
+            if (document.version !== previewDocumentVersion || document.getText() !== previewSourceText) {
+                vscode.window.showWarningMessage(
+                    loc(
+                        'sourceChangedDuringAnnotationPreview',
+                        'The source file changed while the conversion preview was open. It was not converted; run the command again.'
+                    )
+                );
+                return 0;
+            }
+            if (!selected.every(({ annotation }) => sameConversionSnapshot(annotation, store.get(annotation.id)))) {
+                vscode.window.showWarningMessage(
+                    loc(
+                        'annotationsChangedDuringConversionPreview',
+                        'One or more selected annotations changed while the preview was open. Run the command again to avoid losing changes.'
+                    )
+                );
                 return 0;
             }
 
             const endOfLine = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
-            const commentsByPosition = new Map<
-                string,
-                { position: vscode.Position; comments: string[]; appendAfterPreamble: boolean }
-            >();
+            const sourceLines = Array.from({ length: document.lineCount }, (_, index) => document.lineAt(index).text);
+            const commentsByPosition = new Map<string, { position: vscode.Position; comments: string[] }>();
             try {
                 for (const { annotation, line } of selected) {
-                    const appendAfterPreamble =
-                        line === 0 && sourcePreambleMustStayFirst(document) && document.lineCount === 1;
-                    const insertionLine = line === 0 && sourcePreambleMustStayFirst(document) ? 1 : line;
-                    const insertionPosition = appendAfterPreamble
-                        ? document.lineAt(0).range.end
-                        : new vscode.Position(insertionLine, 0);
-                    const indentation = appendAfterPreamble
-                        ? ''
-                        : (document.lineAt(insertionLine).text.match(/^\s*/)?.[0] ?? '');
+                    const insertionLine = safeSourceCommentInsertionLine(sourceLines, document.languageId, line);
+                    if (insertionLine === undefined) {
+                        throw new Error(
+                            loc(
+                                'sourceCommentInsertionPositionUnsafe',
+                                'Line {0} is inside a protected preamble, continuation, directive, string, or mixed-language region.',
+                                line + 1
+                            )
+                        );
+                    }
+                    const insertionPosition = new vscode.Position(insertionLine, 0);
+                    const indentation = document.lineAt(insertionLine).text.match(/^\s*/)?.[0] ?? '';
                     const encoded = encodeSourceComment(annotation.message, document.languageId, {
                         annotationId: annotation.id,
                         indentation,
                         style: style.value,
                     }).replace(/\n/g, endOfLine);
+                    if (
+                        sourceDisposition === 'remove' &&
+                        !encodedSourceCommentRoundTripsAnnotation(encoded, document.languageId, annotation)
+                    ) {
+                        throw new Error(
+                            loc(
+                                'sourceCommentMoveWouldAlterAnnotation',
+                                'The selected comment style cannot preserve the annotation at line {0} exactly. Choose Keep Source Annotations or a lossless comment style.',
+                                line + 1
+                            )
+                        );
+                    }
                     const positionKey = `${insertionPosition.line}:${insertionPosition.character}`;
                     const bucket = commentsByPosition.get(positionKey);
                     if (bucket) {
@@ -2656,7 +3489,6 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                         commentsByPosition.set(positionKey, {
                             position: insertionPosition,
                             comments: [encoded],
-                            appendAfterPreamble,
                         });
                     }
                 }
@@ -2669,22 +3501,313 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             }
 
             const edit = new vscode.WorkspaceEdit();
-            for (const { position, comments, appendAfterPreamble } of commentsByPosition.values()) {
-                const joined = comments.join(endOfLine);
-                edit.insert(
-                    document.uri,
-                    position,
-                    appendAfterPreamble ? `${endOfLine}${joined}` : `${joined}${endOfLine}`
-                );
+            for (const { position, comments } of commentsByPosition.values()) {
+                // A blank line prevents the scanner from grouping consecutive
+                // generated line comments into one record and losing every
+                // marker after the first.
+                const joined = comments.join(`${endOfLine}${endOfLine}`);
+                edit.insert(document.uri, position, `${joined}${endOfLine}`);
             }
-            await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
-            if (!(await vscode.workspace.applyEdit(edit))) {
+            const originalText = document.getText();
+            const documentVersionBeforeEdit = document.version;
+            let documentVersionAfterEdit = document.version;
+            let sourceTextAfterEdit = '';
+            let postEditAnnotationSnapshots: Readonly<AnnotationV2>[] = [];
+            const applySourceEdit = async (): Promise<boolean> => {
+                await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
+                if (
+                    document.version !== documentVersionBeforeEdit ||
+                    document.getText() !== originalText ||
+                    !selected.every(({ annotation }) => sameConversionSnapshot(annotation, store.get(annotation.id)))
+                ) {
+                    return false;
+                }
+                const applied = await vscode.workspace.applyEdit(edit);
+                documentVersionAfterEdit = document.version;
+                if (applied) {
+                    sourceTextAfterEdit = document.getText();
+                    postEditAnnotationSnapshots = selected.map(({ annotation }) => {
+                        const current = store.get(annotation.id);
+                        if (!current || !sameConversionBusinessSnapshot(annotation, current)) {
+                            throw new Error(`Annotation ${annotation.id} changed during source comment insertion.`);
+                        }
+                        return current;
+                    });
+                }
+                return applied;
+            };
+
+            if (sourceDisposition === 'remove') {
+                const originalAnnotations = selected.map(({ annotation }) => annotation);
+                let durableRemovalSnapshots: Readonly<AnnotationV2>[] = [];
+                let convertedText = '';
+                let sourceVersionBeforeSave: number | undefined;
+                let sourceTextBeforeSave: string | undefined;
+                let removalHistoryEntryId: string | undefined;
+                const persistenceGate = holdAnnotationPersistence();
+                try {
+                    const result = await runSourceFirstConversion({
+                        applySource: applySourceEdit,
+                        makeSourceDurable: async () => {
+                            const versionBeforeSave = document.version;
+                            sourceVersionBeforeSave = versionBeforeSave;
+                            sourceTextBeforeSave = sourceTextAfterEdit;
+                            if (!(await document.save()) || document.isDirty) {
+                                throw new Error('VS Code could not save the generated source comments.');
+                            }
+                            const savedText = document.getText();
+                            if (
+                                !sourceStateStillMatches(
+                                    versionBeforeSave,
+                                    sourceTextAfterEdit,
+                                    document.version,
+                                    savedText
+                                )
+                            ) {
+                                throw new Error(
+                                    'A save participant reformatted the source. Move was cancelled because that combined Undo step cannot be mirrored safely.'
+                                );
+                            }
+                            documentVersionAfterEdit = versionBeforeSave;
+                            convertedText = savedText;
+                            const materialized = scanSourceComments(convertedText, document.languageId);
+                            if (!sourceCommentsRoundTripAnnotations(materialized, originalAnnotations)) {
+                                throw new Error(
+                                    'One or more generated comments did not preserve the exact annotation id and message after the source-file save.'
+                                );
+                            }
+                        },
+                        applyDestination: () => {
+                            if (document.version !== documentVersionAfterEdit || document.getText() !== convertedText) {
+                                throw new Error('The source changed before annotations could be removed.');
+                            }
+                            durableRemovalSnapshots = originalAnnotations.map((annotation) => {
+                                const current = store.get(annotation.id);
+                                if (!current) {
+                                    throw new Error(`Annotation ${annotation.id} is no longer available.`);
+                                }
+                                if (!sameConversionBusinessSnapshot(annotation, current)) {
+                                    throw new Error(
+                                        `Annotation ${annotation.id} changed while the source file was being saved.`
+                                    );
+                                }
+                                return current;
+                            });
+                            return runDurableDestinationMutation({
+                                mutate: () => {
+                                    commitAnnotationStoreMutation(store, () => {
+                                        for (const annotation of durableRemovalSnapshots) {
+                                            const current = store.get(annotation.id);
+                                            if (!current) {
+                                                continue;
+                                            }
+                                            if (!sameConversionSnapshot(annotation, current)) {
+                                                throw new Error(`Annotation ${annotation.id} changed before removal.`);
+                                            }
+                                            store.remove(annotation.id);
+                                        }
+                                    });
+                                    removalHistoryEntryId = sourceConversionUndoJournal.record({
+                                        uri: document.uri.toString(),
+                                        direction: 'annotations-to-comments',
+                                        beforeText: originalText,
+                                        afterText: sourceTextAfterEdit,
+                                        beforeSnapshots: originalAnnotations,
+                                        afterSnapshots: [],
+                                        undoInstallSnapshots: postEditAnnotationSnapshots,
+                                        redoInstallSnapshots: [],
+                                    });
+                                },
+                                persist: async () => {
+                                    persistenceGate.release();
+                                    await awaitAnnotationSaveBarrierStrict();
+                                },
+                                compensate: () =>
+                                    commitAnnotationStoreMutation(store, () => {
+                                        for (const annotation of durableRemovalSnapshots) {
+                                            const current = store.get(annotation.id);
+                                            if (current) {
+                                                if (!sameConversionSnapshot(annotation, current)) {
+                                                    throw new Error(
+                                                        `Annotation ${annotation.id} changed during compensation.`
+                                                    );
+                                                }
+                                                continue;
+                                            }
+                                            store.upsert(structuredClone(annotation));
+                                        }
+                                    }),
+                                persistCompensation: awaitAnnotationSaveBarrierStrict,
+                            });
+                        },
+                        restoreSource: async () => {
+                            const sourceCanBeRestored =
+                                sourceVersionBeforeSave !== undefined &&
+                                sourceTextBeforeSave !== undefined &&
+                                sourceStateStillMatches(
+                                    sourceVersionBeforeSave,
+                                    sourceTextBeforeSave,
+                                    document.version,
+                                    document.getText()
+                                );
+                            if (!sourceCanBeRestored) {
+                                const restored = await restoreSourceOrKeepDestination({
+                                    restoreSource: async () => false,
+                                    ensureDestination: () =>
+                                        ensureConversionSnapshots(store, postEditAnnotationSnapshots),
+                                    releasePersistence: () => persistenceGate.release(),
+                                    persistDestination: awaitAnnotationSaveBarrierStrict,
+                                });
+                                void vscode.window.showWarningMessage(
+                                    loc(
+                                        'annotationConversionRollbackSourceChanged',
+                                        'The source changed while it was being saved, so rollback left your text untouched and kept the annotations.'
+                                    )
+                                );
+                                return restored;
+                            }
+                            return restoreSourceOrKeepDestination({
+                                restoreSource: () =>
+                                    restoreAndSaveSourceDocument(
+                                        document,
+                                        sourceVersionBeforeSave as number,
+                                        originalText
+                                    ),
+                                ensureDestination: () => ensureConversionSnapshots(store, postEditAnnotationSnapshots),
+                                releasePersistence: () => persistenceGate.release(),
+                                persistDestination: awaitAnnotationSaveBarrierStrict,
+                            });
+                        },
+                    });
+                    persistenceGate.release();
+                    if (result === 'source-edit-rejected') {
+                        vscode.window.showErrorMessage(
+                            loc(
+                                'annotationCommentEditRejected',
+                                'VS Code could not apply the source comment edit. The annotations were kept.'
+                            )
+                        );
+                        return 0;
+                    }
+                } catch (error) {
+                    if (removalHistoryEntryId) {
+                        sourceConversionUndoJournal.discard(removalHistoryEntryId);
+                    }
+                    persistenceGate.release();
+                    await awaitAnnotationSaveBarrier();
+                    const message = conversionRollbackIncomplete(error)
+                        ? loc(
+                              'annotationRemovalRollbackFailed',
+                              'The conversion failed and one or more source/store rollback steps could not be saved. Inspect source control and the annotation file before continuing. Details: {0}',
+                              error instanceof Error ? error.message : String(error)
+                          )
+                        : loc(
+                              'annotationRemovalConversionFailed',
+                              'Could not complete the conversion. The source edit was restored and the annotations were kept. Details: {0}',
+                              error instanceof Error ? error.message : String(error)
+                          );
+                    vscode.window.showErrorMessage(message);
+                    return 0;
+                }
+
+                if (!removalHistoryEntryId) {
+                    vscode.window.showErrorMessage(
+                        loc(
+                            'conversionHistoryNotRecorded',
+                            'The conversion completed, but its native Undo/Redo history could not be recorded.'
+                        )
+                    );
+                    return selected.length;
+                }
+                const historyEntryId = removalHistoryEntryId;
+                if (sourceConversionUndoJournal.phase(historyEntryId) !== 'applied') {
+                    await sourceConversionHistoryPersistenceQueue;
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'conversionUndoneDuringCompletion',
+                            'The conversion was undone while its durable save was completing; the original representation remains active.'
+                        )
+                    );
+                    return 0;
+                }
+                const undoConversionLabel = loc('undoConversion', 'Undo Conversion');
+                const action = await vscode.window.showInformationMessage(
+                    loc(
+                        'annotationsMovedToComments',
+                        '{0} annotation(s) moved into saved source comments. Native Undo and Redo now keep code and annotations synchronized.',
+                        selected.length
+                    ),
+                    undoConversionLabel
+                );
+                if (action !== undoConversionLabel) {
+                    return selected.length;
+                }
+                if (
+                    document.version !== documentVersionAfterEdit ||
+                    document.getText() !== convertedText ||
+                    originalAnnotations.some((annotation) => store.get(annotation.id) !== undefined)
+                ) {
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'conversionUndoStateChanged',
+                            'Undo Conversion was not run because the source file or converted annotation state changed.'
+                        )
+                    );
+                    return selected.length;
+                }
+                await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
+                await vscode.commands.executeCommand('undo');
+                if (
+                    sourceConversionUndoJournal.phase(historyEntryId) === 'applied' &&
+                    convertedText !== sourceTextAfterEdit &&
+                    document.getText() === sourceTextAfterEdit
+                ) {
+                    await vscode.commands.executeCommand('undo');
+                }
+                await sourceConversionHistoryPersistenceQueue;
+                if (sourceConversionUndoJournal.phase(historyEntryId) === 'undone') {
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'annotationConversionUndoComplete',
+                            'Conversion undone: the original source was saved and all annotations were restored.'
+                        )
+                    );
+                } else {
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'annotationConversionUndoNotReached',
+                            'The editor did not reach the recorded conversion step. Use Undo again to pass any formatter edit.'
+                        )
+                    );
+                }
+                return selected.length;
+            }
+
+            if (!(await applySourceEdit())) {
                 vscode.window.showErrorMessage(
                     loc('annotationCommentEditRejected', 'VS Code could not apply the source comment edit.')
                 );
                 return 0;
             }
-            const documentVersionAfterEdit = document.version;
+            const materializedComments = scanSourceComments(document.getText(), document.languageId);
+            const allMarkersMaterialized = selected.every(({ annotation }) =>
+                materializedComments.some((comment) => sourceCommentMarkerMatchesAnnotation(comment, annotation.id))
+            );
+            if (!allMarkersMaterialized) {
+                const restored = await restoreSourceDocument(document, documentVersionAfterEdit, originalText);
+                vscode.window.showErrorMessage(
+                    restored
+                        ? loc(
+                              'sourceCommentPlacementUnsafe',
+                              'The generated text was not recognized as a source comment at this code position. The edit was restored and all annotations were kept.'
+                          )
+                        : loc(
+                              'sourceCommentPlacementRollbackFailed',
+                              'The generated text was not recognized as a source comment and the source edit could not be restored automatically. Use source control or Undo immediately.'
+                          )
+                );
+                return 0;
+            }
             const previousTagsById = new Map<string, readonly string[]>();
             let metadataTransactionStarted = false;
             try {
@@ -2715,9 +3838,14 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     )
                 );
             }
+            await awaitAnnotationSaveBarrier();
             const undoLabel = loc('undo', 'Undo');
             const action = await vscode.window.showInformationMessage(
-                loc('annotationsWrittenToComments', '{0} annotation(s) written into code comments.', selected.length),
+                loc(
+                    'annotationsCopiedToComments',
+                    '{0} annotation(s) copied into source comments; the original annotations were kept.',
+                    selected.length
+                ),
                 undoLabel
             );
             if (action === undoLabel) {
@@ -2756,6 +3884,7 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                                 )
                             );
                         }
+                        await awaitAnnotationSaveBarrier();
                     }
                 }
             }
@@ -3007,6 +4136,134 @@ function normalizedConversionText(value: string): string {
     return value.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US');
 }
 
+function hasConfiguredSaveParticipant(document: vscode.TextDocument): boolean {
+    const editor = vscode.workspace.getConfiguration('editor', document.uri);
+    const files = vscode.workspace.getConfiguration('files', document.uri);
+    const codeActions = editor.get<unknown>('codeActionsOnSave');
+    const codeActionsEnabled = Array.isArray(codeActions)
+        ? codeActions.length > 0
+        : codeActions !== null && typeof codeActions === 'object'
+          ? Object.values(codeActions as Record<string, unknown>).some((value) => value !== false && value !== 'never')
+          : false;
+    return (
+        editor.get<boolean>('formatOnSave', false) ||
+        codeActionsEnabled ||
+        files.get<boolean>('trimTrailingWhitespace', false) ||
+        files.get<boolean>('insertFinalNewline', false) ||
+        files.get<boolean>('trimFinalNewlines', false)
+    );
+}
+
+function warnConfiguredSaveParticipant(): void {
+    vscode.window.showWarningMessage(
+        loc(
+            'conversionMoveSaveParticipantEnabled',
+            'Move is unavailable while format-on-save, save code actions, or automatic whitespace cleanup is enabled for this file. Disable those save participants or choose Keep.'
+        )
+    );
+}
+
+/**
+ * The conversion preview answers "what will be converted"; this separate,
+ * explicit step answers "what happens to the source". Dismissing the picker
+ * is a true cancellation and occurs before either resource is mutated.
+ */
+async function pickConversionSourceDisposition(
+    source: 'comments' | 'annotations',
+    allowRemoval: boolean
+): Promise<ConversionSourceDisposition | undefined> {
+    const sourceName =
+        source === 'comments'
+            ? loc('sourceCodeComments', 'source code comments')
+            : loc('sourceAnnotations', 'source annotations');
+    const keepLabel =
+        source === 'comments'
+            ? loc('keepSourceComments', 'Keep Source Comments')
+            : loc('keepSourceAnnotations', 'Keep Source Annotations');
+    const removeLabel =
+        source === 'comments'
+            ? loc('removeSourceComments', 'Remove Source Comments')
+            : loc('removeSourceAnnotations', 'Remove Source Annotations');
+    const choices = [
+        {
+            label: `$(copy) ${keepLabel}`,
+            description: loc('keepConversionSourceRecommended', 'Recommended - creates a copy'),
+            detail: loc(
+                'keepConversionSourceDetail',
+                'The conversion is created and the original {0} remain unchanged.',
+                sourceName
+            ),
+            disposition: 'keep' as const,
+        },
+        ...(allowRemoval
+            ? [
+                  {
+                      label: `$(trash) ${removeLabel}`,
+                      description: loc('removeConversionSourceDescription', 'Move instead of copy'),
+                      detail: loc(
+                          'removeConversionSourceDetail',
+                          'The original {0} are removed as part of the same rollback-protected conversion.',
+                          sourceName
+                      ),
+                      disposition: 'remove' as const,
+                  },
+              ]
+            : []),
+    ];
+    const picked = await vscode.window.showQuickPick(choices, {
+        title: loc('chooseConversionSourceDisposition', 'Keep or Remove the Conversion Source?'),
+        placeHolder: allowRemoval
+            ? loc('chooseConversionSourceDispositionPrompt', 'Choose what happens to the original {0}', sourceName)
+            : loc(
+                  'conversionRemovalUnsafeForSelection',
+                  'Move is unavailable because the selected source ranges cannot be proven safe to remove. Choose Keep or press Escape to cancel.'
+              ),
+        matchOnDescription: true,
+        matchOnDetail: true,
+    });
+    return picked?.disposition;
+}
+
+/**
+ * Restore a just-applied conversion edit only while its document version is
+ * unchanged. The compensating WorkspaceEdit becomes its own Undo step.
+ */
+async function restoreSourceDocument(
+    document: vscode.TextDocument,
+    expectedVersion: number,
+    originalText: string
+): Promise<boolean> {
+    if (document.version !== expectedVersion) {
+        return false;
+    }
+    const replacement = minimalTextReplacement(document.getText(), originalText);
+    if (!replacement) {
+        return true;
+    }
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+        document.uri,
+        new vscode.Range(document.positionAt(replacement.startOffset), document.positionAt(replacement.endOffset)),
+        replacement.text
+    );
+    if (!(await vscode.workspace.applyEdit(edit))) {
+        return false;
+    }
+    return document.getText() === originalText;
+}
+
+/** Restore and durably save a source document used by a destructive move. */
+async function restoreAndSaveSourceDocument(
+    document: vscode.TextDocument,
+    expectedVersion: number,
+    originalText: string
+): Promise<boolean> {
+    if (!(await restoreSourceDocument(document, expectedVersion, originalText))) {
+        return false;
+    }
+    return (await document.save()) && !document.isDirty && document.getText() === originalText;
+}
+
 function localizedSourceCommentKind(kind: SourceCommentKind): string {
     switch (kind) {
         case 'header':
@@ -3026,20 +4283,6 @@ function sourceCommentSeverity(record: SourceCommentRecord): string {
         : /\b(?:fixme|bug|hack|xxx|warning)\b/i.test(record.text)
           ? 'warning'
           : 'info';
-}
-
-function sourcePreambleMustStayFirst(document: vscode.TextDocument): boolean {
-    if (document.lineCount === 0) {
-        return false;
-    }
-    const first = document.lineAt(0).text.trimStart().toLocaleLowerCase();
-    return (
-        first.startsWith('#!') ||
-        first.startsWith('<?xml') ||
-        first.startsWith('<?php') ||
-        first.startsWith('<!doctype') ||
-        (document.languageId === 'css' && first.startsWith('@charset '))
-    );
 }
 
 function treeSelectionIds(value: unknown): string[] {

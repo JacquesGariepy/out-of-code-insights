@@ -3,7 +3,7 @@
  * These tests run with plain mocha (no VS Code host required).
  */
 import * as assert from 'assert';
-import { escapeHtml } from '../../../common/utils';
+import { escapeHtml, markdownCodeSpan } from '../../../common/utils';
 
 suite('escapeHtml (unit)', () => {
     const cases: [string, string][] = [
@@ -27,5 +27,21 @@ suite('escapeHtml (unit)', () => {
         const twice = escapeHtml(once);
         assert.strictEqual(once, '&lt;');
         assert.notStrictEqual(twice, once, 'double-escaping should produce different output');
+    });
+});
+
+suite('markdownCodeSpan', () => {
+    test('uses a plain padded span for ordinary and Windows-style paths', () => {
+        assert.strictEqual(markdownCodeSpan('src/file.ts'), '` src/file.ts `');
+        assert.strictEqual(markdownCodeSpan('src\\nested\\file.ts'), '` src\\nested\\file.ts `');
+    });
+
+    test('chooses a delimiter longer than every untrusted backtick run', () => {
+        assert.strictEqual(markdownCodeSpan('src/`quoted`.ts'), '`` src/`quoted`.ts ``');
+        assert.strictEqual(markdownCodeSpan('before `` after'), '``` before `` after ```');
+    });
+
+    test('flattens line breaks so issue metadata cannot inject Markdown blocks', () => {
+        assert.strictEqual(markdownCodeSpan('src/file.ts\r\n- injected'), '` src/file.ts - injected `');
     });
 });

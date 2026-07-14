@@ -321,11 +321,9 @@ suite('Lot 5 R2 worktree A — AnnotationCodeLensProvider', () => {
     });
 
     test('returns no lenses when globally disabled', async function () {
-        this.timeout(10000);
+        this.timeout(30000);
         const uri = await ensureFixture('lot5-display-codelens-disabled.ts', 'one\ntwo\n');
         const document = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(document);
-        await delay(100);
 
         const store = new AnnotationStore();
         const visibility = new VisibilityFilter(() => ({

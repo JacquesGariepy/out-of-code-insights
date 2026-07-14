@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// Pure source-comment scanner and encoder. The scanner deliberately accepts
-// only comments whose delimiter is the first token after indentation. This
-// avoids treating ordinary code and most string literals as comments while
-// remaining useful across languages without embedding a full parser.
+// Pure source-comment scanner and encoder. The scanner accepts standalone and
+// trailing comments while ignoring delimiters inside ordinary quoted strings.
+// This keeps the converter useful for day-to-day code without requiring a
+// language service or embedding a full parser.
+
+import { createHash } from 'crypto';
+import { sourcePreambleLineCount } from './sourcePreamble';
 
 export type SourceCommentKind = 'header' | 'line' | 'block' | 'docblock';
 
@@ -12,6 +15,12 @@ export interface SourceCommentRecord {
     readonly startLine: number;
     /** Inclusive, 0-based last source line. */
     readonly endLine: number;
+    /** Inclusive, 0-based delimiter position on `startLine`. */
+    readonly startCharacter: number;
+    /** Exclusive position immediately after the comment on `endLine`. */
+    readonly endCharacter: number;
+    /** Underlying delimiter family; retained even when `kind` is `header`. */
+    readonly syntaxKind?: 'line' | 'block';
     /** Comment decorations removed; logical lines are joined with `\n`. */
     readonly text: string;
     readonly kind: SourceCommentKind;
@@ -21,6 +30,12 @@ export interface SourceCommentRecord {
      * without creating an annotation whose message starts with `OOCI(...)`.
      */
     readonly annotationIdFragment?: string;
+    /**
+     * Collision-resistant fingerprint carried by markers emitted by current
+     * versions. Legacy markers expose only `annotationIdFragment` and remain
+     * readable for backward-compatible deduplication.
+     */
+    readonly annotationIdFingerprint?: string;
 }
 
 export type SourceCommentEncodingStyle = 'auto' | 'line' | 'block' | 'docblock';
@@ -203,27 +218,90 @@ export function supportsSourceCommentLanguage(languageId: string): boolean {
     return syntaxFor(languageId) !== undefined;
 }
 
-const AMBIGUOUS_MIXED_CONTEXT_LANGUAGES = new Set(['typescriptreact', 'javascriptreact', 'vue', 'php']);
+/**
+ * Language modes for which annotation-to-comment conversion has both a
+ * deterministic comment syntax and a position-aware safety check.
+ *
+ * Keep this list explicit: adding a scanner syntax must never silently enable
+ * reverse conversion in a language whose lexical placement rules were not
+ * audited.
+ */
+export const SOURCE_COMMENT_SAFE_INSERTION_LANGUAGE_IDS: readonly string[] = Object.freeze([
+    'typescript',
+    'javascript',
+    'c',
+    'cpp',
+    'java',
+    'csharp',
+    'go',
+    'rust',
+    'kotlin',
+    'dart',
+    'python',
+    'toml',
+    'lua',
+    'css',
+    'scss',
+    'clojure',
+]);
+
+const SAFE_SOURCE_COMMENT_INSERTION_LANGUAGES = new Set(SOURCE_COMMENT_SAFE_INSERTION_LANGUAGE_IDS);
+
+const SAFE_LINE_COMMENT_REMOVAL_LANGUAGES = new Set([
+    'typescript',
+    'javascript',
+    'java',
+    'c',
+    'cpp',
+    'csharp',
+    'go',
+    'rust',
+    'kotlin',
+    'dart',
+]);
 
 /**
- * Whether one comment syntax is safe at every source position in this
- * language mode. Mixed template/code modes still support scanning, but need
- * a syntax-aware parser before annotations can be written safely.
+ * Whether the scanner can prove that removing this record cannot consume code.
+ * This intentionally narrow allowlist is independent from scan/preview support.
+ * Block records do not carry their neighbouring lexemes, so removing one could
+ * merge tokens (`return/* note *\/value`). They remain Keep-only until a
+ * source-aware replacement API can prove or preserve lexical separation.
+ */
+export function canSafelyRemoveSourceComment(languageId: string, record: SourceCommentRecord): boolean {
+    if (
+        record.startLine < 0 ||
+        record.endLine < record.startLine ||
+        record.startCharacter < 0 ||
+        record.endCharacter < 0 ||
+        (record.startLine === record.endLine && record.endCharacter < record.startCharacter)
+    ) {
+        return false;
+    }
+    const normalized = languageId.trim().toLocaleLowerCase('en-US');
+    const syntaxKind =
+        record.syntaxKind ?? (record.kind === 'header' ? undefined : record.kind === 'line' ? 'line' : 'block');
+    if (syntaxKind === 'line') {
+        return SAFE_LINE_COMMENT_REMOVAL_LANGUAGES.has(normalized);
+    }
+    return false;
+}
+
+/**
+ * Whether this language has an audited, position-aware reverse conversion.
+ * Call {@link safeSourceCommentInsertionLine} as well before writing because
+ * support for a language does not make every physical line safe.
  */
 export function supportsSourceCommentEncoding(languageId: string): boolean {
     const normalized = languageId.trim().toLocaleLowerCase('en-US');
-    return syntaxFor(normalized) !== undefined && !AMBIGUOUS_MIXED_CONTEXT_LANGUAGES.has(normalized);
+    return SAFE_SOURCE_COMMENT_INSERTION_LANGUAGES.has(normalized);
 }
 
 function sourceLines(source: string | readonly string[]): string[] {
     const lines = typeof source === 'string' ? source.split('\n') : [...source];
-    return lines.map((line, index) => {
-        let normalized = line.endsWith('\r') ? line.slice(0, -1) : line;
-        if (index === 0 && normalized.startsWith('\uFEFF')) {
-            normalized = normalized.slice(1);
-        }
-        return normalized;
-    });
+    // VS Code positions exclude CR from CRLF line endings, but a BOM is part
+    // of line zero. Preserve it so deletion ranges never shift one character
+    // left and accidentally remove the BOM.
+    return lines.map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
 }
 
 function removeOneLeadingSpace(value: string): string {
@@ -257,9 +335,10 @@ function cleanBlockText(fragments: readonly string[], style: BlockCommentStyle):
 interface ParsedGeneratedMarker {
     readonly text: string;
     readonly annotationIdFragment?: string;
+    readonly annotationIdFingerprint?: string;
 }
 
-const GENERATED_ANNOTATION_MARKER = /^OOCI\(([A-Za-z0-9_-]{1,8})\)(?:[ \t]+|$)/;
+const GENERATED_ANNOTATION_MARKER = /^OOCI\(([A-Za-z0-9_-]{1,8})(?:~([A-Fa-f0-9]{32}))?\)(?:[ \t]+|$)/;
 
 function parseGeneratedAnnotationMarker(value: string): ParsedGeneratedMarker {
     const lines = value.split('\n');
@@ -271,43 +350,70 @@ function parseGeneratedAnnotationMarker(value: string): ParsedGeneratedMarker {
     return {
         text: trimEmptyEdges(lines).join('\n'),
         annotationIdFragment: match[1],
+        ...(match[2] ? { annotationIdFingerprint: match[2].toLocaleLowerCase('en-US') } : {}),
     };
 }
 
 interface ScannedBlock {
     readonly endLine: number;
+    readonly endCharacter: number;
     readonly text: string;
     readonly hasTrailingCode: boolean;
 }
 
-function scanBlock(lines: readonly string[], startLine: number, style: BlockCommentStyle): ScannedBlock {
+const NESTED_BLOCK_COMMENT_LANGUAGES = new Set(['rust', 'swift', 'kotlin', 'dart', 'haskell']);
+
+function scanBlock(
+    lines: readonly string[],
+    startLine: number,
+    startCharacter: number,
+    style: BlockCommentStyle,
+    languageId: string
+): ScannedBlock | undefined {
     const fragments: string[] = [];
     let lineIndex = startLine;
-    let content = lines[startLine].trimStart().slice(style.open.length);
+    let contentStart = startCharacter + style.open.length;
+    let depth = 1;
+    const nestedOpen = style.open === '/**' ? '/*' : style.open;
+    const supportsNesting = NESTED_BLOCK_COMMENT_LANGUAGES.has(languageId);
 
     while (lineIndex < lines.length) {
-        const closeIndex = content.indexOf(style.close);
-        if (closeIndex !== -1) {
-            fragments.push(content.slice(0, closeIndex));
-            return {
-                endLine: lineIndex,
-                text: cleanBlockText(fragments, style),
-                hasTrailingCode: content.slice(closeIndex + style.close.length).trim().length > 0,
-            };
+        const sourceLine = lines[lineIndex];
+        const content = sourceLine.slice(contentStart);
+        let searchFrom = 0;
+        while (searchFrom < content.length) {
+            const closeIndex = content.indexOf(style.close, searchFrom);
+            const openIndex = supportsNesting ? content.indexOf(nestedOpen, searchFrom) : -1;
+            if (openIndex !== -1 && (closeIndex === -1 || openIndex < closeIndex)) {
+                depth++;
+                searchFrom = openIndex + nestedOpen.length;
+                continue;
+            }
+            if (closeIndex === -1) {
+                break;
+            }
+            depth--;
+            if (depth === 0) {
+                fragments.push(content.slice(0, closeIndex));
+                const endCharacter = contentStart + closeIndex + style.close.length;
+                return {
+                    endLine: lineIndex,
+                    endCharacter,
+                    text: cleanBlockText(fragments, style),
+                    hasTrailingCode: sourceLine.slice(endCharacter).trim().length > 0,
+                };
+            }
+            searchFrom = closeIndex + style.close.length;
         }
 
         fragments.push(content);
         lineIndex++;
-        if (lineIndex < lines.length) {
-            content = lines[lineIndex].trim();
-        }
+        contentStart = 0;
     }
 
-    return {
-        endLine: Math.max(startLine, lines.length - 1),
-        text: cleanBlockText(fragments, style),
-        hasTrailingCode: false,
-    };
+    // An unterminated block has no safe deletion boundary. Do not expose it
+    // as a conversion candidate, and let the caller stop scanning at EOF.
+    return undefined;
 }
 
 function matchingBlock(trimmedLine: string, syntax: LanguageCommentSyntax): BlockCommentStyle | undefined {
@@ -316,6 +422,817 @@ function matchingBlock(trimmedLine: string, syntax: LanguageCommentSyntax): Bloc
 
 function matchingLine(trimmedLine: string, syntax: LanguageCommentSyntax): LineCommentStyle | undefined {
     return syntax.lines.find((style) => trimmedLine.startsWith(style.prefix));
+}
+
+interface InlineCommentMatch {
+    readonly character: number;
+    readonly lineStyle?: LineCommentStyle;
+    readonly blockStyle?: BlockCommentStyle;
+}
+
+const REGEX_LITERAL_LANGUAGES = new Set(['javascript', 'javascriptreact', 'typescript', 'typescriptreact']);
+const SHELL_HEREDOC_LANGUAGES = new Set(['shellscript', 'shell', 'bash', 'zsh']);
+const HOMOGENEOUS_NO_SEPARATOR_LANGUAGES = new Set([
+    'typescript',
+    'javascript',
+    'java',
+    'c',
+    'cpp',
+    'csharp',
+    'go',
+    'rust',
+    'swift',
+    'kotlin',
+    'dart',
+    'python',
+    'r',
+    'powershell',
+    'lua',
+    'clojure',
+    'clojurescript',
+    'lisp',
+    'scheme',
+    'ruby',
+    'perl',
+    'toml',
+    'sql',
+    'haskell',
+]);
+const STANDALONE_ONLY_LINE_COMMENT_LANGUAGES = new Set(['dockerfile']);
+
+type StringEscapeStyle = 'backslash-and-double' | 'powershell-backtick' | 'none';
+
+interface StringLexicalState {
+    readonly kind: 'string';
+    readonly close: string;
+    readonly escape: StringEscapeStyle;
+}
+
+interface HeredocLexicalState {
+    readonly kind: 'heredoc';
+    readonly closeLine: string;
+    readonly allowLeadingTabs: boolean;
+}
+
+interface YamlBlockLexicalState {
+    readonly kind: 'yaml-block';
+    readonly headerIndent: number;
+    readonly contentIndent?: number;
+}
+
+interface TemplateLexicalState {
+    readonly kind: 'template';
+    readonly mode: 'text' | 'expression';
+    readonly braceDepth: number;
+    readonly parents: readonly Pick<TemplateLexicalState, 'mode' | 'braceDepth'>[];
+    readonly embeddedString?: StringLexicalState;
+}
+
+type SourceLexicalState = StringLexicalState | HeredocLexicalState | YamlBlockLexicalState | TemplateLexicalState;
+
+interface MaskedSourceLine {
+    readonly text: string;
+    readonly state?: SourceLexicalState;
+}
+
+function isEscapedByCharacter(value: string, character: number, escapeCharacter: string): boolean {
+    let escapes = 0;
+    for (let index = character - 1; index >= 0 && value[index] === escapeCharacter; index--) {
+        escapes++;
+    }
+    return escapes % 2 === 1;
+}
+
+function isEscaped(value: string, character: number): boolean {
+    return isEscapedByCharacter(value, character, '\\');
+}
+
+function controlStatementEndsAt(value: string, closeParenthesis: number): boolean {
+    let depth = 1;
+    for (let index = closeParenthesis - 1; index >= 0; index--) {
+        if (value[index] === ')') {
+            depth++;
+        } else if (value[index] === '(') {
+            depth--;
+            if (depth === 0) {
+                return /(?:^|[^A-Za-z0-9_$])(?:if|while|for|with|switch|catch)\s*$/.test(value.slice(0, index));
+            }
+        }
+    }
+    return false;
+}
+
+function regexLiteralCanStart(value: string, slash: number): boolean {
+    const prefix = value.slice(0, slash).trimEnd();
+    if (prefix.length === 0) {
+        return true;
+    }
+    const previous = prefix[prefix.length - 1];
+    if (previous === ')') {
+        return controlStatementEndsAt(prefix, prefix.length - 1);
+    }
+    if ('([{,:;=!?&|+*%^~<>'.includes(previous)) {
+        return true;
+    }
+    return /(?:^|\s)(?:return|case|throw|delete|void|typeof|instanceof|in|of|yield|await)$/.test(prefix);
+}
+
+function skipRegexLiteral(value: string, start: number): number | undefined {
+    let inCharacterClass = false;
+    for (let index = start + 1; index < value.length; index++) {
+        const character = value[index];
+        if (character === '\\') {
+            index++;
+            continue;
+        }
+        if (character === '[') {
+            inCharacterClass = true;
+            continue;
+        }
+        if (character === ']') {
+            inCharacterClass = false;
+            continue;
+        }
+        if (character === '/' && !inCharacterClass) {
+            index++;
+            while (/[A-Za-z]/.test(value[index] ?? '')) {
+                index++;
+            }
+            return index;
+        }
+    }
+    return undefined;
+}
+
+function regexSpanContainsCommentDelimiter(value: string, start: number, end: number): boolean {
+    let closingSlash = end - 1;
+    while (/[A-Za-z]/.test(value[closingSlash] ?? '')) {
+        closingSlash--;
+    }
+    const body = value.slice(start + 1, closingSlash);
+    return body.includes('//') || body.includes('/*');
+}
+
+function commentStartsAt(line: string, index: number, syntax: LanguageCommentSyntax): boolean {
+    return (
+        syntax.blocks.some((style) => line.startsWith(style.open, index)) ||
+        syntax.lines.some((style) => line.startsWith(style.prefix, index))
+    );
+}
+
+function maskCharacters(characters: string[], start: number, end: number): void {
+    for (let index = start; index < end; index++) {
+        characters[index] = ' ';
+    }
+}
+
+function stringCloseEnd(line: string, start: number, state: StringLexicalState): number | undefined {
+    for (let index = start; index < line.length; index++) {
+        if (
+            state.escape === 'backslash-and-double' &&
+            state.close.length === 1 &&
+            line.startsWith(state.close.repeat(2), index)
+        ) {
+            index++;
+            continue;
+        }
+        const terminatorEscaped =
+            state.escape === 'powershell-backtick'
+                ? isEscapedByCharacter(line, index, '`')
+                : state.escape === 'backslash-and-double' && isEscaped(line, index);
+        if (line.startsWith(state.close, index) && !terminatorEscaped) {
+            return index + state.close.length;
+        }
+        if (state.escape === 'backslash-and-double' && line[index] === '\\') {
+            index++;
+        } else if (state.escape === 'powershell-backtick' && line[index] === '`') {
+            index++;
+        }
+    }
+    return undefined;
+}
+
+interface StringOpening {
+    readonly openLength: number;
+    readonly state: StringLexicalState;
+}
+
+function stringOpeningAt(line: string, index: number, languageId: string): StringOpening | undefined {
+    if (languageId === 'sql' && line[index] === '$') {
+        const match = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(line.slice(index));
+        if (match) {
+            return {
+                openLength: match[0].length,
+                state: { kind: 'string', close: match[0], escape: 'none' },
+            };
+        }
+    }
+
+    if (languageId === 'rust') {
+        const match = /^(?:br|r)(#+)?"/.exec(line.slice(index));
+        if (match) {
+            const hashes = match[1] ?? '';
+            return {
+                openLength: match[0].length,
+                state: { kind: 'string', close: `"${hashes}`, escape: 'none' },
+            };
+        }
+    }
+
+    if (languageId === 'cpp' && line.startsWith('R"', index)) {
+        const openingEnd = line.indexOf('(', index + 2);
+        if (openingEnd !== -1) {
+            const delimiter = line.slice(index + 2, openingEnd);
+            if (delimiter.length <= 16 && !/[\s\\()]/.test(delimiter)) {
+                return {
+                    openLength: openingEnd - index + 1,
+                    state: { kind: 'string', close: `)${delimiter}"`, escape: 'none' },
+                };
+            }
+        }
+    }
+
+    if (languageId === 'lua' && line[index] === '[') {
+        const match = /^\[(=*)\[/.exec(line.slice(index));
+        if (match) {
+            return {
+                openLength: match[0].length,
+                state: { kind: 'string', close: `]${match[1]}]`, escape: 'none' },
+            };
+        }
+    }
+
+    if (languageId === 'powershell' && (line.startsWith('@"', index) || line.startsWith("@'", index))) {
+        const quote = line[index + 1];
+        return {
+            openLength: 2,
+            state: { kind: 'string', close: `${quote}@`, escape: 'none' },
+        };
+    }
+
+    if (languageId === 'csharp' && line.startsWith('@"', index)) {
+        return {
+            openLength: 2,
+            state: { kind: 'string', close: '"', escape: 'backslash-and-double' },
+        };
+    }
+
+    const quote = line[index];
+    if (quote !== "'" && quote !== '"' && quote !== '`') {
+        return undefined;
+    }
+    if (quote === "'" && ['clojure', 'clojurescript', 'lisp', 'scheme'].includes(languageId)) {
+        return undefined;
+    }
+    if (
+        quote === "'" &&
+        languageId === 'cpp' &&
+        /[0-9A-Fa-f]/.test(line[index - 1] ?? '') &&
+        /[0-9A-Fa-f]/.test(line[index + 1] ?? '')
+    ) {
+        return undefined;
+    }
+    if (quote === "'" && languageId === 'rust') {
+        const lifetime = /^'[A-Za-z_][A-Za-z0-9_]*/.exec(line.slice(index));
+        if (lifetime && line[index + lifetime[0].length] !== "'") {
+            return undefined;
+        }
+    }
+    if (quote === "'" && languageId === 'haskell') {
+        const hasIdentifierBefore = /[A-Za-z0-9_]/.test(line[index - 1] ?? '');
+        const closingQuote = stringCloseEnd(line, index + 1, {
+            kind: 'string',
+            close: "'",
+            escape: 'backslash-and-double',
+        });
+        if (hasIdentifierBefore || closingQuote === undefined) {
+            return undefined;
+        }
+    }
+    const tripleQuote = line.startsWith(quote.repeat(3), index);
+    const close = tripleQuote ? quote.repeat(3) : quote;
+    const escape = languageId === 'powershell' && quote === '"' ? 'powershell-backtick' : 'backslash-and-double';
+    return {
+        openLength: close.length,
+        state: { kind: 'string', close, escape },
+    };
+}
+
+function indentationWidth(line: string): number {
+    const match = /^[ \t]*/.exec(line);
+    return match?.[0].length ?? 0;
+}
+
+function yamlBlockScalarState(line: string, languageId: string): YamlBlockLexicalState | undefined {
+    if (languageId !== 'yaml') {
+        return undefined;
+    }
+    const match = /(?:^|:\s+|-\s+)[|>]([+-]?[1-9]?|[1-9][+-]?)\s*(?:#.*)?$/.exec(line);
+    if (!match) {
+        return undefined;
+    }
+    const headerIndent = indentationWidth(line);
+    const explicitIndent = /[1-9]/.exec(match[1])?.[0];
+    return {
+        kind: 'yaml-block',
+        headerIndent,
+        ...(explicitIndent ? { contentIndent: headerIndent + Number(explicitIndent) } : {}),
+    };
+}
+
+function shellHeredocAt(line: string, index: number, languageId: string): HeredocLexicalState | undefined {
+    if (!SHELL_HEREDOC_LANGUAGES.has(languageId) || !line.startsWith('<<', index)) {
+        return undefined;
+    }
+    const match = /^<<(-)?[ \t]*(?:'([^']+)'|"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))/.exec(line.slice(index));
+    const closeLine = match?.[2] ?? match?.[3] ?? match?.[4];
+    return closeLine ? { kind: 'heredoc', closeLine, allowLeadingTabs: match?.[1] === '-' } : undefined;
+}
+
+interface TemplateMaskResult {
+    readonly index: number;
+    readonly state?: TemplateLexicalState;
+    readonly stoppedAtComment: boolean;
+}
+
+function maskTemplateSegment(
+    line: string,
+    characters: string[],
+    start: number,
+    initialState: TemplateLexicalState,
+    syntax: LanguageCommentSyntax,
+    languageId: string
+): TemplateMaskResult {
+    let state = initialState;
+    let index = start;
+    while (index < line.length) {
+        if (state.mode === 'text') {
+            if (line[index] === '\\') {
+                maskCharacters(characters, index, Math.min(line.length, index + 2));
+                index += 2;
+                continue;
+            }
+            if (line[index] === '`') {
+                maskCharacters(characters, index, index + 1);
+                const parent = state.parents[state.parents.length - 1];
+                if (!parent) {
+                    return { index: index + 1, stoppedAtComment: false };
+                }
+                state = {
+                    kind: 'template',
+                    mode: parent.mode,
+                    braceDepth: parent.braceDepth,
+                    parents: state.parents.slice(0, -1),
+                };
+                index++;
+                continue;
+            }
+            if (line.startsWith('${', index)) {
+                maskCharacters(characters, index, index + 2);
+                state = { ...state, mode: 'expression', braceDepth: 1 };
+                index += 2;
+                continue;
+            }
+            maskCharacters(characters, index, index + 1);
+            index++;
+            continue;
+        }
+
+        if (state.embeddedString) {
+            const closeEnd = stringCloseEnd(line, index, state.embeddedString);
+            maskCharacters(characters, index, closeEnd ?? line.length);
+            if (closeEnd === undefined) {
+                return { index: line.length, state, stoppedAtComment: false };
+            }
+            state = { ...state, embeddedString: undefined };
+            index = closeEnd;
+            continue;
+        }
+
+        if (commentStartsAt(line, index, syntax)) {
+            return { index, state, stoppedAtComment: true };
+        }
+        if (line[index] === '`') {
+            maskCharacters(characters, index, index + 1);
+            state = {
+                kind: 'template',
+                mode: 'text',
+                braceDepth: 0,
+                parents: [...state.parents, { mode: 'expression', braceDepth: state.braceDepth }],
+            };
+            index++;
+            continue;
+        }
+        const quote = line[index];
+        if (quote === "'" || quote === '"') {
+            const opening = stringOpeningAt(line, index, languageId);
+            if (opening) {
+                const closeEnd = stringCloseEnd(line, index + opening.openLength, opening.state);
+                maskCharacters(characters, index, closeEnd ?? line.length);
+                if (closeEnd === undefined) {
+                    return {
+                        index: line.length,
+                        state: { ...state, embeddedString: opening.state },
+                        stoppedAtComment: false,
+                    };
+                }
+                index = closeEnd;
+                continue;
+            }
+        }
+        if (line[index] === '/' && regexLiteralCanStart(line, index)) {
+            const end = skipRegexLiteral(line, index);
+            if (end !== undefined) {
+                maskCharacters(characters, index, end);
+                index = end;
+                continue;
+            }
+        }
+        if (line[index] === '{') {
+            state = { ...state, braceDepth: state.braceDepth + 1 };
+        } else if (line[index] === '}') {
+            const braceDepth = state.braceDepth - 1;
+            if (braceDepth === 0) {
+                maskCharacters(characters, index, index + 1);
+                state = { ...state, mode: 'text', braceDepth: 0 };
+                index++;
+                continue;
+            }
+            state = { ...state, braceDepth };
+        }
+        index++;
+    }
+    return { index, state, stoppedAtComment: false };
+}
+
+/**
+ * Replace string/heredoc contents with spaces while preserving UTF-16 column
+ * positions. This is intentionally conservative: ambiguous text is hidden
+ * from the comment scanner instead of being imported as a false annotation.
+ */
+function maskStringLiterals(
+    line: string,
+    syntax: LanguageCommentSyntax,
+    languageId: string,
+    initialState?: SourceLexicalState,
+    startCharacter = 0
+): MaskedSourceLine {
+    const characters = line.split('');
+    let state = initialState;
+    let index = startCharacter;
+    let pendingState: SourceLexicalState | undefined = yamlBlockScalarState(line, languageId);
+
+    if (state?.kind === 'heredoc') {
+        const candidate = state.allowLeadingTabs ? line.replace(/^\t+/, '') : line;
+        maskCharacters(characters, 0, line.length);
+        return candidate === state.closeLine ? { text: characters.join('') } : { text: characters.join(''), state };
+    }
+
+    if (state?.kind === 'yaml-block') {
+        const trimmed = line.trim();
+        if (trimmed.length === 0) {
+            maskCharacters(characters, 0, line.length);
+            return { text: characters.join(''), state };
+        }
+        const indent = indentationWidth(line);
+        const contentIndent = state.contentIndent ?? (indent > state.headerIndent ? indent : undefined);
+        if (contentIndent !== undefined && indent >= contentIndent) {
+            maskCharacters(characters, 0, line.length);
+            return { text: characters.join(''), state: { ...state, contentIndent } };
+        }
+        state = undefined;
+    }
+
+    if (state?.kind === 'template') {
+        const template = maskTemplateSegment(line, characters, index, state, syntax, languageId);
+        if (template.stoppedAtComment || template.state) {
+            return { text: characters.join(''), ...(template.state ? { state: template.state } : {}) };
+        }
+        index = template.index;
+        state = undefined;
+    }
+
+    if (state?.kind === 'string') {
+        const closeEnd = stringCloseEnd(line, index, state);
+        maskCharacters(characters, index, closeEnd ?? line.length);
+        if (closeEnd === undefined) {
+            return { text: characters.join(''), state };
+        }
+        index = closeEnd;
+        state = undefined;
+    }
+
+    while (index < line.length) {
+        if (commentStartsAt(line, index, syntax)) {
+            break;
+        }
+
+        if (line[index] === '`' && REGEX_LITERAL_LANGUAGES.has(languageId)) {
+            maskCharacters(characters, index, index + 1);
+            const template = maskTemplateSegment(
+                line,
+                characters,
+                index + 1,
+                { kind: 'template', mode: 'text', braceDepth: 0, parents: [] },
+                syntax,
+                languageId
+            );
+            if (template.stoppedAtComment || template.state) {
+                return { text: characters.join(''), ...(template.state ? { state: template.state } : {}) };
+            }
+            index = template.index;
+            continue;
+        }
+
+        const heredoc = shellHeredocAt(line, index, languageId);
+        if (heredoc) {
+            const declaration = /^<<-?[ \t]*(?:'[^']+'|"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)/.exec(line.slice(index));
+            const end = index + (declaration?.[0].length ?? 2);
+            maskCharacters(characters, index, end);
+            pendingState = heredoc;
+            index = end;
+            continue;
+        }
+
+        if (line[index] === '/' && REGEX_LITERAL_LANGUAGES.has(languageId) && regexLiteralCanStart(line, index)) {
+            const end = skipRegexLiteral(line, index);
+            if (end !== undefined) {
+                maskCharacters(characters, index, end);
+                index = end;
+                continue;
+            }
+        }
+
+        if (line[index] === '/' && REGEX_LITERAL_LANGUAGES.has(languageId)) {
+            const end = skipRegexLiteral(line, index);
+            if (end !== undefined && regexSpanContainsCommentDelimiter(line, index, end)) {
+                maskCharacters(characters, index, end);
+                index = end;
+                continue;
+            }
+        }
+
+        const opening = stringOpeningAt(line, index, languageId);
+        if (!opening) {
+            index++;
+            continue;
+        }
+        const contentStart = index + opening.openLength;
+        const closeEnd = stringCloseEnd(line, contentStart, opening.state);
+        maskCharacters(characters, index, closeEnd ?? line.length);
+        if (closeEnd === undefined) {
+            return { text: characters.join(''), state: opening.state };
+        }
+        index = closeEnd;
+    }
+
+    return { text: characters.join(''), ...(pendingState ? { state: pendingState } : {}) };
+}
+
+/** Find a comment following code without mistaking quoted delimiters for syntax. */
+function matchingInlineComment(
+    line: string,
+    originalLine: string,
+    syntax: LanguageCommentSyntax,
+    languageId: string,
+    startCharacter = 0
+): InlineCommentMatch | undefined {
+    for (let index = startCharacter; index < line.length; index++) {
+        const hasSeparator = /\s/.test(originalLine[index - 1] ?? '');
+        const canOmitSeparator = HOMOGENEOUS_NO_SEPARATOR_LANGUAGES.has(languageId);
+        const blockStyle = syntax.blocks.find((style) => line.startsWith(style.open, index));
+        const unambiguousEmbeddedBlock =
+            blockStyle?.open === '<!--' ||
+            (blockStyle?.open.startsWith('/*') && (languageId === 'css' || languageId === 'scss'));
+        if (blockStyle && (hasSeparator || canOmitSeparator || unambiguousEmbeddedBlock)) {
+            return { character: index, blockStyle };
+        }
+        const lineStyle = syntax.lines.find((style) => line.startsWith(style.prefix, index));
+        if (
+            lineStyle &&
+            !STANDALONE_ONLY_LINE_COMMENT_LANGUAGES.has(languageId) &&
+            (hasSeparator || canOmitSeparator)
+        ) {
+            return { character: index, lineStyle };
+        }
+    }
+    return undefined;
+}
+
+interface SourceInsertionAnalysis {
+    readonly unsafeBoundaries: readonly boolean[];
+    readonly visibleCode: readonly string[];
+}
+
+function copyVisibleCode(target: string[], maskedLine: string, start: number, end: number): void {
+    for (let index = start; index < end; index++) {
+        target[index] = maskedLine[index] ?? ' ';
+    }
+}
+
+/**
+ * Record lexical state at each physical line boundary and retain only code
+ * characters that can participate in an explicit line continuation. Comments
+ * and strings remain spaces, preserving UTF-16 positions.
+ */
+function analyzeSourceInsertionBoundaries(
+    lines: readonly string[],
+    syntax: LanguageCommentSyntax,
+    languageId: string
+): SourceInsertionAnalysis {
+    const unsafeBoundaries = lines.map(() => false);
+    const visibleCharacters = lines.map((line) => Array.from({ length: line.length }, () => ' '));
+    let lexicalState: SourceLexicalState | undefined;
+    let lineIndex = 0;
+    let scanCharacter = 0;
+
+    while (lineIndex < lines.length) {
+        if (scanCharacter === 0 && lexicalState) {
+            unsafeBoundaries[lineIndex] = true;
+        }
+
+        const sourceLine = lines[lineIndex];
+        const masked = maskStringLiterals(sourceLine, syntax, languageId, lexicalState, scanCharacter);
+        lexicalState = masked.state;
+        const comment = matchingInlineComment(masked.text, sourceLine, syntax, languageId, scanCharacter);
+
+        if (!comment) {
+            copyVisibleCode(visibleCharacters[lineIndex], masked.text, scanCharacter, sourceLine.length);
+            lineIndex++;
+            scanCharacter = 0;
+            continue;
+        }
+
+        copyVisibleCode(visibleCharacters[lineIndex], masked.text, scanCharacter, comment.character);
+        if (comment.lineStyle) {
+            lineIndex++;
+            scanCharacter = 0;
+            continue;
+        }
+        if (!comment.blockStyle) {
+            lineIndex++;
+            scanCharacter = 0;
+            continue;
+        }
+
+        const block = scanBlock(lines, lineIndex, comment.character, comment.blockStyle, languageId);
+        if (!block) {
+            // The opening line itself is safe before the opener. Every later
+            // physical boundary is inside the unterminated comment.
+            for (let unsafeLine = lineIndex + 1; unsafeLine < lines.length; unsafeLine++) {
+                unsafeBoundaries[unsafeLine] = true;
+            }
+            break;
+        }
+
+        for (let unsafeLine = lineIndex + 1; unsafeLine <= block.endLine; unsafeLine++) {
+            unsafeBoundaries[unsafeLine] = true;
+        }
+        lineIndex = block.endLine;
+        scanCharacter = block.endCharacter;
+        if (scanCharacter >= lines[lineIndex].length) {
+            lineIndex++;
+            scanCharacter = 0;
+        }
+    }
+
+    return {
+        unsafeBoundaries,
+        visibleCode: visibleCharacters.map((characters) => characters.join('')),
+    };
+}
+
+function withoutLeadingBom(value: string): string {
+    return value.startsWith('\uFEFF') ? value.slice(1) : value;
+}
+
+function goBuildPreambleFloor(lines: readonly string[]): number | undefined {
+    let lastBuildDirective = -1;
+    for (let line = 0; line < lines.length; line++) {
+        const trimmed = withoutLeadingBom(lines[line] ?? '').trim();
+        if (/^\/\/\s*(?:go:build\b|\+build\b)/.test(trimmed)) {
+            lastBuildDirective = line;
+            continue;
+        }
+        if (trimmed.length === 0 || trimmed.startsWith('//')) {
+            continue;
+        }
+        break;
+    }
+    if (lastBuildDirective < 0) {
+        return 0;
+    }
+
+    // Build constraints require a separating blank line. Place generated
+    // documentation after that separator, never inside the constraint block.
+    for (let line = lastBuildDirective + 1; line < lines.length; line++) {
+        const trimmed = lines[line].trim();
+        if (trimmed.length === 0) {
+            let floor = line + 1;
+            while (floor < lines.length && lines[floor].trim().length === 0) {
+                floor++;
+            }
+            return floor;
+        }
+        if (!trimmed.startsWith('//')) {
+            return undefined;
+        }
+    }
+    return lines.length;
+}
+
+function protectedSourcePreambleFloor(lines: readonly string[], languageId: string): number | undefined {
+    const preambleLines = lines.map((line, index) => (index === 0 ? withoutLeadingBom(line) : line));
+    let floor = sourcePreambleLineCount(preambleLines, languageId);
+    if ((lines[0] ?? '').startsWith('\uFEFF')) {
+        floor = Math.max(floor, 1);
+    }
+    if (languageId === 'go') {
+        const buildFloor = goBuildPreambleFloor(lines);
+        if (buildFloor === undefined) {
+            return undefined;
+        }
+        floor = Math.max(floor, buildFloor);
+    }
+    return floor;
+}
+
+const EXPLICIT_BACKSLASH_CONTINUATION_LANGUAGES = new Set(['typescript', 'javascript', 'c', 'cpp', 'python']);
+
+function hasExplicitBackslashContinuation(visibleCode: string): boolean {
+    const trimmed = visibleCode.trimEnd();
+    let backslashes = 0;
+    for (let index = trimmed.length - 1; index >= 0 && trimmed[index] === '\\'; index--) {
+        backslashes++;
+    }
+    return backslashes % 2 === 1;
+}
+
+function rewindExplicitContinuation(visibleCode: readonly string[], languageId: string, requestedLine: number): number {
+    if (!EXPLICIT_BACKSLASH_CONTINUATION_LANGUAGES.has(languageId)) {
+        return requestedLine;
+    }
+    let line = requestedLine;
+    while (line > 0 && hasExplicitBackslashContinuation(visibleCode[line - 1] ?? '')) {
+        line--;
+    }
+    return line;
+}
+
+function rewindGoDirectiveGroup(lines: readonly string[], requestedLine: number): number {
+    let line = requestedLine;
+    while (line > 0 && /^\/\/go:[A-Za-z0-9_]+\b/.test((lines[line - 1] ?? '').trimStart())) {
+        line--;
+    }
+    return line;
+}
+
+/**
+ * Find a safe physical line before which an encoded annotation comment may be
+ * inserted.
+ *
+ * `requestedLine` is zero-based and must name an existing physical line. The
+ * result may move down past a protected file preamble or up to the beginning
+ * of an explicit continuation/directive group. `undefined` means that this
+ * language or position cannot be proven safe by the standalone lexer.
+ */
+export function safeSourceCommentInsertionLine(
+    source: string | readonly string[],
+    languageId: string,
+    requestedLine: number
+): number | undefined {
+    const normalizedLanguageId = languageId.trim().toLocaleLowerCase('en-US');
+    if (!supportsSourceCommentEncoding(normalizedLanguageId) || !Number.isInteger(requestedLine)) {
+        return undefined;
+    }
+
+    const lines = sourceLines(source);
+    if (requestedLine < 0 || requestedLine >= lines.length) {
+        return undefined;
+    }
+    const syntax = syntaxFor(normalizedLanguageId);
+    if (!syntax) {
+        return undefined;
+    }
+
+    const preambleFloor = protectedSourcePreambleFloor(lines, normalizedLanguageId);
+    if (preambleFloor === undefined) {
+        return undefined;
+    }
+    let insertionLine = Math.max(requestedLine, preambleFloor);
+    if (insertionLine >= lines.length) {
+        return undefined;
+    }
+
+    const analysis = analyzeSourceInsertionBoundaries(lines, syntax, normalizedLanguageId);
+    insertionLine = rewindExplicitContinuation(analysis.visibleCode, normalizedLanguageId, insertionLine);
+    if (normalizedLanguageId === 'go') {
+        insertionLine = rewindGoDirectiveGroup(lines, insertionLine);
+    }
+    if (insertionLine < preambleFloor || analysis.unsafeBoundaries[insertionLine]) {
+        return undefined;
+    }
+    return insertionLine;
 }
 
 function isPreambleDirective(trimmedLine: string, line: number, languageId: string): boolean {
@@ -345,9 +1262,9 @@ function markdownFenceDelimiter(trimmedLine: string): string | undefined {
 }
 
 /**
- * Scan standalone source comments. Inline comments (`code // comment`) are
- * intentionally ignored. Consecutive line comments are returned as one
- * record, and every comment before the first code token is a file header.
+ * Scan standalone and trailing source comments. Consecutive standalone line
+ * comments are returned as one record, while a trailing comment remains tied
+ * to its code line. Every comment before the first code token is a file header.
  */
 export function scanSourceComments(source: string | readonly string[], languageId: string): SourceCommentRecord[] {
     const normalizedLanguageId = languageId.trim().toLocaleLowerCase('en-US');
@@ -361,16 +1278,16 @@ export function scanSourceComments(source: string | readonly string[], languageI
     let lineIndex = 0;
     let inHeader = true;
     let markdownFence: string | undefined;
+    let lexicalState: SourceLexicalState | undefined;
+    let scanCharacter = 0;
 
     while (lineIndex < lines.length) {
-        const trimmed = lines[lineIndex].trimStart();
-        if (trimmed.length === 0) {
-            lineIndex++;
-            continue;
-        }
+        const sourceLine = lines[lineIndex];
+        const originalSuffix = sourceLine.slice(scanCharacter);
+        const originalTrimmed = originalSuffix.trimStart();
 
-        if (normalizedLanguageId === 'markdown') {
-            const delimiter = markdownFenceDelimiter(trimmed);
+        if (scanCharacter === 0 && normalizedLanguageId === 'markdown' && !lexicalState) {
+            const delimiter = markdownFenceDelimiter(originalTrimmed);
             if (delimiter) {
                 if (!markdownFence) {
                     markdownFence = delimiter;
@@ -379,40 +1296,71 @@ export function scanSourceComments(source: string | readonly string[], languageI
                     markdownFence = undefined;
                 }
                 lineIndex++;
+                scanCharacter = 0;
                 continue;
             }
             if (markdownFence) {
                 lineIndex++;
+                scanCharacter = 0;
                 continue;
             }
         }
 
-        if (inHeader && isPreambleDirective(trimmed, lineIndex, normalizedLanguageId)) {
+        const masked = maskStringLiterals(sourceLine, syntax, normalizedLanguageId, lexicalState, scanCharacter);
+        lexicalState = masked.state;
+        const trimmed = masked.text.slice(scanCharacter).trimStart();
+        if (trimmed.length === 0) {
+            if (originalTrimmed.length > 0) {
+                inHeader = false;
+            }
             lineIndex++;
+            scanCharacter = 0;
             continue;
         }
 
-        const blockStyle = matchingBlock(trimmed, syntax);
+        if (scanCharacter === 0 && inHeader && isPreambleDirective(trimmed, lineIndex, normalizedLanguageId)) {
+            lineIndex++;
+            scanCharacter = 0;
+            continue;
+        }
+
+        const standaloneCharacter = scanCharacter + originalSuffix.length - originalTrimmed.length;
+        const blockStyle = scanCharacter === 0 ? matchingBlock(trimmed, syntax) : undefined;
         if (blockStyle) {
-            const block = scanBlock(lines, lineIndex, blockStyle);
+            const block = scanBlock(lines, lineIndex, standaloneCharacter, blockStyle, normalizedLanguageId);
+            if (!block) {
+                break;
+            }
             const parsed = parseGeneratedAnnotationMarker(block.text);
             if (parsed.text.length > 0 || parsed.annotationIdFragment) {
                 records.push({
                     startLine: lineIndex,
                     endLine: block.endLine,
+                    startCharacter: standaloneCharacter,
+                    endCharacter: block.endCharacter,
                     text: parsed.text,
                     kind: inHeader ? 'header' : blockStyle.kind,
                     ...(parsed.annotationIdFragment ? { annotationIdFragment: parsed.annotationIdFragment } : {}),
+                    ...(parsed.annotationIdFingerprint
+                        ? { annotationIdFingerprint: parsed.annotationIdFingerprint }
+                        : {}),
                 });
+                Object.defineProperty(records[records.length - 1], 'syntaxKind', { value: 'block' });
             }
             if (block.hasTrailingCode) {
                 inHeader = false;
             }
-            lineIndex = block.endLine + 1;
+            lineIndex = block.endLine;
+            scanCharacter = block.endCharacter;
+            lexicalState = masked.state;
+            if (scanCharacter >= lines[lineIndex].length) {
+                lineIndex++;
+                scanCharacter = 0;
+            }
             continue;
         }
 
-        const lineStyle = matchingLine(trimmed, syntax);
+        const lineStyle = scanCharacter === 0 ? matchingLine(trimmed, syntax) : undefined;
         if (lineStyle) {
             const startLine = lineIndex;
             const textLines: string[] = [];
@@ -422,7 +1370,8 @@ export function scanSourceComments(source: string | readonly string[], languageI
                 if (!candidateStyle || candidateStyle.prefix !== lineStyle.prefix) {
                     break;
                 }
-                textLines.push(removeOneLeadingSpace(candidate.slice(lineStyle.prefix.length)));
+                const logicalLine = removeOneLeadingSpace(candidate.slice(lineStyle.prefix.length));
+                textLines.push(logicalLine);
                 lineIndex++;
             }
             const parsed = parseGeneratedAnnotationMarker(trimEmptyEdges(textLines).join('\n'));
@@ -430,19 +1379,182 @@ export function scanSourceComments(source: string | readonly string[], languageI
                 records.push({
                     startLine,
                     endLine: lineIndex - 1,
+                    startCharacter: lines[startLine].length - lines[startLine].trimStart().length,
+                    endCharacter: lines[lineIndex - 1].length,
                     text: parsed.text,
                     kind: inHeader ? 'header' : lineStyle.kind,
                     ...(parsed.annotationIdFragment ? { annotationIdFragment: parsed.annotationIdFragment } : {}),
+                    ...(parsed.annotationIdFingerprint
+                        ? { annotationIdFingerprint: parsed.annotationIdFingerprint }
+                        : {}),
                 });
+                Object.defineProperty(records[records.length - 1], 'syntaxKind', { value: 'line' });
+            }
+            scanCharacter = 0;
+            continue;
+        }
+
+        const inline = matchingInlineComment(masked.text, sourceLine, syntax, normalizedLanguageId, scanCharacter);
+        if (inline?.lineStyle) {
+            const parsed = parseGeneratedAnnotationMarker(
+                removeOneLeadingSpace(lines[lineIndex].slice(inline.character + inline.lineStyle.prefix.length))
+            );
+            if (parsed.text.length > 0 || parsed.annotationIdFragment) {
+                records.push({
+                    startLine: lineIndex,
+                    endLine: lineIndex,
+                    startCharacter: inline.character,
+                    endCharacter: lines[lineIndex].length,
+                    text: parsed.text,
+                    kind: inline.lineStyle.kind,
+                    ...(parsed.annotationIdFragment ? { annotationIdFragment: parsed.annotationIdFragment } : {}),
+                    ...(parsed.annotationIdFingerprint
+                        ? { annotationIdFingerprint: parsed.annotationIdFingerprint }
+                        : {}),
+                });
+                Object.defineProperty(records[records.length - 1], 'syntaxKind', { value: 'line' });
+            }
+            inHeader = false;
+            lineIndex++;
+            scanCharacter = 0;
+            continue;
+        }
+        if (inline?.blockStyle) {
+            const block = scanBlock(lines, lineIndex, inline.character, inline.blockStyle, normalizedLanguageId);
+            if (!block) {
+                break;
+            }
+            const parsed = parseGeneratedAnnotationMarker(block.text);
+            if (parsed.text.length > 0 || parsed.annotationIdFragment) {
+                records.push({
+                    startLine: lineIndex,
+                    endLine: block.endLine,
+                    startCharacter: inline.character,
+                    endCharacter: block.endCharacter,
+                    text: parsed.text,
+                    kind: inline.blockStyle.kind,
+                    ...(parsed.annotationIdFragment ? { annotationIdFragment: parsed.annotationIdFragment } : {}),
+                    ...(parsed.annotationIdFingerprint
+                        ? { annotationIdFingerprint: parsed.annotationIdFingerprint }
+                        : {}),
+                });
+                Object.defineProperty(records[records.length - 1], 'syntaxKind', { value: 'block' });
+            }
+            inHeader = false;
+            lineIndex = block.endLine;
+            scanCharacter = block.endCharacter;
+            lexicalState = masked.state;
+            if (scanCharacter >= lines[lineIndex].length) {
+                lineIndex++;
+                scanCharacter = 0;
             }
             continue;
         }
 
         inHeader = false;
         lineIndex++;
+        scanCharacter = 0;
     }
 
     return records;
+}
+
+function normalizedFingerprintText(value: string): string {
+    return value
+        .normalize('NFKC')
+        .replace(/\r\n?/g, '\n')
+        .split('\n')
+        .map((line) => line.trim().replace(/[ \t]+/g, ' '))
+        .join('\n')
+        .trim();
+}
+
+function canonicalFingerprintUri(value: string): string {
+    return value
+        .trim()
+        .replace(/\\/g, '/')
+        .replace(/^([A-Za-z][A-Za-z0-9+.-]*):/, (match, scheme: string) =>
+            match.replace(scheme, scheme.toLocaleLowerCase('en-US'))
+        )
+        .replace(
+            /^([a-z][a-z0-9+.-]*:\/\/)([^/]+)/i,
+            (_match, prefix: string, authority: string) => `${prefix}${authority.toLocaleLowerCase('en-US')}`
+        )
+        .replace(/^file:\/\/\/([A-Z]):/, (_match, drive: string) => `file:///${drive.toLocaleLowerCase('en-US')}:`)
+        .normalize('NFC');
+}
+
+function fingerprintContext(lines: readonly string[], record: SourceCommentRecord): string {
+    const before: string[] = [];
+    const after: string[] = [];
+    const addIfPresent = (target: string[], value: string): void => {
+        const normalized = normalizedFingerprintText(value);
+        if (normalized.length > 0 && target.length < 2) {
+            target.push(normalized);
+        }
+    };
+
+    addIfPresent(before, (lines[record.startLine] ?? '').slice(0, record.startCharacter));
+    for (let line = record.startLine - 1; line >= 0 && before.length < 2; line--) {
+        addIfPresent(before, lines[line] ?? '');
+    }
+    addIfPresent(after, (lines[record.endLine] ?? '').slice(record.endCharacter));
+    for (let line = record.endLine + 1; line < lines.length && after.length < 2; line++) {
+        addIfPresent(after, lines[line] ?? '');
+    }
+    return JSON.stringify({ before, after });
+}
+
+function sameSourceCoordinates(left: SourceCommentRecord, right: SourceCommentRecord): boolean {
+    return (
+        left.startLine === right.startLine &&
+        left.endLine === right.endLine &&
+        left.startCharacter === right.startCharacter &&
+        left.endCharacter === right.endCharacter
+    );
+}
+
+/**
+ * Build non-sensitive, location-resilient tags for Keep-mode deduplication in
+ * one pass. Context plus an occurrence ordinal distinguishes equal comments
+ * without coupling identity to a mutable annotation line or annotation id.
+ */
+export function sourceCommentImportTags(
+    fileUri: string,
+    languageId: string,
+    source: string | readonly string[],
+    records: readonly SourceCommentRecord[]
+): readonly string[] {
+    const lines = sourceLines(source);
+    const uri = canonicalFingerprintUri(fileUri);
+    const language = languageId.trim().toLocaleLowerCase('en-US');
+    const occurrences = new Map<string, number>();
+    return records.map((record) => {
+        const text = normalizedFingerprintText(record.text);
+        const context = fingerprintContext(lines, record);
+        const occurrenceKey = JSON.stringify({ kind: record.kind, text, context });
+        const occurrence = occurrences.get(occurrenceKey) ?? 0;
+        occurrences.set(occurrenceKey, occurrence + 1);
+        const payload = JSON.stringify({ uri, language, kind: record.kind, text, context, occurrence });
+        const digest = createHash('sha256').update(payload, 'utf8').digest('hex').slice(0, 16);
+        return `source-comment-import:${digest}`;
+    });
+}
+
+/** Convenience wrapper for callers that only have one selected record. */
+export function sourceCommentImportTag(
+    fileUri: string,
+    languageId: string,
+    source: string | readonly string[],
+    record: SourceCommentRecord,
+    scannedRecords?: readonly SourceCommentRecord[]
+): string {
+    const records = scannedRecords ?? scanSourceComments(source, languageId);
+    const index = records.findIndex((candidate) => sameSourceCoordinates(candidate, record));
+    if (index >= 0) {
+        return sourceCommentImportTags(fileUri, languageId, source, records)[index];
+    }
+    return sourceCommentImportTags(fileUri, languageId, source, [record])[0];
 }
 
 function sanitizeMessage(message: string): string {
@@ -480,9 +1592,49 @@ export function sourceCommentAnnotationIdFragment(annotationId: string): string 
     return compact || 'unknown';
 }
 
+/**
+ * A 128-bit digest distinguishes imported ids that share the same readable
+ * eight-character prefix. The legacy prefix remains in the marker so existing
+ * comments and deduplication continue to work.
+ */
+export function sourceCommentAnnotationIdFingerprint(annotationId: string): string {
+    return createHash('sha256').update(annotationId, 'utf8').digest('hex').slice(0, 32);
+}
+
+/**
+ * Match both legacy markers and collision-resistant current markers. Once a
+ * fingerprint is present it is authoritative; a matching short prefix alone
+ * must never claim a different annotation.
+ */
+export function sourceCommentMarkerMatchesAnnotation(
+    record: Pick<SourceCommentRecord, 'annotationIdFragment' | 'annotationIdFingerprint'>,
+    annotationId: string
+): boolean {
+    if (record.annotationIdFragment !== sourceCommentAnnotationIdFragment(annotationId)) {
+        return false;
+    }
+    return (
+        record.annotationIdFingerprint === undefined ||
+        record.annotationIdFingerprint === sourceCommentAnnotationIdFingerprint(annotationId)
+    );
+}
+
+/** Exact, strong identity and message proof required before destructive moves. */
+export function sourceCommentRoundTripsAnnotation(
+    record: Pick<SourceCommentRecord, 'annotationIdFragment' | 'annotationIdFingerprint' | 'text'>,
+    annotationId: string,
+    message: string
+): boolean {
+    return (
+        record.annotationIdFingerprint !== undefined &&
+        sourceCommentMarkerMatchesAnnotation(record, annotationId) &&
+        record.text === message
+    );
+}
+
 /** Marker embedded in generated source comments for idempotent round trips. */
 export function sourceCommentAnnotationMarker(annotationId: string): string {
-    return `OOCI(${sourceCommentAnnotationIdFragment(annotationId)})`;
+    return `OOCI(${sourceCommentAnnotationIdFragment(annotationId)}~${sourceCommentAnnotationIdFingerprint(annotationId)})`;
 }
 
 function safeIndentation(indentation: string | undefined): string {
@@ -560,7 +1712,7 @@ export function encodeSourceComment(message: string, languageId: string, options
         throw new Error(`Unsupported source-comment languageId: ${languageId}`);
     }
     if (!supportsSourceCommentEncoding(languageId)) {
-        throw new Error(`Language ${languageId} requires mixed-language context to encode comments safely`);
+        throw new Error(`Language ${languageId} is not allowlisted for safe annotation-to-comment encoding`);
     }
 
     const style = options.style ?? 'auto';

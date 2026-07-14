@@ -17,7 +17,7 @@ import { SnippetManager, SnippetHistoryEntry } from './SnippetManager';
 import { AnnotationStore } from '../transactional/AnnotationStore';
 import type { VisibilityFilter } from '../transactional/VisibilityFilter';
 import { AnnotationManagerErrorHandling } from './AnnotationManagerErrorHandling';
-import { escapeHtml, generateNonce } from '../common/utils';
+import { escapeHtml, generateNonce, markdownCodeSpan } from '../common/utils';
 import { parseGitHubRepository, validateGitHubRepository } from '../common/githubRepository';
 import {
     captureAnchor,
@@ -1493,7 +1493,7 @@ export class AnnotationManager extends EventEmitter {
                 body: [
                     '## Source annotation',
                     '',
-                    `- **File:** \`${currentAnnotation.file.replace(/`/g, '\\`')}\``,
+                    `- **File:** ${markdownCodeSpan(currentAnnotation.file)}`,
                     `- **Line:** ${sourceLine + 1}`,
                     `- **Author:** ${currentAnnotation.author || 'Unknown'}`,
                     '',

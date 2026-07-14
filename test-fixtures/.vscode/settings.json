@@ -1,5 +1,6 @@
 {
     "annotation.path": ".out-of-code-insights/annotations.json",
     "editor.formatOnPaste": false,
-    "editor.formatOnType": false
+    "editor.formatOnType": false,
+    "workbench.localHistory.enabled": false
 }
