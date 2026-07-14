@@ -1,7 +1,7 @@
 globalThis.OOCI_TASKS = {
   "schemaVersion": 1,
   "project": "Out-of-Code Insights augmented platform",
-  "updatedAt": "2026-07-14T01:01:45-04:00",
+  "updatedAt": "2026-07-14T01:19:31-04:00",
   "statuses": ["todo", "in_progress", "blocked", "done", "accepted", "investigate"],
   "continuousImprovementMandate": {
     "status": "accepted",
@@ -168,7 +168,7 @@ globalThis.OOCI_TASKS = {
     {"id":"AUDIT-001","area":"continuous-improvement","title":"Maintain a detailed catalogue of every extension, MCP and desktop feature with maturity, evidence, limits and next improvement","status":"done"},
     {"id":"AUDIT-002","area":"continuous-improvement","title":"Run a recurring end-to-end audit of existing features for correctness, UX, accessibility, security, performance and team value","status":"todo"},
     {"id":"IDEA-001","area":"continuous-improvement","title":"Continuously research and triage new Microsoft SDK, Tauri, MCP and developer-workflow ideas by impact, feasibility and risk","status":"in_progress"},
-    {"id":"QUALITY-001","area":"continuous-improvement","title":"Require zero known release-blocking regressions through typecheck, lint, unit, Extension Host, package and install smoke gates","status":"done","note":"The exact 1.4.4 snapshot passes typecheck, zero-warning lint, formatting, 723 Node tests, 674 Extension Host tests with four intentional pending scenarios, three zero-vulnerability production audits, both standalone builds and the 51-test license suite. Its 95-entry VSIX passed allow-list inspection and isolated installation. Visual QA remains separately tracked under QA-005."},
+    {"id":"QUALITY-001","area":"continuous-improvement","title":"Require zero known release-blocking regressions through typecheck, lint, unit, Extension Host, package and install smoke gates","status":"done","note":"The exact 1.4.4 snapshot passes typecheck, zero-warning lint, formatting, 723 Node tests, 674 Extension Host tests with four intentional pending scenarios, three zero-vulnerability production audits, both standalone builds and the 51-test license suite. The published 80-entry VSIX passed digest verification, allow-list inspection and isolated installation. Visual QA remains separately tracked under QA-005."},
     {"id":"PROCESS-001","area":"continuous-improvement","title":"Deliver continuous improvements as small verified versions with changelog, task statuses and rollback-safe milestones","status":"in_progress"},
     {"id":"DESKTOP-001","area":"tauri","title":"Align desktop envelope and migrations 1:1 with extension","status":"in_progress"},
     {"id":"DESKTOP-002","area":"tauri","title":"Add direct drag-and-drop re-anchoring from table to code preview","status":"done"},
@@ -203,7 +203,8 @@ globalThis.OOCI_TASKS = {
     {"id":"QA-007","area":"quality","title":"Validate v1.4.1 cross-file multi-annotation drag-and-drop workflows","status":"done"},
     {"id":"QA-008","area":"quality","title":"Validate v1.4.2 Drop Into Editor movement and zero-text insertion","status":"done"},
     {"id":"QA-009","area":"quality","title":"Validate v1.4.3 interactive inline move, persistence rollback, menu hierarchy and metadata preservation","status":"done"},
-    {"id":"QA-010","area":"quality","title":"Build the v1.4.4 production bundle, inspect the VSIX allow-list and smoke-install the exact release in an isolated VS Code profile","status":"done","note":"Production Webpack and VSCE packaging passed. The exact 2,375,656-byte artifact contains 95 entries, excludes source/tests/tasks/dependencies/source maps, has SHA-256 5b3eca0604bbd6605f882d33a6035d8d88e9517fd992228a6706b19b205af25e and installs as jacquesgariepy.out-of-code-insights@1.4.4 in an isolated VS Code 1.128.0 profile."},
+    {"id":"QA-010","area":"quality","title":"Build the v1.4.4 production bundle, inspect the VSIX allow-list and smoke-install the exact release in an isolated VS Code profile","status":"done","note":"The published GitHub asset was downloaded independently after release. It is 2,285,630 bytes, contains 80 entries, excludes source/tests/tasks/dependencies/source maps, matches GitHub's SHA-256 a6800af25fab3901a1001ee6742331f263ec92ec17d7fce01a0af5a962902581 and installs as jacquesgariepy.out-of-code-insights@1.4.4 in an isolated VS Code 1.128.0 profile."},
+    {"id":"BUILD-REPRO-001","area":"delivery","title":"Clean and deterministically rebuild dist before local and CI VSIX packaging so release inventories and digests are reproducible","status":"todo","note":"The clean 1.4.4 CI artifact contains 80 entries, while the pre-release local workspace packaged 95 allowlisted entries because stale dist outputs survived incremental Webpack builds. The published asset itself was downloaded, inspected and smoke-installed successfully; the next release must add deterministic output cleanup and local/CI artifact comparison."},
     {"id":"DOC-001","area":"documentation","title":"Modernize README positioning, onboarding, 1.3 recovery workflows, commands and troubleshooting","status":"done"},
     {"id":"DOC-002","area":"documentation","title":"Document v1.4.0 native tree, panel selection and Microsoft SDK workflows","status":"done"},
     {"id":"DOC-004","area":"documentation","title":"Publish a menu-first reference that accounts for all 86 contributed commands across editor, both trees, Explorer, Comments and Command Palette","status":"done"},
