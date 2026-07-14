@@ -1,0 +1,50 @@
+{
+    "$schema": "../../schemas/openapi-profile.schema.json",
+    "openapiVersion": "3.2.0",
+    "title": "Example service API",
+    "version": "1.0.0",
+    "description": "Routes are bound only to explicit annotation identities.",
+    "includeAnnotationCatalog": true,
+    "components": {
+        "mediaTypes": {
+            "UserSearchQuery": {
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        },
+                        "active": {
+                            "type": "boolean"
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "operations": [
+        {
+            "annotationId": "replace-with-an-existing-annotation-id",
+            "path": "/users/search",
+            "method": "query",
+            "operationId": "searchUsers",
+            "summary": "Search users without inferring a route from prose",
+            "parameters": [
+                {
+                    "name": "search",
+                    "in": "querystring",
+                    "content": {
+                        "application/x-www-form-urlencoded": {
+                            "$ref": "#/components/mediaTypes/UserSearchQuery"
+                        }
+                    }
+                }
+            ],
+            "responses": {
+                "200": {
+                    "description": "Matching users returned successfully."
+                }
+            }
+        }
+    ]
+}

@@ -18,6 +18,14 @@ import type { AnnotationStore } from '../transactional/AnnotationStore';
 import { loc } from '../managers/LocalizationManager';
 import { getLogger } from '../utils/logger';
 import { projectAnnotationToThread } from './commentThreadModel';
+import {
+    annotationIdFromCommentCommandArg,
+    commentThreadFromCommandArg,
+    isAnnotationIdArg,
+    isCommentReplyArg,
+    type ReplyArg,
+    type ThreadArg,
+} from './commentCommandArguments';
 
 /** Stable id of the comment controller (used by `commentController ==` when-clauses). */
 export const COMMENTS_CONTROLLER_ID = 'outOfCodeInsights.comments';
@@ -27,33 +35,25 @@ interface AnnotationComment extends vscode.Comment {
     annotationId: string;
 }
 
-/** Plain testability shape accepted by every comment command. */
-interface AnnotationIdArg {
-    annotationId: string;
-}
-
-type ReplyArg = vscode.CommentReply | (AnnotationIdArg & { text: string });
-type ThreadArg = vscode.CommentThread | AnnotationIdArg | string;
-
-function isAnnotationIdArg(arg: unknown): arg is AnnotationIdArg {
-    return typeof arg === 'object' && arg !== null && typeof (arg as AnnotationIdArg).annotationId === 'string';
-}
-
-function isCommentReply(arg: unknown): arg is vscode.CommentReply {
-    if (typeof arg !== 'object' || arg === null) {
-        return false;
-    }
-    const candidate = arg as { thread?: unknown; text?: unknown };
-    return typeof candidate.text === 'string' && typeof candidate.thread === 'object' && candidate.thread !== null;
-}
-
 export class AnnotationCommentsController implements vscode.Disposable {
     private readonly controller: vscode.CommentController;
     /** Persistent threads keyed by annotation id. Ephemeral gutter threads are NOT tracked here. */
     private readonly threads = new Map<string, vscode.CommentThread>();
     private readonly subscriptions: vscode.Disposable[] = [];
 
-    constructor(private readonly store: AnnotationStore) {
+    constructor(
+        private readonly store: AnnotationStore,
+        /**
+         * Awaitable durability boundary supplied by the extension runtime.
+         *
+         * The store emits changes synchronously, but workspace persistence is
+         * intentionally debounced. Commands exposed through the Comments API
+         * must not resolve while their write is still queued: callers such as
+         * tests, automation and other extensions are allowed to read the
+         * envelope as soon as executeCommand() completes.
+         */
+        private readonly awaitSave: () => Promise<void> = async () => undefined
+    ) {
         this.controller = vscode.comments.createCommentController(COMMENTS_CONTROLLER_ID, 'Out-of-Code Insights');
         // The "+" gutter is available on the whole document: replying on the
         // resulting empty thread creates a brand-new annotation at that line.
@@ -163,10 +163,10 @@ export class AnnotationCommentsController implements vscode.Disposable {
      */
     private async handleReply(arg: ReplyArg): Promise<void> {
         if (isAnnotationIdArg(arg)) {
-            this.appendReply(arg.annotationId, arg.text);
+            await this.appendReply(arg.annotationId, arg.text);
             return;
         }
-        if (!isCommentReply(arg)) {
+        if (!isCommentReplyArg(arg)) {
             return;
         }
         const text = arg.text.trim();
@@ -175,14 +175,14 @@ export class AnnotationCommentsController implements vscode.Disposable {
         }
         const annotationId = this.annotationIdFromThread(arg.thread);
         if (annotationId) {
-            this.appendReply(annotationId, text);
+            await this.appendReply(annotationId, text);
             return;
         }
         await this.createAnnotationFromThread(arg.thread, text);
         arg.thread.dispose();
     }
 
-    private appendReply(annotationId: string, text: string): void {
+    private async appendReply(annotationId: string, text: string): Promise<void> {
         const annotation = this.store.get(annotationId);
         if (!annotation) {
             this.warnUnknownAnnotation(annotationId);
@@ -203,6 +203,7 @@ export class AnnotationCommentsController implements vscode.Disposable {
                 },
             ],
         });
+        await this.awaitSave();
     }
 
     private async createAnnotationFromThread(thread: vscode.CommentThread, message: string): Promise<void> {
@@ -224,9 +225,10 @@ export class AnnotationCommentsController implements vscode.Disposable {
             { line },
             document
         );
+        await this.awaitSave();
     }
 
-    private handleSetResolved(arg: ThreadArg, resolved: boolean): void {
+    private async handleSetResolved(arg: ThreadArg, resolved: boolean): Promise<void> {
         const annotationId = this.annotationIdFromArg(arg);
         if (!annotationId) {
             return;
@@ -236,17 +238,20 @@ export class AnnotationCommentsController implements vscode.Disposable {
             return;
         }
         this.store.update(annotationId, { resolved });
+        await this.awaitSave();
     }
 
-    private handleDelete(arg: ThreadArg): void {
+    private async handleDelete(arg: ThreadArg): Promise<void> {
         const annotationId = this.annotationIdFromArg(arg);
         if (annotationId) {
             this.store.remove(annotationId);
+            await this.awaitSave();
             return;
         }
         // Ephemeral gutter thread without a backing annotation: just drop it.
-        if (typeof arg === 'object' && arg !== null && typeof (arg as vscode.CommentThread).dispose === 'function') {
-            (arg as vscode.CommentThread).dispose();
+        const thread = commentThreadFromCommandArg(arg);
+        if (thread && typeof thread.dispose === 'function') {
+            thread.dispose();
         }
     }
 
@@ -261,13 +266,7 @@ export class AnnotationCommentsController implements vscode.Disposable {
 
     /** Resolve the annotation id from any accepted command argument shape. */
     private annotationIdFromArg(arg: ThreadArg): string | undefined {
-        if (typeof arg === 'string') {
-            return arg;
-        }
-        if (isAnnotationIdArg(arg)) {
-            return arg.annotationId;
-        }
-        return this.annotationIdFromThread(arg);
+        return annotationIdFromCommentCommandArg(arg, (thread) => this.annotationIdFromThread(thread));
     }
 
     /** Reverse lookup of a live thread object in the id → thread map. */

@@ -2,6 +2,12 @@ import * as vscode from 'vscode';
 import { Annotation } from '../common/types';
 import { localize } from '../common/localize';
 import { Message } from 'multi-llm-ts';
+import {
+    AI_PROVIDER_CATALOG,
+    type AIProviderConnectionSettings,
+    createAIProviderEngineOptions,
+    missingAIProviderConnectionFields,
+} from './AIProviderCatalog';
 
 export interface AIProfile {
     id: string;
@@ -24,6 +30,7 @@ export interface UnifiedAIConfig {
     provider: string;
     model: string;
     apiKeys: Record<string, string>;
+    connectionSettings: AIProviderConnectionSettings;
     context: vscode.ExtensionContext;
 }
 
@@ -131,14 +138,39 @@ export class UnifiedAIProvider {
             const multiLLM = await import('multi-llm-ts');
 
             // Get the API key for the configured provider
-            const apiKey = this.config.apiKeys[this.config.provider];
+            let apiKey = await this.config.context.secrets.get(`${this.config.provider}-api-key`);
+            const providerDefinition = AI_PROVIDER_CATALOG.find(({ id }) => id === this.config.provider);
+            const apiKeyRequired = providerDefinition?.apiKeyRequired ?? true;
+
+            const missingConnectionFields = missingAIProviderConnectionFields(
+                this.config.provider,
+                this.config.connectionSettings
+            );
+            if (missingConnectionFields.length > 0) {
+                vscode.window.showWarningMessage(
+                    localize(
+                        'aiProviderConnectionIncomplete',
+                        'Complete the {0} connection settings before using AI: {1}.',
+                        providerDefinition?.defaultLabel ?? this.config.provider,
+                        missingConnectionFields.join(', ')
+                    )
+                );
+                return false;
+            }
 
             if (!apiKey) {
-                // Try to get from secrets
-                const secretKey = await this.config.context.secrets.get(`${this.config.provider}-api-key`);
-                if (!secretKey) {
+                const configuredKey = this.config.apiKeys[this.config.provider];
+                const legacySecret = await this.config.context.secrets.get(`annotation.${this.config.provider}Key`);
+                if (configuredKey || legacySecret) {
+                    apiKey = configuredKey ?? legacySecret;
+                    if (apiKey) {
+                        this.config.apiKeys[this.config.provider] = apiKey;
+                    }
+                } else if (apiKeyRequired) {
                     console.error(`No API key found for ${this.config.provider} in settings or secrets`);
-                    const providerName = this.config.provider.charAt(0).toUpperCase() + this.config.provider.slice(1);
+                    const providerName =
+                        providerDefinition?.defaultLabel ??
+                        this.config.provider.charAt(0).toUpperCase() + this.config.provider.slice(1);
 
                     // Provide helpful error message based on provider
                     let helpMessage = `No API key found for ${providerName}.`;
@@ -161,20 +193,20 @@ export class UnifiedAIProvider {
                     vscode.window.showWarningMessage(localize('apiKeyMissing', helpMessage));
                     return false;
                 }
-                this.config.apiKeys[this.config.provider] = secretKey;
             }
 
             // Create LLM instance using igniteEngine
             const { igniteEngine, loadModels } = multiLLM;
-            this.llm = igniteEngine(this.config.provider, {
-                apiKey: this.config.apiKeys[this.config.provider],
-            });
+            const engineOptions = createAIProviderEngineOptions(
+                this.config.provider,
+                apiKey,
+                this.config.connectionSettings
+            );
+            this.llm = igniteEngine(this.config.provider, engineOptions);
 
             // Load available models
             try {
-                this.models = await loadModels(this.config.provider, {
-                    apiKey: this.config.apiKeys[this.config.provider],
-                });
+                this.models = await loadModels(this.config.provider, engineOptions);
 
                 // Verify we have chat models
                 if (!this.models?.chat || this.models.chat.length === 0) {
@@ -358,7 +390,7 @@ export class UnifiedAIProvider {
                 const annotation: Partial<Annotation> = {
                     message: `${profile.annotationDefaults.prefix} ${ann.message}`,
                     file: filePath,
-                    line: ann.line ? ann.line - 1 : baseLineNumber, // Convert to 0-based index
+                    line: baseLineNumber + (ann.line ? Math.max(0, ann.line - 1) : 0),
                     severity: ann.severity || profile.annotationDefaults.severity,
                     tags: [...(ann.tags || []), ...profile.annotationDefaults.tags],
                     kanbanColumn: 'todo',
@@ -455,7 +487,7 @@ export class UnifiedAIProvider {
         this.config = { ...this.config, ...config };
         // Reset the engine if the provider, model, or API keys changed so the next
         // call rebuilds it with the new credentials instead of reusing a stale client.
-        if (config.provider || config.model || config.apiKeys) {
+        if (config.provider || config.model || config.apiKeys || config.connectionSettings) {
             this.llm = null;
             this.models = null;
         }

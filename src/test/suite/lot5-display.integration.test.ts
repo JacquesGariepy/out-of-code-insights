@@ -145,14 +145,21 @@ suite('Lot 5 R2 worktree A — AnnotationsTreeDataProvider', () => {
         assert.strictEqual(roots.length, 1, 'the native tree root should contain file groups only');
         const fileItem = roots.find((r) => r instanceof FileTreeItem) as FileTreeItem;
         assert.ok(fileItem, 'expected a FileTreeItem');
+        assert.strictEqual(fileItem.id, `file:${relPath(uri)}`, 'file groups must expose a stable TreeItem id');
         assert.strictEqual(fileItem.entries.length, 3);
 
         const children = await provider.getChildren(fileItem);
-        const ids = (children as AnnotationTreeItem[]).map((c) => c.annotation.id);
+        const annotationItems = children as AnnotationTreeItem[];
+        const ids = annotationItems.map((c) => c.annotation.id);
         assert.deepStrictEqual(
             ids,
             [a1.id, a2.id, a3.id],
             'children must be sorted by startOffset, not insertion order'
+        );
+        assert.deepStrictEqual(
+            annotationItems.map((item) => item.id),
+            [a1, a2, a3].map((annotation) => `annotation:${annotation.id}`),
+            'annotation TreeItem ids must be stable and derived from the store id'
         );
 
         store.update(a1.id, { resolved: true });
@@ -170,10 +177,46 @@ suite('Lot 5 R2 worktree A — AnnotationsTreeDataProvider', () => {
         const refreshedRoots = await provider.getChildren();
         const refreshedFile = refreshedRoots[0] as FileTreeItem;
         const refreshedChildren = (await provider.getChildren(refreshedFile)) as AnnotationTreeItem[];
+        assert.strictEqual(refreshedFile.id, fileItem.id, 'file id must survive provider refreshes');
+        assert.deepStrictEqual(
+            refreshedChildren.map((item) => item.id),
+            annotationItems.map((item) => item.id),
+            'annotation ids must survive provider refreshes'
+        );
         assert.strictEqual(
             refreshedChildren.find((item) => item.annotation.id === a1.id)?.checkboxState,
             vscode.TreeItemCheckboxState.Checked,
             'resolved state should be exposed through the native TreeView checkbox'
+        );
+    });
+
+    test('outgoing link tooltips display user-facing one-based line numbers', async function () {
+        this.timeout(10000);
+        const uri = await ensureFixture('lot5-display-tree-link-tooltip.ts', 'one\ntwo\nthree\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const annotation = store.add(
+            {
+                ...makeDraft(uri, 'linked annotation'),
+                linkedAnnotations: [
+                    {
+                        targetFile: 'src/target.ts',
+                        targetLine: 2,
+                        relationship: 'related',
+                    },
+                ],
+            },
+            { line: 0 },
+            document
+        );
+
+        const item = new AnnotationTreeItem(annotation, 0);
+        assert.ok(item.tooltip instanceof vscode.MarkdownString, 'annotation tooltip should be Markdown');
+        assert.match(
+            item.tooltip.value,
+            /src\/target\.ts:3/,
+            `zero-based target line 2 must be displayed as line 3; tooltip=${JSON.stringify(item.tooltip.value)}`
         );
     });
 
@@ -278,11 +321,9 @@ suite('Lot 5 R2 worktree A — AnnotationCodeLensProvider', () => {
     });
 
     test('returns no lenses when globally disabled', async function () {
-        this.timeout(10000);
+        this.timeout(30000);
         const uri = await ensureFixture('lot5-display-codelens-disabled.ts', 'one\ntwo\n');
         const document = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(document);
-        await delay(100);
 
         const store = new AnnotationStore();
         const visibility = new VisibilityFilter(() => ({

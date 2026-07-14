@@ -61,6 +61,14 @@ export class NavigationStack {
         return [...this.history];
     }
 
+    public canGoBack(): boolean {
+        return this.position + 1 < this.history.length;
+    }
+
+    public canGoForward(): boolean {
+        return this.position > 0;
+    }
+
     /**
      * Remove every occurrence of `id` from the stack. Used by consumers that
      * subscribe to `AnnotationStore.onDidDispose` so a TTL-expired or

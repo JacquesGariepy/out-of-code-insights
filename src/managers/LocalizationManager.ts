@@ -120,5 +120,13 @@ export class LocalizationManager {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function loc(key: string, defaultValue?: string, ...args: any[]): string {
     const manager = LocalizationManager.getInstance();
-    return manager ? manager.localize(key, defaultValue, ...args) : defaultValue || key;
+    if (manager) {
+        return manager.localize(key, defaultValue, ...args);
+    }
+
+    let message = defaultValue || key;
+    args.forEach((arg, index) => {
+        message = message.replace(new RegExp(`\\{${index}\\}`, 'g'), String(arg));
+    });
+    return message;
 }

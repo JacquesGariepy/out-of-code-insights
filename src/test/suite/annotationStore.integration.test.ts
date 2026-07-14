@@ -65,6 +65,62 @@ function delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Apply an edit and wait for the matching VS Code document event. `applyEdit`
+ * normally resolves after delivery, but asserting the event explicitly keeps
+ * store integration tests independent from scheduler speed and removes fixed
+ * sleeps that become unreliable when the full Extension Host suite is busy.
+ */
+async function applyEditAndWaitForDocumentEvent(
+    uri: vscode.Uri,
+    edit: vscode.WorkspaceEdit
+): Promise<vscode.TextDocumentChangeEvent> {
+    let subscription: vscode.Disposable | undefined;
+    let timer: NodeJS.Timeout | undefined;
+    const observed = new Promise<vscode.TextDocumentChangeEvent>((resolve, reject) => {
+        subscription = vscode.workspace.onDidChangeTextDocument((event) => {
+            if (event.document.uri.toString() !== uri.toString() || event.contentChanges.length === 0) {
+                return;
+            }
+            resolve(event);
+        });
+        timer = setTimeout(() => reject(new Error(`Timed out waiting for document change: ${uri.toString()}`)), 5000);
+    });
+
+    try {
+        const [, event] = await Promise.all([
+            vscode.workspace.applyEdit(edit).then((applied) => {
+                assert.strictEqual(applied, true, `workspace edit must apply to ${uri.toString()}`);
+            }),
+            observed,
+        ]);
+        return event;
+    } finally {
+        if (timer) {
+            clearTimeout(timer);
+        }
+        subscription?.dispose();
+    }
+}
+
+/**
+ * Route a workbench-level Undo/Redo command to the document exercised by the
+ * test. Other integration suites can briefly move focus to a quick pick,
+ * notification, tree, or temporary editor; `undo`/`redo` otherwise operate on
+ * whichever workbench control still owns focus and emit no document event.
+ */
+async function executeFocusedEditorCommand(command: 'undo' | 'redo', document: vscode.TextDocument): Promise<void> {
+    await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+    await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+    await delay(50);
+    assert.strictEqual(
+        vscode.window.activeTextEditor?.document.uri.toString(),
+        document.uri.toString(),
+        `${command}: the fixture editor must be active before dispatch`
+    );
+    await vscode.commands.executeCommand(command);
+}
+
 function relPath(uri: vscode.Uri): string {
     return path.relative(workspaceRoot(), uri.fsPath).replace(/\\/g, '/');
 }
@@ -383,7 +439,7 @@ suite('AnnotationStore (Lot 2) — undo/redo mirroring §7.7, §7.8, §7.9 + tra
 
         assert.strictEqual(store.getAll().length, 2, 'precondition §7.7: 2 annotations after manual paste creation');
 
-        await vscode.commands.executeCommand('undo');
+        await executeFocusedEditorCommand('undo', document);
         await delay(800);
 
         assert.strictEqual(
@@ -437,11 +493,11 @@ suite('AnnotationStore (Lot 2) — undo/redo mirroring §7.7, §7.8, §7.9 + tra
         const pastedStartBefore = pastedBefore.startOffset;
         const pastedEndBefore = pastedBefore.endOffset;
 
-        await vscode.commands.executeCommand('undo');
+        await executeFocusedEditorCommand('undo', document);
         await delay(800);
         assert.strictEqual(store.getAll().length, 1, 'precondition §7.8: undo removed pasted');
 
-        await vscode.commands.executeCommand('redo');
+        await executeFocusedEditorCommand('redo', document);
         await delay(800);
 
         assert.strictEqual(
@@ -513,9 +569,9 @@ suite('AnnotationStore (Lot 2) — undo/redo mirroring §7.7, §7.8, §7.9 + tra
         // Undo, undo: reverse paste, then reverse cut. After the second undo
         // the document is back to its initial state and the annotation must
         // sit at its original offsets with its original id.
-        await vscode.commands.executeCommand('undo');
+        await executeFocusedEditorCommand('undo', document);
         await delay(500);
-        await vscode.commands.executeCommand('undo');
+        await executeFocusedEditorCommand('undo', document);
         await delay(500);
 
         const restored = store.get(idBefore);
@@ -674,11 +730,8 @@ suite(
             const fixture = 'a\nb\nc\nd\ne\nTTL_TARGET\nf\n';
             const uri = await ensureFixture('lot4-7-4-ttl-expiry.ts', fixture);
             const document = await vscode.workspace.openTextDocument(uri);
-            await vscode.window.showTextDocument(document);
-            await delay(150);
 
-            const SHORT_TTL_MS = 100;
-            const store = new AnnotationStore({ suspendTtlMs: SHORT_TTL_MS });
+            const store = new AnnotationStore({ suspendTtlMs: 60_000 });
             subscriptions.push(subscribeStore(store));
 
             const annotation = store.add(makeDraft(uri, 'ttl-victim'), { line: 5 }, document);
@@ -686,11 +739,22 @@ suite(
             // Cut the line.
             const cutEdit = new vscode.WorkspaceEdit();
             cutEdit.delete(uri, new vscode.Range(new vscode.Position(5, 0), new vscode.Position(6, 0)));
-            await vscode.workspace.applyEdit(cutEdit);
-            await delay(300);
+            await applyEditAndWaitForDocumentEvent(uri, cutEdit);
 
-            // Wait beyond the TTL.
-            await delay(SHORT_TTL_MS + 200);
+            assert.strictEqual(
+                store.get(annotation.id)?.state,
+                'suspended',
+                'precondition: cut enters suspended state'
+            );
+
+            // Shorten the live TTL only after observing suspension, then move
+            // beyond that precise transition. This tests expiry without a
+            // scheduler-sensitive 300 ms sleep under a loaded Extension Host.
+            store.updateSuspendTtl(0);
+            const ttlTransition = Date.now();
+            while (Date.now() <= ttlTransition) {
+                await delay(0);
+            }
 
             // Trigger ANY follow-up event so the store has a chance to sweep
             // expired suspensions. Insert a single space at the end of the
@@ -699,13 +763,12 @@ suite(
             const lastLine = document.lineCount - 1;
             const lastCol = document.lineAt(lastLine).text.length;
             triggerEdit.insert(uri, new vscode.Position(lastLine, lastCol), ' ');
-            await vscode.workspace.applyEdit(triggerEdit);
-            await delay(200);
+            await applyEditAndWaitForDocumentEvent(uri, triggerEdit);
 
             const fetched = store.get(annotation.id);
             if (fetched && fetched.state !== 'disposed') {
                 assert.fail(
-                    `§7.4 (TTL): annotation must be disposed (or undefined) after TTL ${SHORT_TTL_MS}ms + follow-up event ` +
+                    `§7.4 (TTL): annotation must be disposed (or undefined) after TTL expiry + follow-up event ` +
                         `(state=${fetched.state})`
                 );
                 return;
@@ -1093,11 +1156,11 @@ suite('AnnotationStore (Lot 4 final) — §7.3, §7.11, §7.14', () => {
         const fixture = 'a\n' + 'b\n' + 'c\n' + 'd\n' + 'e\n' + 'DELETE_ME\n' + 'g\n' + 'h\n' + 'i\n' + 'j\n';
         const uri = await ensureFixture('lot4-7-3-delete-anchored-line.ts', fixture);
         const document = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(document);
-        await delay(150);
 
-        const SHORT_TTL_MS = 100;
-        const store = new AnnotationStore({ suspendTtlMs: SHORT_TTL_MS });
+        // Keep natural expiry out of the immediate-state assertion. Once the
+        // event has suspended the annotation, shorten the live TTL to zero and
+        // deterministically advance the clock before the sweep event.
+        const store = new AnnotationStore({ suspendTtlMs: 60_000 });
         subscriptions.push(subscribeStore(store));
 
         const annotation = store.add(makeDraft(uri, 'will-be-deleted'), { line: 5 }, document);
@@ -1107,9 +1170,7 @@ suite('AnnotationStore (Lot 4 final) — §7.3, §7.11, §7.14', () => {
         // annotation's content. Cas D triggers suspend.
         const deleteEdit = new vscode.WorkspaceEdit();
         deleteEdit.delete(uri, new vscode.Range(new vscode.Position(5, 0), new vscode.Position(6, 0)));
-        const ok = await vscode.workspace.applyEdit(deleteEdit);
-        assert.strictEqual(ok, true);
-        await delay(300);
+        await applyEditAndWaitForDocumentEvent(uri, deleteEdit);
 
         // Immediate state — suspended, not active, not disposed yet.
         const fetchedAfterDelete = store.get(id);
@@ -1124,15 +1185,18 @@ suite('AnnotationStore (Lot 4 final) — §7.3, §7.11, §7.14', () => {
         );
         assert.strictEqual(store.getAll().length, 0, '§7.3: getAll() must list 0 actives after the deletion');
 
-        // Wait beyond TTL, then trigger any follow-up event so the store can
-        // sweep expired suspensions inside applyDocumentChange.
-        await delay(SHORT_TTL_MS + 200);
+        // Trigger a follow-up event after a deterministic TTL transition so
+        // the store sweeps expired suspensions inside applyDocumentChange.
+        store.updateSuspendTtl(0);
+        const ttlTransition = Date.now();
+        while (Date.now() <= ttlTransition) {
+            await delay(0);
+        }
         const triggerEdit = new vscode.WorkspaceEdit();
         const lastLine = document.lineCount - 1;
         const lastCol = document.lineAt(lastLine).text.length;
         triggerEdit.insert(uri, new vscode.Position(lastLine, lastCol), ' ');
-        await vscode.workspace.applyEdit(triggerEdit);
-        await delay(200);
+        await applyEditAndWaitForDocumentEvent(uri, triggerEdit);
 
         // Final state — disposed. Worker-1's sweep removes the record from
         // suspendedById, so `get(id)` returns undefined; OR (alternative

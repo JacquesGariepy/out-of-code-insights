@@ -141,7 +141,6 @@ suite('Lot 15 — Comments API threads + AI agent instructions', () => {
 
         // Resolve via the plain-id fallback.
         await vscode.commands.executeCommand('annotations.commentResolve', annotationId);
-        await delay(500);
         envelope = readEnvelope();
         let found = envelope.annotations.find((a) => a.id === annotationId);
         assert.ok(found, 'annotation must survive commentResolve');
@@ -152,7 +151,6 @@ suite('Lot 15 — Comments API threads + AI agent instructions', () => {
             annotationId,
             text: 'lot15 first reply',
         });
-        await delay(500);
         envelope = readEnvelope();
         found = envelope.annotations.find((a) => a.id === annotationId);
         assert.ok(found, 'annotation must survive commentReply');
@@ -164,7 +162,6 @@ suite('Lot 15 — Comments API threads + AI agent instructions', () => {
 
         // Unresolve via the plain-id fallback.
         await vscode.commands.executeCommand('annotations.commentUnresolve', annotationId);
-        await delay(500);
         envelope = readEnvelope();
         found = envelope.annotations.find((a) => a.id === annotationId);
         assert.ok(found, 'annotation must survive commentUnresolve');
@@ -172,7 +169,6 @@ suite('Lot 15 — Comments API threads + AI agent instructions', () => {
 
         // Delete via the plain-id fallback.
         await vscode.commands.executeCommand('annotations.commentDelete', annotationId);
-        await delay(500);
         envelope = readEnvelope();
         assert.strictEqual(
             envelope.annotations.find((a) => a.id === annotationId),

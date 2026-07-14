@@ -97,11 +97,10 @@ suite('Lot 13 — external annotations.json changes reload into the live store',
             'setup: A persisted'
         );
 
-        // Wait out the self-write suppression window so the external write
-        // is treated as foreign.
-        await delay(2600);
-
-        // B — appended EXTERNALLY (exactly what the MCP server does).
+        // B — appended EXTERNALLY immediately after the extension save
+        // (exactly what the MCP server does). This intentionally lands inside
+        // the former two-second suppression window: content causality, not
+        // timing, must decide whether the watcher reloads it.
         const externalUri = vscode.Uri.file(path.join(workspaceRoot(), 'lot13-external.md')).toString();
         const envelope = readEnvelope();
         envelope.annotations.push({

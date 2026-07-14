@@ -34,6 +34,8 @@ export interface MoveAnnotationsResult {
     movedIds: string[];
     file: string;
     firstLine: number;
+    /** Internal snapshot used when VS Code cancels a pending editor drop. */
+    previous: AnnotationV2[];
 }
 
 /**
@@ -60,6 +62,7 @@ export class AnnotationMoveService {
         }
 
         const sourceLocations = await this.resolveSourceLocations(movableIds);
+        const previous = sourceLocations.map(({ annotation }) => structuredClone(annotation) as AnnotationV2);
         const sameSourceFile = sourceLocations.every(
             (entry) => entry.annotation.fileUri === sourceLocations[0]?.annotation.fileUri
         );
@@ -97,7 +100,22 @@ export class AnnotationMoveService {
             movedIds: sourceLocations.map((entry) => entry.annotation.id),
             file: vscode.workspace.asRelativePath(target.document.uri),
             firstLine: target.line,
+            previous,
         };
+    }
+
+    async rollbackMove(result: MoveAnnotationsResult): Promise<void> {
+        this.store.beginTransaction();
+        try {
+            for (const annotation of result.previous) {
+                this.store.upsert(annotation);
+            }
+            await this.persistence.save(this.store.serialize());
+            this.store.commit();
+        } catch (error) {
+            this.store.rollback();
+            throw error;
+        }
     }
 
     private async resolveTarget(

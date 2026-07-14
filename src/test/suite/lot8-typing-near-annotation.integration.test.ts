@@ -74,13 +74,6 @@ function readPersistedAnnotations(fileUri: string): PersistedV2Annotation[] {
     }
 }
 
-function clearAnnotationsFile(): void {
-    const file = annotationsFilePath();
-    if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-    }
-}
-
 async function closeAllEditors(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 }
@@ -141,6 +134,27 @@ function resolveView(document: vscode.TextDocument, fileUri: string): ResolvedVi
     return { count: 1, state: a.state ?? 'active', line, hashMatchesLineAtOffset: hashMatches };
 }
 
+/**
+ * Wait for the debounced, atomic persistence pipeline instead of assuming a
+ * fixed disk latency. The persistence layer deliberately validates and syncs
+ * every replacement; antivirus or a busy Windows filesystem can therefore
+ * make a correct write take longer than the historical 600 ms sleep.
+ */
+async function waitForResolvedView(
+    document: vscode.TextDocument,
+    fileUri: string,
+    predicate: (view: ResolvedView) => boolean,
+    timeoutMs = 10000
+): Promise<ResolvedView> {
+    const deadline = Date.now() + timeoutMs;
+    let view = resolveView(document, fileUri);
+    while (!predicate(view) && Date.now() < deadline) {
+        await delay(100);
+        view = resolveView(document, fileUri);
+    }
+    return view;
+}
+
 async function typeText(text: string): Promise<void> {
     await vscode.commands.executeCommand('type', { text });
 }
@@ -163,7 +177,6 @@ suite('Lot 8 — typing Space/Enter at the end of an annotated line keeps the an
     setup(async function () {
         this.timeout(30000);
         await clearAllAnnotationsViaCommand();
-        clearAnnotationsFile();
         await closeAllEditors();
 
         uri = vscode.Uri.file(path.join(workspaceRoot(), 'lot8-typing.md'));
@@ -244,9 +257,16 @@ suite('Lot 8 — typing Space/Enter at the end of an annotated line keeps the an
         // Video repro: '## Context' → backspace → '## Contex' → retype 't'.
         await placeCursorAtEol(CONTEXT_LINE);
         await vscode.commands.executeCommand('deleteLeft');
-        await delay(600);
 
-        const afterDelete = resolveView(document, uri.toString());
+        const afterDelete = await waitForResolvedView(
+            document,
+            uri.toString(),
+            (view) =>
+                view.count === 1 &&
+                view.state === 'active' &&
+                view.line === CONTEXT_LINE &&
+                view.hashMatchesLineAtOffset
+        );
         assert.strictEqual(afterDelete.count, 1, 'annotation must survive the in-line deletion');
         assert.strictEqual(afterDelete.state, 'active', 'annotation must stay active after deleting a char');
         assert.strictEqual(afterDelete.line, CONTEXT_LINE, 'annotation must stay on the edited line');
@@ -257,9 +277,16 @@ suite('Lot 8 — typing Space/Enter at the end of an annotated line keeps the an
         );
 
         await typeText('t');
-        await delay(600);
 
-        const afterRetype = resolveView(document, uri.toString());
+        const afterRetype = await waitForResolvedView(
+            document,
+            uri.toString(),
+            (view) =>
+                view.count === 1 &&
+                view.state === 'active' &&
+                view.line === CONTEXT_LINE &&
+                view.hashMatchesLineAtOffset
+        );
         assert.strictEqual(afterRetype.count, 1);
         assert.strictEqual(afterRetype.state, 'active');
         assert.strictEqual(afterRetype.line, CONTEXT_LINE);
@@ -272,9 +299,16 @@ suite('Lot 8 — typing Space/Enter at the end of an annotated line keeps the an
         editor.selection = new vscode.Selection(CONTEXT_LINE, 4, CONTEXT_LINE, 4);
         await delay(50);
         await typeText(' ');
-        await delay(600);
 
-        const after = resolveView(document, uri.toString());
+        const after = await waitForResolvedView(
+            document,
+            uri.toString(),
+            (view) =>
+                view.count === 1 &&
+                view.state === 'active' &&
+                view.line === CONTEXT_LINE &&
+                view.hashMatchesLineAtOffset
+        );
         assert.strictEqual(after.count, 1, 'exactly one annotation must survive');
         assert.strictEqual(after.state, 'active', 'annotation must stay active');
         assert.strictEqual(after.line, CONTEXT_LINE, 'annotation must stay on the ## Context line');

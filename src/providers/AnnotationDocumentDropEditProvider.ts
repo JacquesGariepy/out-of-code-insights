@@ -23,6 +23,12 @@ export class AnnotationDocumentDropEditProvider implements vscode.DocumentDropEd
         if (!item || token.isCancellationRequested) {
             return undefined;
         }
+        if (document.uri.scheme !== 'file' || vscode.workspace.getWorkspaceFolder(document.uri) === undefined) {
+            vscode.window.showWarningMessage(
+                loc('editorDropWorkspaceRequired', 'Drop annotations onto a saved file inside the current workspace.')
+            );
+            return undefined;
+        }
 
         const ids = parseAnnotationDragIds(await item.asString());
         if (ids.length === 0 || token.isCancellationRequested) {
@@ -37,6 +43,10 @@ export class AnnotationDocumentDropEditProvider implements vscode.DocumentDropEd
                 targetLine: position.line,
             });
             if (!result) {
+                return undefined;
+            }
+            if (token.isCancellationRequested) {
+                await this.moveService.rollbackMove(result);
                 return undefined;
             }
 

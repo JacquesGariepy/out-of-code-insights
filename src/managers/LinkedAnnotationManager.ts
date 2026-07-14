@@ -5,10 +5,8 @@
 // AnnotationStore + an optional AnnotationNavigation (for the post-jump
 // navigation stack push and side-panel focus).
 //
-// Storage shape: `LinkedAnnotation { targetFile, targetLine, relationship }`
-// stays as-is in v2 (decision §D1 in lot5-migration-plan.md). Resolution to
-// an actual annotation goes through `findAnnotationByLocation` which uses
-// the store's `getLineForAnnotation` against open documents.
+// Current links carry a stable target id/URI. Historical targetFile and
+// targetLine fields remain readable as migration fallbacks.
 
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
@@ -59,7 +57,8 @@ export class LinkedAnnotationManager extends EventEmitter {
         this.subscriptions.push(
             this.store.onDidChange(() => {
                 this.updateLinkDecorations();
-            })
+            }),
+            vscode.window.onDidChangeActiveTextEditor(() => this.updateLinkDecorations())
         );
     }
 
@@ -70,14 +69,19 @@ export class LinkedAnnotationManager extends EventEmitter {
         sourceId: string,
         targetFile: string,
         targetLine: number,
-        relationship = 'related'
+        relationship = 'related',
+        targetId?: string
     ): Promise<void> {
         const sourceAnnotation = this.store.get(sourceId);
         if (!sourceAnnotation) {
             throw new Error(localize('sourceAnnotationNotFound', 'Source annotation not found'));
         }
 
-        const targetAnnotation = this.findAnnotationByLocation(targetFile, targetLine);
+        // A supplied stable id is authoritative. Falling back to the legacy
+        // location when that id is stale can silently link to a different
+        // annotation that later occupied the same line.
+        const targetAnnotation =
+            targetId !== undefined ? this.store.get(targetId) : this.findAnnotationByLocation(targetFile, targetLine);
         if (!targetAnnotation) {
             throw new Error(localize('targetAnnotationNotFound', 'Target annotation not found at specified location'));
         }
@@ -87,11 +91,23 @@ export class LinkedAnnotationManager extends EventEmitter {
         }
 
         const existing = sourceAnnotation.linkedAnnotations ?? [];
-        if (existing.some((link) => link.targetFile === targetFile && link.targetLine === targetLine)) {
+        if (
+            existing.some((link) =>
+                link.targetId
+                    ? link.targetId === targetAnnotation.id
+                    : link.targetFile === targetFile && link.targetLine === targetLine
+            )
+        ) {
             throw new Error(localize('linkExists', 'Link already exists'));
         }
 
-        const newLink: LinkedAnnotation = { targetFile, targetLine, relationship };
+        const newLink: LinkedAnnotation = {
+            targetId: targetAnnotation.id,
+            targetUri: targetAnnotation.fileUri,
+            targetFile: targetAnnotation.file,
+            targetLine,
+            relationship,
+        };
         const linkedAnnotations = [...existing, newLink];
         this.store.update(sourceId, { linkedAnnotations });
 
@@ -102,14 +118,21 @@ export class LinkedAnnotationManager extends EventEmitter {
     /**
      * Removes a link between annotations.
      */
-    public async removeLink(sourceId: string, targetFile: string, targetLine: number): Promise<void> {
+    public async removeLink(
+        sourceId: string,
+        targetFile: string,
+        targetLine: number,
+        targetId?: string
+    ): Promise<void> {
         const sourceAnnotation = this.store.get(sourceId);
         if (!sourceAnnotation || !sourceAnnotation.linkedAnnotations) {
             throw new Error(localize('sourceAnnotationNotFound', 'Source annotation not found'));
         }
 
-        const linkIndex = sourceAnnotation.linkedAnnotations.findIndex(
-            (link) => link.targetFile === targetFile && link.targetLine === targetLine
+        const linkIndex = sourceAnnotation.linkedAnnotations.findIndex((link) =>
+            targetId !== undefined
+                ? link.targetId === targetId
+                : link.targetFile === targetFile && link.targetLine === targetLine
         );
         if (linkIndex === -1) {
             throw new Error(localize('linkNotFound', 'Link not found'));
@@ -144,14 +167,41 @@ export class LinkedAnnotationManager extends EventEmitter {
         const link = sourceAnnotation.linkedAnnotations[targetIndex];
 
         try {
-            const document = await vscode.workspace.openTextDocument(link.targetFile);
+            const targetAnnotation = this.resolveLinkTarget(link);
+            if (link.targetId && !targetAnnotation) {
+                throw new Error(localize('targetAnnotationNotFound', 'The linked annotation no longer exists.'));
+            }
+            if (targetAnnotation && this.navigation) {
+                await this.navigation.navigateToAnnotation(targetAnnotation.id);
+                return;
+            }
+
+            const sourceWorkspace = vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(sourceAnnotation.fileUri));
+            const targetUri = link.targetUri
+                ? vscode.Uri.parse(link.targetUri)
+                : /^[a-z][a-z0-9+.-]*:/i.test(link.targetFile)
+                  ? vscode.Uri.parse(link.targetFile)
+                  : sourceWorkspace
+                    ? vscode.Uri.joinPath(sourceWorkspace.uri, ...link.targetFile.split(/[\\/]/))
+                    : vscode.Uri.file(link.targetFile);
+            // Workspace membership is the security boundary. Requiring the
+            // `file` scheme would incorrectly reject remote and virtual
+            // workspace documents that VS Code can open safely.
+            if (vscode.workspace.getWorkspaceFolder(targetUri) === undefined) {
+                throw new Error(
+                    localize('linkedTargetOutsideWorkspace', 'The linked target is outside the workspace.')
+                );
+            }
+            const document = await vscode.workspace.openTextDocument(targetUri);
             const editor = await vscode.window.showTextDocument(document);
 
+            if (link.targetLine < 0 || link.targetLine >= document.lineCount) {
+                throw new Error(localize('linkedTargetLineInvalid', 'The linked target line is no longer valid.'));
+            }
             const position = new vscode.Position(link.targetLine, 0);
             editor.selection = new vscode.Selection(position, position);
             editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
 
-            const targetAnnotation = this.findAnnotationByLocation(link.targetFile, link.targetLine);
             if (targetAnnotation && this.navigation) {
                 this.navigation.stack.push(targetAnnotation.id);
                 await this.navigation.focusAnnotationInPanel(targetAnnotation.id);
@@ -160,6 +210,7 @@ export class LinkedAnnotationManager extends EventEmitter {
             vscode.window.showErrorMessage(
                 localize('navigationFailed', 'Failed to navigate to linked annotation: {0}', String(error))
             );
+            throw error;
         }
     }
 
@@ -176,15 +227,36 @@ export class LinkedAnnotationManager extends EventEmitter {
      */
     public getIncomingLinks(
         targetFile: string,
-        targetLine: number
+        targetLine: number,
+        targetId?: string
     ): Array<{ annotation: Readonly<AnnotationV2>; relationship: string }> {
         const incoming: Array<{ annotation: Readonly<AnnotationV2>; relationship: string }> = [];
+        const targetIdsAtLocation =
+            targetId === undefined
+                ? new Set(
+                      this.store
+                          .list()
+                          .filter(
+                              (annotation) =>
+                                  annotation.file === targetFile &&
+                                  this.store.getLineForAnnotation(annotation.id, vscode.workspace.textDocuments) ===
+                                      targetLine
+                          )
+                          .map((annotation) => annotation.id)
+                  )
+                : undefined;
+
         for (const annotation of this.store.list()) {
             if (!annotation.linkedAnnotations) {
                 continue;
             }
             for (const link of annotation.linkedAnnotations) {
-                if (link.targetFile === targetFile && link.targetLine === targetLine) {
+                const matches = link.targetId
+                    ? targetId !== undefined
+                        ? link.targetId === targetId
+                        : targetIdsAtLocation?.has(link.targetId) === true
+                    : link.targetFile === targetFile && link.targetLine === targetLine;
+                if (matches) {
                     incoming.push({ annotation, relationship: link.relationship });
                 }
             }
@@ -215,7 +287,7 @@ export class LinkedAnnotationManager extends EventEmitter {
                 continue;
             }
             for (const link of annotation.linkedAnnotations) {
-                const target = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                const target = this.resolveLinkTarget(link);
                 if (target) {
                     graph.edges.push({
                         source: annotation.id,
@@ -286,7 +358,7 @@ export class LinkedAnnotationManager extends EventEmitter {
                 continue;
             }
             for (const link of annotation.linkedAnnotations) {
-                const target = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                const target = this.resolveLinkTarget(link);
                 if (target && !linked.has(target.id)) {
                     linked.set(target.id, target);
                 }
@@ -338,7 +410,7 @@ export class LinkedAnnotationManager extends EventEmitter {
 
             if (annotation?.linkedAnnotations) {
                 for (const link of annotation.linkedAnnotations) {
-                    const next = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                    const next = this.resolveLinkTarget(link);
                     if (next && !visited.has(next.id)) {
                         dfs(next.id, [...currentPath, next.id], depth + 1);
                     }
@@ -443,6 +515,12 @@ export class LinkedAnnotationManager extends EventEmitter {
         return undefined;
     }
 
+    private resolveLinkTarget(link: LinkedAnnotation): Readonly<AnnotationV2> | undefined {
+        return link.targetId
+            ? this.store.get(link.targetId)
+            : this.findAnnotationByLocation(link.targetFile, link.targetLine);
+    }
+
     /**
      * Check whether linking source → target would form a cycle.
      */
@@ -466,7 +544,7 @@ export class LinkedAnnotationManager extends EventEmitter {
                 continue;
             }
             for (const link of current.linkedAnnotations) {
-                const next = this.findAnnotationByLocation(link.targetFile, link.targetLine);
+                const next = this.resolveLinkTarget(link);
                 if (next) {
                     if (next.id === sourceId) {
                         return true;

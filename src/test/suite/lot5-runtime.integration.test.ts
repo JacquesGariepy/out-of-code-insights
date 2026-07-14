@@ -122,13 +122,6 @@ function isStoreV2Envelope(data: unknown): data is SchemaV2Envelope {
     return obj.schemaVersion === 2 && Array.isArray(obj.annotations);
 }
 
-function clearAnnotationsFile(): void {
-    const file = annotationsFilePath();
-    if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-    }
-}
-
 async function closeAllEditors(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
 }
@@ -218,7 +211,6 @@ suite('Lot 5 R2 runtime integration — failing-first until consumers re-wired',
 
     setup(async () => {
         await clearAllAnnotationsViaCommand();
-        clearAnnotationsFile();
         await closeAllEditors();
     });
 
@@ -314,6 +306,98 @@ suite('Lot 5 R2 runtime integration — failing-first until consumers re-wired',
         const resolved = await waitForPersistedAnnotation(createdId, (entry) => entry.resolved === true);
         assert.ok(resolved, 'resolve must not delete the annotation');
         assert.strictEqual(resolved.resolved, true);
+    });
+
+    test('2c. public link commands create, navigate, show and remove links through AnnotationStore', async function () {
+        this.timeout(30000);
+        const ext = findExtension();
+        if (!ext) {
+            this.skip();
+            return;
+        }
+        await ext.activate();
+
+        const uri = await ensureFixture('lot5-r2-resolve-flow.ts', 'zero\nresolve target\nlast\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document);
+        const sourceId = await vscode.commands.executeCommand<string>('annotations.add', {
+            line: 0,
+            message: 'public-link-source',
+        });
+        const targetId = await vscode.commands.executeCommand<string>('annotations.add', {
+            line: 2,
+            message: 'public-link-target',
+        });
+        assert.ok(sourceId && targetId, 'fixture annotations must be created');
+
+        const created = await vscode.commands.executeCommand<number>('annotations.createLink', {
+            id: sourceId,
+            targetId,
+            relationship: 'references',
+        });
+        assert.strictEqual(created, 1, 'public createLink must report a created link');
+        const linkedSource = await waitForPersistedAnnotation(
+            sourceId,
+            (entry) => Array.isArray(entry.linkedAnnotations) && entry.linkedAnnotations.length === 1
+        );
+        assert.ok(linkedSource, 'the link must persist through the canonical v2 store');
+        assert.deepStrictEqual(linkedSource.linkedAnnotations, [
+            {
+                targetId,
+                targetUri: uri.toString(),
+                targetFile: vscode.workspace.asRelativePath(uri),
+                targetLine: 2,
+                relationship: 'references',
+            },
+        ]);
+
+        const navigated = await vscode.commands.executeCommand<number>('annotations.navigateToLinked', {
+            id: sourceId,
+            targetIndex: 0,
+        });
+        assert.strictEqual(navigated, 1, 'public navigateToLinked must report navigation');
+        assert.strictEqual(vscode.window.activeTextEditor?.selection.active.line, 2);
+
+        const originalQuickPick = vscode.window.showQuickPick;
+        try {
+            let outgoingItems: ReadonlyArray<{ label?: string }> = [];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (vscode.window as any).showQuickPick = async (items: ReadonlyArray<{ label?: string }>) => {
+                outgoingItems = items;
+                return undefined;
+            };
+            const inspected = await vscode.commands.executeCommand<number>('annotations.showLinks', sourceId);
+            assert.strictEqual(inspected, 0, 'cancelling the links picker must not navigate');
+            assert.match(
+                outgoingItems[0]?.label ?? '',
+                /lot5-r2-resolve-flow\.ts:3/,
+                'the outgoing link label must identify its target rather than repeat the source message'
+            );
+
+            // The target has one incoming link. Selecting it must navigate back
+            // to the source through the store-backed incoming-link path.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (vscode.window as any).showQuickPick = async (items: readonly unknown[]) => items[0];
+            const shown = await vscode.commands.executeCommand<number>('annotations.showLinks', targetId);
+            assert.strictEqual(shown, 1, 'public showLinks must expose incoming links');
+            assert.strictEqual(vscode.window.activeTextEditor?.selection.active.line, 0);
+        } finally {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (vscode.window as any).showQuickPick = originalQuickPick;
+        }
+
+        const removed = await vscode.commands.executeCommand<number>('annotations.removeLink', {
+            id: sourceId,
+            targetIndex: 0,
+            confirmed: true,
+        });
+        assert.strictEqual(removed, 1, 'public removeLink must report a removed link');
+        const unlinkedSource = await waitForPersistedAnnotation(
+            sourceId,
+            (entry) => Array.isArray(entry.linkedAnnotations) && entry.linkedAnnotations.length === 0
+        );
+        assert.ok(unlinkedSource, 'link removal must persist through the canonical v2 store');
+        assert.deepStrictEqual(unlinkedSource.linkedAnnotations, []);
     });
 
     test('3. AnnotationStore.upsert exists and inserts an annotation programmatically (AI adapter contract)', function () {
@@ -536,7 +620,7 @@ suite('Lot 5 R2 runtime integration — failing-first until consumers re-wired',
         }
         await delay(800);
 
-        let persisted = readPersistedRaw();
+        const persisted = readPersistedRaw();
         if (!persisted || !isStoreV2Envelope(persisted)) {
             // R2 wiring not done — disk still in legacy flat-array format.
             this.skip();
@@ -566,29 +650,35 @@ suite('Lot 5 R2 runtime integration — failing-first until consumers re-wired',
         const ok = await vscode.workspace.applyEdit(edit);
         assert.strictEqual(ok, true, 'WorkspaceEdit must apply');
 
-        // Wait for the debounce save (typical 500ms; allow margin).
-        await delay(900);
-
-        persisted = readPersistedRaw();
-        if (!persisted || !isStoreV2Envelope(persisted)) {
-            assert.fail('E2E: persisted file lost its v2 envelope shape after edit');
-            return;
-        }
-        const updated = persisted.annotations.find((a) => (a as { id?: unknown }).id === id) as
-            | { startOffset?: number; endOffset?: number }
-            | undefined;
+        // Await the durable state itself. A fixed delay is racy because the
+        // atomic writer validates and syncs the replacement and can take
+        // longer on a busy Windows filesystem or under antivirus scanning.
+        const expectedStart = (initialStart as number) + insertedDelta;
+        const expectedEnd = (initialEnd as number) + insertedDelta;
+        const updated = await waitForPersistedAnnotation(
+            id,
+            (entry) => entry.startOffset === expectedStart && entry.endOffset === expectedEnd,
+            10000
+        );
         if (!updated) {
-            assert.fail(`E2E: annotation ${id} disappeared from persisted file after edit`);
+            const latest = readPersistedRaw();
+            const latestAnnotation = isStoreV2Envelope(latest)
+                ? latest.annotations.find((entry) => entry.id === id)
+                : undefined;
+            assert.fail(
+                `E2E: annotation ${id} did not persist shifted offsets ` +
+                    `(latest=${JSON.stringify(latestAnnotation)})`
+            );
             return;
         }
         assert.strictEqual(
             updated.startOffset,
-            (initialStart as number) + insertedDelta,
+            expectedStart,
             `E2E: persisted startOffset must shift by ${insertedDelta} (got ${updated.startOffset})`
         );
         assert.strictEqual(
             updated.endOffset,
-            (initialEnd as number) + insertedDelta,
+            expectedEnd,
             `E2E: persisted endOffset must shift by ${insertedDelta} (got ${updated.endOffset})`
         );
     });

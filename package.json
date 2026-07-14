@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.4.3",
+    "version": "1.4.4",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
@@ -57,373 +57,527 @@
             {
                 "command": "annotations.add",
                 "title": "Add Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(comment-add)"
             },
             {
                 "command": "annotations.reply",
                 "title": "Reply to Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(reply)"
             },
             {
                 "command": "annotations.clearAll",
                 "title": "Clear All Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(trash)"
             },
             {
                 "command": "annotations.delete",
                 "title": "Delete Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(trash)"
             },
             {
                 "command": "annotations.edit",
                 "title": "Edit Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(edit)"
             },
             {
                 "command": "annotations.editMessageMarkdown",
                 "title": "Edit Annotation Message (Markdown)",
+                "category": "Out-of-Code Insights",
                 "icon": "$(edit)"
             },
             {
                 "command": "annotations.reanchorToCursor",
                 "title": "Re-anchor Annotation to Current Cursor",
+                "category": "Out-of-Code Insights",
                 "icon": "$(target)"
             },
             {
                 "command": "annotations.showTrackingDiagnostics",
                 "title": "Show Annotation Tracking Diagnostics",
+                "category": "Out-of-Code Insights",
                 "icon": "$(pulse)"
             },
             {
                 "command": "annotations.bulkActions",
                 "title": "Bulk Actions for Selected Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(checklist)"
+            },
+            {
+                "command": "annotations.resolve",
+                "title": "Resolve Annotation",
+                "category": "Out-of-Code Insights",
+                "icon": "$(pass-filled)"
+            },
+            {
+                "command": "annotations.editTags",
+                "title": "Edit Annotation Tags",
+                "category": "Out-of-Code Insights",
+                "icon": "$(tag)"
+            },
+            {
+                "command": "annotations.autoResolveStale",
+                "title": "Resolve Old Annotations",
+                "category": "Out-of-Code Insights",
+                "icon": "$(history)"
+            },
+            {
+                "command": "annotations.filterBySeverity",
+                "title": "Filter Annotations by Severity",
+                "category": "Out-of-Code Insights",
+                "icon": "$(filter)"
+            },
+            {
+                "command": "annotations.manageSnippets",
+                "title": "Manage Snippet History",
+                "category": "Out-of-Code Insights",
+                "icon": "$(history)"
             },
             {
                 "command": "annotations.treeEdit",
                 "title": "Edit Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(edit)"
             },
             {
                 "command": "annotations.treeDelete",
                 "title": "Delete Selected Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(trash)"
             },
             {
                 "command": "annotations.treeTogglePin",
                 "title": "Toggle Pin for Selected Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(pin)"
             },
             {
                 "command": "annotations.treeSetSeverity",
                 "title": "Set Severity for Selected Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(warning)"
             },
             {
                 "command": "annotations.moveByDragAndDrop",
-                "title": "Move Selected Annotations…",
+                "title": "Move Selected Annotations with Drag and Drop…",
+                "category": "Out-of-Code Insights",
                 "icon": "$(move)"
             },
             {
                 "command": "annotations.pickUpForMove",
                 "title": "Pick Up Annotation to Move",
+                "category": "Out-of-Code Insights",
                 "icon": "$(move)"
             },
             {
                 "command": "annotations.dropPickedAtCursor",
                 "title": "Drop Annotation at Cursor",
+                "category": "Out-of-Code Insights",
                 "icon": "$(location)",
                 "enablement": "outOfCodeInsights.annotationMoveActive"
             },
             {
                 "command": "annotations.cancelPickedMove",
                 "title": "Cancel Annotation Move",
+                "category": "Out-of-Code Insights",
                 "icon": "$(close)",
                 "enablement": "outOfCodeInsights.annotationMoveActive"
             },
             {
                 "command": "annotations.commentPickUp",
                 "title": "Move Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(move)"
             },
             {
                 "command": "annotations.toggleDisplay",
-                "title": "Toggle Annotations Display",
+                "title": "Show or Hide Annotation Decorations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(eye)"
             },
             {
                 "command": "annotations.navigate",
-                "title": "Navigate to Annotation",
+                "title": "Choose and Open an Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(arrow-right)"
             },
             {
                 "command": "annotations.exportJSON",
                 "title": "Export Annotations to JSON",
+                "category": "Out-of-Code Insights",
                 "icon": "$(cloud-upload)"
             },
             {
                 "command": "annotations.generateDocs",
                 "title": "Generate Annotation Documentation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(book)"
+            },
+            {
+                "command": "annotations.configureDocs",
+                "title": "Configure Documentation Studio",
+                "category": "Out-of-Code Insights",
+                "icon": "$(settings-gear)"
             },
             {
                 "command": "annotations.addDocBlock",
                 "title": "Add Documentation Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(note)"
             },
             {
                 "command": "annotations.importComments",
                 "title": "Import Code Comments as Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(comment)"
             },
             {
                 "command": "annotations.importCommentsWorkspace",
                 "title": "Import Code Comments from Workspace",
+                "category": "Out-of-Code Insights",
                 "icon": "$(checklist)"
             },
             {
+                "command": "annotations.convertCodeComments",
+                "title": "%command.convertCodeComments.title%",
+                "category": "Out-of-Code Insights",
+                "icon": "$(arrow-right)"
+            },
+            {
+                "command": "annotations.writeAnnotationsToCodeComments",
+                "title": "%command.writeAnnotationsToCodeComments.title%",
+                "category": "Out-of-Code Insights",
+                "icon": "$(arrow-left)"
+            },
+            {
                 "command": "annotations.mcpSetup",
-                "title": "MCP Server Setup",
+                "title": "Configure MCP Server Integration",
+                "category": "Out-of-Code Insights",
                 "icon": "$(plug)"
             },
             {
                 "command": "annotations.syncConfigure",
                 "title": "Configure Annotation Sync",
+                "category": "Out-of-Code Insights",
                 "icon": "$(cloud)"
             },
             {
                 "command": "annotations.syncNow",
                 "title": "Sync Annotations Now",
+                "category": "Out-of-Code Insights",
                 "icon": "$(sync)"
             },
             {
                 "command": "annotations.importJSON",
                 "title": "Import Annotations from JSON",
+                "category": "Out-of-Code Insights",
                 "icon": "$(cloud-download)"
             },
             {
                 "command": "annotations.pinToggle",
                 "title": "Toggle Annotation Pin",
+                "category": "Out-of-Code Insights",
                 "icon": "$(pin)"
             },
             {
                 "command": "annotations.setSeverity",
                 "title": "Set Annotation Severity",
+                "category": "Out-of-Code Insights",
                 "icon": "$(alert)"
             },
             {
                 "command": "annotations.batchEdit",
                 "title": "Batch Edit Annotations in File",
+                "category": "Out-of-Code Insights",
                 "icon": "$(edit)"
             },
             {
                 "command": "annotations.keywordSearch",
-                "title": "Keyword Search in Annotations",
+                "title": "Search Annotation Messages and Metadata",
+                "category": "Out-of-Code Insights",
                 "icon": "$(search)"
             },
             {
                 "command": "annotations.aiSuggest",
                 "title": "AI Suggest Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(zap)"
             },
             {
                 "command": "annotations.moveUp",
                 "title": "Move Annotation Up",
+                "category": "Out-of-Code Insights",
                 "icon": "$(arrow-up)"
             },
             {
                 "command": "annotations.moveDown",
                 "title": "Move Annotation Down",
+                "category": "Out-of-Code Insights",
                 "icon": "$(arrow-down)"
             },
             {
                 "command": "annotations.show",
-                "title": "Show Annotations Panel",
+                "title": "Open Annotations Panel",
+                "category": "Out-of-Code Insights",
                 "icon": "$(comment-discussion)"
             },
             {
                 "command": "stack.back",
-                "title": "Stack Back",
-                "icon": "$(arrow-left)"
+                "title": "Go Back in Annotation Navigation History",
+                "category": "Out-of-Code Insights",
+                "icon": "$(arrow-left)",
+                "enablement": "outOfCodeInsights.navigationCanBack"
             },
             {
                 "command": "stack.forward",
-                "title": "Stack Forward",
-                "icon": "$(arrow-right)"
+                "title": "Go Forward in Annotation Navigation History",
+                "category": "Out-of-Code Insights",
+                "icon": "$(arrow-right)",
+                "enablement": "outOfCodeInsights.navigationCanForward"
             },
             {
                 "command": "annotations.navigateToLinked",
                 "title": "Navigate to Linked Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(link-external)"
             },
             {
                 "command": "annotations.createLink",
                 "title": "Create Annotation Link",
+                "category": "Out-of-Code Insights",
                 "icon": "$(link)"
             },
             {
                 "command": "annotations.removeLink",
                 "title": "Remove Annotation Link",
+                "category": "Out-of-Code Insights",
                 "icon": "$(link-remove)"
             },
             {
                 "command": "annotations.showLinks",
-                "title": "Show All Links",
+                "title": "Show Incoming and Outgoing Annotation Links",
+                "category": "Out-of-Code Insights",
                 "icon": "$(references)"
+            },
+            {
+                "command": "annotations.createDevelopmentIssue",
+                "title": "Create GitHub Development Issue from Annotation",
+                "category": "Out-of-Code Insights",
+                "icon": "$(issues)"
             },
             {
                 "command": "annotations.createTemplate",
                 "title": "Create Annotation Template",
+                "category": "Out-of-Code Insights",
                 "icon": "$(file-code)"
             },
             {
                 "command": "annotations.applyTemplate",
                 "title": "Apply Template",
+                "category": "Out-of-Code Insights",
                 "icon": "$(file-symlink-file)"
             },
             {
                 "command": "annotations.manageTemplates",
                 "title": "Manage Templates",
+                "category": "Out-of-Code Insights",
                 "icon": "$(files)"
             },
             {
                 "command": "annotations.startReview",
                 "title": "Start Review Mode",
-                "icon": "$(play)"
+                "category": "Out-of-Code Insights",
+                "icon": "$(play)",
+                "enablement": "!outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.stopReview",
                 "title": "Stop Review Mode",
-                "icon": "$(stop)"
+                "category": "Out-of-Code Insights",
+                "icon": "$(stop)",
+                "enablement": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.nextAnnotation",
                 "title": "Next Annotation",
-                "icon": "$(arrow-down)"
+                "category": "Out-of-Code Insights",
+                "icon": "$(arrow-down)",
+                "enablement": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.previousAnnotation",
                 "title": "Previous Annotation",
-                "icon": "$(arrow-up)"
+                "category": "Out-of-Code Insights",
+                "icon": "$(arrow-up)",
+                "enablement": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.markAsViewed",
-                "title": "Mark as Viewed",
-                "icon": "$(check)"
+                "title": "Mark Annotation as Viewed",
+                "category": "Out-of-Code Insights",
+                "icon": "$(check)",
+                "enablement": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.showKanban",
-                "title": "Show Kanban Board",
+                "title": "Open Annotation Kanban Board",
+                "category": "Out-of-Code Insights",
                 "icon": "$(project)"
             },
             {
                 "command": "annotations.addKanbanColumn",
                 "title": "Add Kanban Column",
+                "category": "Out-of-Code Insights",
                 "icon": "$(add)"
             },
             {
                 "command": "annotations.moveToColumn",
-                "title": "Move to Column",
+                "title": "Move Annotation to Kanban Column",
+                "category": "Out-of-Code Insights",
                 "icon": "$(arrow-swap)"
             },
             {
                 "command": "annotations.reviewMode.filter",
-                "title": "Filter Annotations for Review",
-                "icon": "$(filter)"
+                "title": "Filter the Annotation Review Queue",
+                "category": "Out-of-Code Insights",
+                "icon": "$(filter)",
+                "enablement": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.addSnippet",
                 "title": "Add Code Snippet to Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(code)"
             },
             {
                 "command": "annotations.applySnippet",
                 "title": "Apply Code Snippet",
+                "category": "Out-of-Code Insights",
                 "icon": "$(check)"
             },
             {
                 "command": "annotations.previewSnippet",
                 "title": "Preview Snippet Changes",
+                "category": "Out-of-Code Insights",
                 "icon": "$(eye)"
             },
             {
                 "command": "annotations.selectProfile",
-                "title": "Select User Profile",
+                "title": "Select Active User or AI Profile",
+                "category": "Out-of-Code Insights",
                 "icon": "$(account)"
             },
             {
                 "command": "annotations.manageProfiles",
                 "title": "Manage User Profiles",
+                "category": "Out-of-Code Insights",
                 "icon": "$(accounts)"
             },
             {
                 "command": "annotations.aiSuggestWithProfile",
                 "title": "AI Suggest with Profile",
+                "category": "Out-of-Code Insights",
                 "icon": "$(zap)"
             },
             {
                 "command": "annotations.aiAnalyzeFile",
                 "title": "AI: Analyze Entire File",
+                "category": "Out-of-Code Insights",
                 "icon": "$(file-code)"
             },
             {
                 "command": "annotations.aiBatchAnnotate",
                 "title": "AI: Batch Generate Annotations",
+                "category": "Out-of-Code Insights",
                 "icon": "$(checklist)"
             },
             {
                 "command": "annotations.aiAnalyzeFileWithProfile",
                 "title": "AI: Analyze File with Profile",
+                "category": "Out-of-Code Insights",
                 "icon": "$(file-code)"
             },
             {
                 "command": "annotations.updateApiKey",
-                "title": "Update AI Provider API Key",
+                "title": "Configure AI Provider & Credentials",
+                "category": "Out-of-Code Insights",
                 "icon": "$(key)"
             },
             {
                 "command": "annotations.enterLicenseKey",
                 "title": "Enter License Key (Pro)",
+                "category": "Out-of-Code Insights",
                 "icon": "$(key)"
             },
             {
                 "command": "annotations.manageAIProfiles",
                 "title": "AI: Manage Custom Profiles",
+                "category": "Out-of-Code Insights",
                 "icon": "$(settings-gear)"
             },
             {
                 "command": "annotations.batchCreateMixed",
-                "title": "Batch Create Mixed Items",
+                "title": "AI: Create Annotations and Code Items in Batch",
+                "category": "Out-of-Code Insights",
                 "icon": "$(checklist)"
             },
             {
                 "command": "outOfCodeInsights.showLogs",
-                "title": "Out-of-Code Insights: Show Logs",
+                "title": "Show Extension Logs",
+                "category": "Out-of-Code Insights",
                 "icon": "$(output)"
+            },
+            {
+                "command": "annotations.openSettings",
+                "title": "Open Out-of-Code Insights Settings",
+                "category": "Out-of-Code Insights",
+                "icon": "$(settings-gear)"
+            },
+            {
+                "command": "annotations.showInitializationReport",
+                "title": "Show Initialization Report",
+                "category": "Out-of-Code Insights",
+                "icon": "$(report)"
+            },
+            {
+                "command": "annotations.retryInitialization",
+                "title": "Retry Extension Initialization",
+                "category": "Out-of-Code Insights",
+                "icon": "$(refresh)"
             },
             {
                 "command": "annotations.commentReply",
                 "title": "Reply",
+                "category": "Out-of-Code Insights",
                 "icon": "$(reply)"
             },
             {
                 "command": "annotations.commentResolve",
                 "title": "Resolve Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(pass)"
             },
             {
                 "command": "annotations.commentUnresolve",
                 "title": "Unresolve Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(circle-slash)"
             },
             {
                 "command": "annotations.commentDelete",
                 "title": "Delete Annotation",
+                "category": "Out-of-Code Insights",
                 "icon": "$(trash)"
             },
             {
                 "command": "annotations.setupAiInstructions",
-                "title": "Set Up AI Agent Instructions",
+                "title": "Set Up AI Agent Instructions for This Workspace",
+                "category": "Out-of-Code Insights",
                 "icon": "$(robot)"
             }
         ],
@@ -457,6 +611,52 @@
                 "label": "AI Analysis"
             },
             {
+                "id": "outOfCodeInsightsDocumentationSubMenu",
+                "label": "Documentation"
+            },
+            {
+                "id": "outOfCodeInsightsTreeDocumentationSubMenu",
+                "label": "Documentation"
+            },
+            {
+                "id": "outOfCodeInsightsTreeCodeSubMenu",
+                "label": "%submenu.treeCodeConversion.label%",
+                "icon": "$(code)"
+            },
+            {
+                "id": "outOfCodeInsightsTreeMoveSubMenu",
+                "label": "Move & Re-anchor"
+            },
+            {
+                "id": "outOfCodeInsightsTreeStateSubMenu",
+                "label": "State & Metadata"
+            },
+            {
+                "id": "outOfCodeInsightsTreeCollaborationSubMenu",
+                "label": "Links & Collaboration"
+            },
+            {
+                "id": "outOfCodeInsightsTreeMoreSubMenu",
+                "label": "More Out-of-Code Insights Actions",
+                "icon": "$(ellipsis)"
+            },
+            {
+                "id": "outOfCodeInsightsExplorerSubMenu",
+                "label": "Out-of-Code Insights"
+            },
+            {
+                "id": "outOfCodeInsightsReviewSubMenu",
+                "label": "Review Workflow"
+            },
+            {
+                "id": "outOfCodeInsightsKanbanSubMenu",
+                "label": "Kanban"
+            },
+            {
+                "id": "outOfCodeInsightsSettingsSubMenu",
+                "label": "Settings & Accounts"
+            },
+            {
                 "id": "outOfCodeInsightsToolsSubMenu",
                 "label": "Import/Export & Tools"
             }
@@ -482,6 +682,22 @@
                 {
                     "command": "annotations.commentPickUp",
                     "when": "false"
+                },
+                {
+                    "command": "annotations.treeEdit",
+                    "when": "false"
+                },
+                {
+                    "command": "annotations.treeDelete",
+                    "when": "false"
+                },
+                {
+                    "command": "annotations.treeTogglePin",
+                    "when": "false"
+                },
+                {
+                    "command": "annotations.treeSetSeverity",
+                    "when": "false"
                 }
             ],
             "comments/commentThread/context": [
@@ -500,7 +716,7 @@
                 {
                     "command": "annotations.commentPickUp",
                     "group": "navigation@1",
-                    "when": "commentController == outOfCodeInsights.comments && commentThread =~ /^annotation/"
+                    "when": "commentController == outOfCodeInsights.comments && commentThread =~ /^annotation/ && !outOfCodeInsights.annotationMoveActive"
                 },
                 {
                     "command": "annotations.commentResolve",
@@ -511,6 +727,13 @@
                     "command": "annotations.commentUnresolve",
                     "group": "navigation@2",
                     "when": "commentController == outOfCodeInsights.comments && commentThread =~ /;resolved/"
+                }
+            ],
+            "explorer/context": [
+                {
+                    "submenu": "outOfCodeInsightsExplorerSubMenu",
+                    "when": "resourceScheme == file",
+                    "group": "navigation@20"
                 }
             ],
             "editor/context": [
@@ -546,17 +769,32 @@
                     "group": "2_workflows@4"
                 },
                 {
-                    "submenu": "outOfCodeInsightsTemplatesSnippetsSubMenu",
+                    "submenu": "outOfCodeInsightsReviewSubMenu",
                     "group": "2_workflows@5"
                 },
                 {
+                    "submenu": "outOfCodeInsightsTemplatesSnippetsSubMenu",
+                    "group": "2_workflows@6"
+                },
+                {
+                    "submenu": "outOfCodeInsightsDocumentationSubMenu",
+                    "group": "2_workflows@7"
+                },
+                {
+                    "submenu": "outOfCodeInsightsKanbanSubMenu",
+                    "group": "2_workflows@8"
+                },
+                {
                     "submenu": "aiAnalysisSubMenu",
-                    "group": "2_workflows@6",
-                    "when": "config.annotation.enableAiSuggest"
+                    "group": "2_workflows@9"
                 },
                 {
                     "submenu": "outOfCodeInsightsToolsSubMenu",
-                    "group": "2_workflows@7"
+                    "group": "2_workflows@10"
+                },
+                {
+                    "submenu": "outOfCodeInsightsSettingsSubMenu",
+                    "group": "2_workflows@11"
                 },
                 {
                     "command": "annotations.delete",
@@ -565,37 +803,51 @@
             ],
             "outOfCodeInsightsViewSearchSubMenu": [
                 {
-                    "command": "annotations.showKanban",
-                    "group": "1_view@1"
+                    "command": "annotations.navigate",
+                    "group": "1_navigation@1"
+                },
+                {
+                    "command": "stack.back",
+                    "when": "outOfCodeInsights.navigationCanBack",
+                    "group": "1_navigation@2"
+                },
+                {
+                    "command": "stack.forward",
+                    "when": "outOfCodeInsights.navigationCanForward",
+                    "group": "1_navigation@3"
                 },
                 {
                     "command": "annotations.keywordSearch",
-                    "group": "1_view@2"
+                    "group": "2_view@1"
+                },
+                {
+                    "command": "annotations.filterBySeverity",
+                    "group": "2_view@2"
                 },
                 {
                     "command": "annotations.toggleDisplay",
-                    "group": "1_view@3"
+                    "group": "2_view@3"
                 },
                 {
                     "command": "annotations.showTrackingDiagnostics",
-                    "group": "2_diagnostics@1"
+                    "group": "3_diagnostics@1"
                 }
             ],
             "outOfCodeInsightsEditOrganizeSubMenu": [
                 {
-                    "command": "annotations.edit",
+                    "command": "annotations.reply",
                     "group": "1_editing@1"
                 },
                 {
-                    "command": "annotations.editMessageMarkdown",
+                    "command": "annotations.edit",
                     "group": "1_editing@2"
                 },
                 {
-                    "command": "annotations.batchEdit",
+                    "command": "annotations.editMessageMarkdown",
                     "group": "1_editing@3"
                 },
                 {
-                    "command": "annotations.addDocBlock",
+                    "command": "annotations.batchEdit",
                     "group": "1_editing@4"
                 },
                 {
@@ -605,6 +857,14 @@
                 {
                     "command": "annotations.setSeverity",
                     "group": "2_state@2"
+                },
+                {
+                    "command": "annotations.editTags",
+                    "group": "2_state@3"
+                },
+                {
+                    "command": "annotations.resolve",
+                    "group": "2_state@4"
                 }
             ],
             "outOfCodeInsightsMoveReanchorSubMenu": [
@@ -654,12 +914,16 @@
                     "group": "1_links@4"
                 },
                 {
-                    "command": "annotations.syncNow",
+                    "command": "annotations.createDevelopmentIssue",
                     "group": "2_collaboration@1"
                 },
                 {
-                    "command": "annotations.syncConfigure",
+                    "command": "annotations.syncNow",
                     "group": "2_collaboration@2"
+                },
+                {
+                    "command": "annotations.syncConfigure",
+                    "group": "2_collaboration@3"
                 }
             ],
             "outOfCodeInsightsTemplatesSnippetsSubMenu": [
@@ -686,6 +950,60 @@
                 {
                     "command": "annotations.previewSnippet",
                     "group": "2_snippets@3"
+                },
+                {
+                    "command": "annotations.manageSnippets",
+                    "group": "2_snippets@4"
+                }
+            ],
+            "outOfCodeInsightsReviewSubMenu": [
+                {
+                    "command": "annotations.startReview",
+                    "group": "1_session@1",
+                    "when": "!outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.reviewMode.filter",
+                    "group": "1_session@2",
+                    "when": "outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.previousAnnotation",
+                    "group": "2_navigation@1",
+                    "when": "outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.nextAnnotation",
+                    "group": "2_navigation@2",
+                    "when": "outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.markAsViewed",
+                    "group": "2_navigation@3",
+                    "when": "outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.stopReview",
+                    "group": "3_session@1",
+                    "when": "outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.autoResolveStale",
+                    "group": "4_maintenance@1"
+                }
+            ],
+            "outOfCodeInsightsKanbanSubMenu": [
+                {
+                    "command": "annotations.showKanban",
+                    "group": "1_board@1"
+                },
+                {
+                    "command": "annotations.moveToColumn",
+                    "group": "2_columns@1"
+                },
+                {
+                    "command": "annotations.addKanbanColumn",
+                    "group": "2_columns@2"
                 }
             ],
             "aiAnalysisSubMenu": [
@@ -712,14 +1030,6 @@
                 {
                     "command": "annotations.batchCreateMixed",
                     "group": "3_batch@2"
-                },
-                {
-                    "command": "annotations.manageAIProfiles",
-                    "group": "4_profiles@1"
-                },
-                {
-                    "command": "annotations.selectProfile",
-                    "group": "4_profiles@2"
                 }
             ],
             "outOfCodeInsightsToolsSubMenu": [
@@ -732,15 +1042,19 @@
                     "group": "1_import@2"
                 },
                 {
-                    "command": "annotations.importJSON",
+                    "command": "annotations.convertCodeComments",
                     "group": "1_import@3"
                 },
                 {
-                    "command": "annotations.exportJSON",
+                    "command": "annotations.importJSON",
+                    "group": "1_import@4"
+                },
+                {
+                    "command": "annotations.writeAnnotationsToCodeComments",
                     "group": "2_export@1"
                 },
                 {
-                    "command": "annotations.generateDocs",
+                    "command": "annotations.exportJSON",
                     "group": "2_export@2"
                 },
                 {
@@ -760,137 +1074,330 @@
                     "group": "9_danger@1"
                 }
             ],
+            "outOfCodeInsightsDocumentationSubMenu": [
+                {
+                    "command": "annotations.addDocBlock",
+                    "group": "1_author@1"
+                },
+                {
+                    "command": "annotations.configureDocs",
+                    "group": "2_generate@1"
+                },
+                {
+                    "command": "annotations.generateDocs",
+                    "group": "2_generate@2"
+                }
+            ],
+            "outOfCodeInsightsTreeDocumentationSubMenu": [
+                {
+                    "command": "annotations.configureDocs",
+                    "group": "1_generate@1"
+                },
+                {
+                    "command": "annotations.generateDocs",
+                    "group": "1_generate@2"
+                }
+            ],
+            "outOfCodeInsightsTreeCodeSubMenu": [
+                {
+                    "command": "annotations.writeAnnotationsToCodeComments",
+                    "group": "1_export@1"
+                },
+                {
+                    "command": "annotations.convertCodeComments",
+                    "group": "2_import@1"
+                }
+            ],
+            "outOfCodeInsightsTreeMoveSubMenu": [
+                {
+                    "command": "annotations.pickUpForMove",
+                    "group": "1_move@1",
+                    "when": "!outOfCodeInsights.annotationMoveActive"
+                },
+                {
+                    "command": "annotations.moveByDragAndDrop",
+                    "group": "1_move@2"
+                },
+                {
+                    "command": "annotations.reanchorToCursor",
+                    "group": "2_reanchor@1"
+                },
+                {
+                    "command": "annotations.cancelPickedMove",
+                    "group": "3_cancel@1",
+                    "when": "outOfCodeInsights.annotationMoveActive"
+                }
+            ],
+            "outOfCodeInsightsTreeStateSubMenu": [
+                {
+                    "command": "annotations.treeEdit",
+                    "group": "1_edit@1"
+                },
+                {
+                    "command": "annotations.editTags",
+                    "group": "1_edit@2"
+                },
+                {
+                    "command": "annotations.treeTogglePin",
+                    "group": "2_state@1"
+                },
+                {
+                    "command": "annotations.treeSetSeverity",
+                    "group": "2_state@2"
+                },
+                {
+                    "command": "annotations.resolve",
+                    "group": "2_state@3"
+                },
+                {
+                    "command": "annotations.bulkActions",
+                    "group": "3_bulk@1"
+                }
+            ],
+            "outOfCodeInsightsTreeCollaborationSubMenu": [
+                {
+                    "command": "annotations.createLink",
+                    "group": "1_links@1"
+                },
+                {
+                    "command": "annotations.navigateToLinked",
+                    "when": "viewItem == annotation-linked",
+                    "group": "1_links@2"
+                },
+                {
+                    "command": "annotations.showLinks",
+                    "when": "viewItem == annotation-linked",
+                    "group": "1_links@3"
+                },
+                {
+                    "command": "annotations.removeLink",
+                    "when": "viewItem == annotation-linked",
+                    "group": "1_links@4"
+                },
+                {
+                    "command": "annotations.createDevelopmentIssue",
+                    "group": "2_issues@1"
+                }
+            ],
+            "outOfCodeInsightsTreeMoreSubMenu": [
+                {
+                    "command": "annotations.showKanban",
+                    "group": "1_view@1"
+                },
+                {
+                    "command": "annotations.toggleDisplay",
+                    "group": "1_view@2"
+                },
+                {
+                    "command": "annotations.filterBySeverity",
+                    "group": "1_view@3"
+                },
+                {
+                    "command": "annotations.showTrackingDiagnostics",
+                    "group": "1_view@4"
+                },
+                {
+                    "command": "annotations.aiSuggest",
+                    "group": "2_creation@1",
+                    "when": "config.annotation.enableAiSuggest"
+                },
+                {
+                    "command": "annotations.importCommentsWorkspace",
+                    "group": "3_data@1"
+                },
+                {
+                    "command": "annotations.importJSON",
+                    "group": "3_data@2"
+                },
+                {
+                    "command": "annotations.exportJSON",
+                    "group": "3_data@3"
+                },
+                {
+                    "command": "annotations.startReview",
+                    "group": "4_review@1",
+                    "when": "!outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.stopReview",
+                    "group": "4_review@2",
+                    "when": "outOfCodeInsights.reviewModeActive"
+                },
+                {
+                    "command": "annotations.autoResolveStale",
+                    "group": "4_review@3"
+                },
+                {
+                    "command": "annotations.manageTemplates",
+                    "group": "5_tools@1"
+                },
+                {
+                    "command": "annotations.manageSnippets",
+                    "group": "5_tools@2"
+                },
+                {
+                    "command": "annotations.configureDocs",
+                    "group": "6_documentation@1"
+                },
+                {
+                    "command": "annotations.generateDocs",
+                    "group": "6_documentation@2"
+                },
+                {
+                    "command": "annotations.syncNow",
+                    "group": "7_collaboration@1"
+                },
+                {
+                    "command": "annotations.syncConfigure",
+                    "group": "7_collaboration@2"
+                },
+                {
+                    "command": "annotations.createDevelopmentIssue",
+                    "group": "7_collaboration@3"
+                },
+                {
+                    "command": "annotations.openSettings",
+                    "group": "8_settings@1"
+                }
+            ],
+            "outOfCodeInsightsExplorerSubMenu": [
+                {
+                    "command": "annotations.show",
+                    "group": "1_view@1"
+                },
+                {
+                    "command": "annotations.keywordSearch",
+                    "group": "1_view@2"
+                },
+                {
+                    "command": "annotations.showKanban",
+                    "group": "1_view@3"
+                },
+                {
+                    "command": "annotations.importCommentsWorkspace",
+                    "group": "2_workspace@1"
+                },
+                {
+                    "command": "annotations.convertCodeComments",
+                    "group": "2_workspace@2",
+                    "when": "!explorerResourceIsFolder"
+                },
+                {
+                    "command": "annotations.writeAnnotationsToCodeComments",
+                    "group": "2_workspace@3",
+                    "when": "!explorerResourceIsFolder"
+                },
+                {
+                    "command": "annotations.configureDocs",
+                    "group": "3_documentation@1"
+                },
+                {
+                    "command": "annotations.generateDocs",
+                    "group": "3_documentation@2"
+                },
+                {
+                    "command": "annotations.openSettings",
+                    "group": "4_settings@1"
+                }
+            ],
+            "outOfCodeInsightsSettingsSubMenu": [
+                {
+                    "command": "annotations.openSettings",
+                    "group": "1_settings@1"
+                },
+                {
+                    "command": "annotations.selectProfile",
+                    "group": "2_profiles@1"
+                },
+                {
+                    "command": "annotations.manageProfiles",
+                    "group": "2_profiles@2"
+                },
+                {
+                    "command": "annotations.manageAIProfiles",
+                    "group": "2_profiles@3"
+                },
+                {
+                    "command": "annotations.updateApiKey",
+                    "group": "3_credentials@1"
+                },
+                {
+                    "command": "annotations.enterLicenseKey",
+                    "group": "3_credentials@2"
+                },
+                {
+                    "command": "annotations.showInitializationReport",
+                    "group": "4_diagnostics@1"
+                },
+                {
+                    "command": "annotations.retryInitialization",
+                    "group": "4_diagnostics@2"
+                }
+            ],
             "view/item/context": [
                 {
                     "command": "annotations.treeEdit",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "inline@1"
                 },
                 {
                     "command": "annotations.pickUpForMove",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked) && !outOfCodeInsights.annotationMoveActive",
                     "group": "inline@2"
                 },
                 {
-                    "command": "annotations.reanchorToCursor",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "submenu": "outOfCodeInsightsTreeMoveSubMenu",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "3_movement@1"
                 },
                 {
-                    "command": "annotations.moveByDragAndDrop",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
-                    "group": "3_movement@2"
-                },
-                {
-                    "command": "annotations.showLinks",
-                    "when": "view == annotationsView && viewItem == annotation-linked",
+                    "submenu": "outOfCodeInsightsTreeCollaborationSubMenu",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "4_collaboration@1"
                 },
                 {
-                    "command": "annotations.treeTogglePin",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "submenu": "outOfCodeInsightsTreeStateSubMenu",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "5_state@1"
                 },
                 {
-                    "command": "annotations.treeSetSeverity",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
-                    "group": "5_state@2"
+                    "submenu": "outOfCodeInsightsTreeCodeSubMenu",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked)",
+                    "group": "6_code@1"
                 },
                 {
-                    "command": "annotations.bulkActions",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
-                    "group": "5_state@3"
+                    "submenu": "outOfCodeInsightsTreeDocumentationSubMenu",
+                    "when": "view == annotationsView || view == annotationsExplorerView",
+                    "group": "7_documentation@1"
                 },
                 {
                     "command": "annotations.treeDelete",
-                    "when": "view == annotationsView && (viewItem == annotation || viewItem == annotation-linked)",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && (viewItem == annotation || viewItem == annotation-linked)",
                     "group": "9_danger@1"
                 }
             ],
             "view/title": [
                 {
                     "command": "annotations.bulkActions",
-                    "when": "view == annotationsView && outOfCodeInsights.treeSelectionCount > 0",
+                    "when": "(view == annotationsView || view == annotationsExplorerView) && outOfCodeInsights.treeSelectionCount > 0",
                     "group": "navigation@0"
                 },
                 {
                     "command": "annotations.keywordSearch",
-                    "when": "view == annotationsView",
+                    "when": "view == annotationsView || view == annotationsExplorerView",
                     "group": "navigation@1"
                 },
                 {
                     "command": "annotations.show",
-                    "when": "view == annotationsView",
+                    "when": "view == annotationsView || view == annotationsExplorerView",
                     "group": "navigation@2",
                     "title": "Show Annotations Panel",
                     "icon": "$(notebook-render-output)"
                 },
                 {
-                    "command": "annotations.showKanban",
-                    "when": "view == annotationsView",
-                    "group": "navigation@3",
-                    "icon": "$(project)"
-                },
-                {
-                    "command": "annotations.toggleDisplay",
-                    "when": "view == annotationsView",
-                    "group": "navigation@4",
-                    "icon": "$(eye)"
-                },
-                {
-                    "command": "annotations.showTrackingDiagnostics",
-                    "when": "view == annotationsView",
-                    "group": "1_view@1"
-                },
-                {
-                    "command": "annotations.aiSuggest",
-                    "when": "view == annotationsView && config.annotation.enableAiSuggest",
-                    "group": "2_creation@1"
-                },
-                {
-                    "command": "annotations.importCommentsWorkspace",
-                    "when": "view == annotationsView",
-                    "group": "3_data@1"
-                },
-                {
-                    "command": "annotations.importJSON",
-                    "when": "view == annotationsView",
-                    "group": "3_data@2"
-                },
-                {
-                    "command": "annotations.exportJSON",
-                    "when": "view == annotationsView",
-                    "group": "3_data@3"
-                },
-                {
-                    "command": "annotations.startReview",
-                    "when": "view == annotationsView",
-                    "group": "4_review@1"
-                },
-                {
-                    "command": "annotations.stopReview",
-                    "when": "view == annotationsView",
-                    "group": "4_review@2"
-                },
-                {
-                    "command": "annotations.manageTemplates",
-                    "when": "view == annotationsView",
-                    "group": "5_tools@1"
-                },
-                {
-                    "command": "annotations.generateDocs",
-                    "when": "view == annotationsView",
-                    "group": "5_tools@2"
-                },
-                {
-                    "command": "annotations.syncNow",
-                    "when": "view == annotationsView",
-                    "group": "6_collaboration@1"
-                },
-                {
-                    "command": "annotations.syncConfigure",
-                    "when": "view == annotationsView",
-                    "group": "6_collaboration@2"
+                    "submenu": "outOfCodeInsightsTreeMoreSubMenu",
+                    "when": "view == annotationsView || view == annotationsExplorerView",
+                    "group": "navigation@3"
                 }
             ]
         },
@@ -949,12 +1456,12 @@
             {
                 "command": "stack.back",
                 "key": "alt+left",
-                "when": "editorTextFocus"
+                "when": "editorTextFocus && outOfCodeInsights.navigationCanBack"
             },
             {
                 "command": "stack.forward",
                 "key": "alt+right",
-                "when": "editorTextFocus"
+                "when": "editorTextFocus && outOfCodeInsights.navigationCanForward"
             },
             {
                 "command": "annotations.navigateToLinked",
@@ -971,12 +1478,12 @@
             {
                 "command": "annotations.nextAnnotation",
                 "key": "f8",
-                "when": "editorTextFocus"
+                "when": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.previousAnnotation",
                 "key": "shift+f8",
-                "when": "editorTextFocus"
+                "when": "outOfCodeInsights.reviewModeActive"
             },
             {
                 "command": "annotations.showKanban",
@@ -1011,12 +1518,67 @@
                 "annotation.provider": {
                     "type": "string",
                     "default": "openai",
-                    "description": "LLM provider to use (openai, anthropic, azure, cerebras, deepseek, google, groq, meta, mistralai, ollama, openrouter, togetherai, xai, claude)."
+                    "enum": [
+                        "openai",
+                        "anthropic",
+                        "azure",
+                        "cerebras",
+                        "deepseek",
+                        "google",
+                        "groq",
+                        "meta",
+                        "mistralai",
+                        "ollama",
+                        "openrouter",
+                        "lmstudio",
+                        "xai"
+                    ],
+                    "enumDescriptions": [
+                        "OpenAI models using an OpenAI API key.",
+                        "Anthropic Claude models using an Anthropic API key.",
+                        "Azure OpenAI models using Azure credentials.",
+                        "Cerebras-hosted models using a Cerebras API key.",
+                        "DeepSeek models using a DeepSeek API key.",
+                        "Google Gemini models using a Google API key.",
+                        "Groq-hosted models using a Groq API key.",
+                        "Meta-hosted models using a Meta API key.",
+                        "Mistral AI models using a Mistral AI API key.",
+                        "Locally hosted Ollama models.",
+                        "Models routed through OpenRouter using an OpenRouter API key.",
+                        "Locally hosted LM Studio models; no API key is required.",
+                        "xAI models using an xAI API key."
+                    ],
+                    "description": "AI provider used for model discovery and AI-assisted annotation workflows."
                 },
                 "annotation.model": {
                     "type": "string",
                     "default": "gpt-4o-mini",
                     "description": "Model to use for the selected provider."
+                },
+                "annotation.azure.endpoint": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Azure OpenAI resource endpoint, for example https://your-resource.openai.azure.com. Configure it from the AI provider menu."
+                },
+                "annotation.azure.deployment": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Azure OpenAI deployment name used by AI annotation actions."
+                },
+                "annotation.azure.apiVersion": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Azure OpenAI API version supported by the selected deployment."
+                },
+                "annotation.lmStudio.baseUrl": {
+                    "type": "string",
+                    "default": "http://localhost:1234/v1",
+                    "description": "LM Studio OpenAI-compatible server URL."
+                },
+                "annotation.ollama.baseUrl": {
+                    "type": "string",
+                    "default": "http://localhost:11434",
+                    "description": "Ollama server URL."
                 },
                 "llm.apiKeys": {
                     "type": "object",
@@ -1038,45 +1600,55 @@
                             "default": "",
                             "description": "Azure OpenAI API key"
                         },
-                        "mistralai": {
+                        "cerebras": {
                             "type": "string",
                             "default": "",
-                            "description": "MistralAI API key"
+                            "description": "Cerebras API key"
+                        },
+                        "deepseek": {
+                            "type": "string",
+                            "default": "",
+                            "description": "DeepSeek API key"
+                        },
+                        "google": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Google Gemini API key"
                         },
                         "groq": {
                             "type": "string",
                             "default": "",
                             "description": "Groq API key"
                         },
+                        "meta": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Meta API key"
+                        },
+                        "mistralai": {
+                            "type": "string",
+                            "default": "",
+                            "description": "Mistral AI API key"
+                        },
                         "ollama": {
                             "type": "string",
                             "default": "",
-                            "description": "Ollama API key"
-                        },
-                        "google": {
-                            "type": "string",
-                            "default": "",
-                            "description": "Google API key"
+                            "description": "Optional Ollama API key"
                         },
                         "openrouter": {
                             "type": "string",
                             "default": "",
                             "description": "OpenRouter API key"
                         },
-                        "togetherai": {
+                        "lmstudio": {
                             "type": "string",
                             "default": "",
-                            "description": "TogetherAI API key"
+                            "description": "Optional LM Studio API key"
                         },
                         "xai": {
                             "type": "string",
                             "default": "",
                             "description": "xAI API key"
-                        },
-                        "claude": {
-                            "type": "string",
-                            "default": "",
-                            "description": "Claude (Anthropic) API key"
                         }
                     }
                 },
@@ -1147,7 +1719,7 @@
                 "annotation.github.repository": {
                     "type": "string",
                     "default": "",
-                    "description": "GitHub repository in the format 'owner/repo' to create issues from annotations."
+                    "description": "Default GitHub repository in owner/repository format. The guided issue command validates and saves this value for the workspace; authentication is handled by VS Code."
                 },
                 "annotation.enableAiSuggest": {
                     "type": "boolean",
@@ -1253,7 +1825,78 @@
                 "annotation.docs.outputPath": {
                     "type": "string",
                     "default": "docs/annotations",
-                    "description": "Workspace-relative folder where 'Generate Annotation Documentation' writes the DocFX-compatible Markdown site (toc.yml, index.md, by-type.md, by-file.md, links.md)."
+                    "description": "Non-empty workspace-relative folder where Documentation Studio writes its managed, reproducible output bundle."
+                },
+                "annotation.docs.template": {
+                    "type": "string",
+                    "enum": [
+                        "complete",
+                        "api-reference",
+                        "team-wiki",
+                        "knowledge-base",
+                        "custom"
+                    ],
+                    "enumDescriptions": [
+                        "Source pages, a publishable static project, hosted wiki package, accessible web output and API catalogue.",
+                        "Authored API reference with static-site, web and API-contract outputs.",
+                        "Team-oriented wiki package plus accessible web output.",
+                        "Portable Markdown knowledge base with GFM extensions plus accessible HTML.",
+                        "Load a validated JSON document template from annotation.docs.customTemplatePath."
+                    ],
+                    "default": "complete",
+                    "description": "Document structure preset used by the Documentation Studio. Configure Documentation Studio provides a guided picker."
+                },
+                "annotation.docs.customTemplatePath": {
+                    "type": "string",
+                    "default": ".out-of-code-insights/document-template.json",
+                    "description": "Workspace-relative JSON template used when annotation.docs.template is custom. Unknown fields and unsafe paths are rejected."
+                },
+                "annotation.docs.formats": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "default": [],
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "markdown",
+                            "static-site",
+                            "wiki",
+                            "hosted-wiki",
+                            "ordered-wiki",
+                            "html",
+                            "openapi"
+                        ]
+                    },
+                    "description": "Optional format override. Empty uses the selected document template; otherwise generate only these profiles."
+                },
+                "annotation.docs.documents": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "default": [],
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "readme",
+                            "changelog",
+                            "architecture",
+                            "adr",
+                            "onboarding",
+                            "runbook",
+                            "reference"
+                        ]
+                    },
+                    "description": "Optional technical-document override. Empty follows the selected template; otherwise generate only these document kinds."
+                },
+                "annotation.docs.language": {
+                    "type": "string",
+                    "default": "",
+                    "pattern": "^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|[0-9]{3}))?$|^$",
+                    "description": "Canonical language[-Script][-REGION] subset used by static-project and HTML outputs. Empty uses the selected template language."
+                },
+                "annotation.docs.openapiProfilePath": {
+                    "type": "string",
+                    "default": ".out-of-code-insights/openapi-profile.json",
+                    "description": "Optional workspace-relative JSON profile for the constrained OpenAPI projection and its explicit operation bindings. Missing or empty generates a safe annotation catalogue without inferring routes from prose."
                 },
                 "annotation.docs.siteTitle": {
                     "type": "string",
@@ -1290,10 +1933,10 @@
                     "default": true,
                     "description": "Stamp each generated page with the generation date. Disable for fully diffable output."
                 },
-                "annotation.docs.frontMatter": {
+                "annotation.docs.pageMetadata": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Prepend a YAML front-matter block (title) to every generated documentation page — used by DocFX and most static site generators. Leave disabled when the docs are read on GitHub (front matter renders as a visible table there)."
+                    "description": "Prepend a portable YAML page-metadata title to generated Markdown pages. Leave disabled when the destination displays metadata blocks as content."
                 },
                 "annotation.docs.untaggedLabel": {
                     "type": "string",
@@ -1417,7 +2060,17 @@
                     "icon": "media/eye.svg"
                 }
             ]
-        }
+        },
+        "viewsWelcome": [
+            {
+                "view": "annotationsView",
+                "contents": "No annotations yet.\n\n[Add an annotation at the cursor](command:annotations.add)\n[Import code comments from the workspace](command:annotations.importCommentsWorkspace)\n[Open the annotation panel](command:annotations.show)\n[Configure generated documentation](command:annotations.configureDocs)\n[Open Out-of-Code Insights settings](command:annotations.openSettings)\n\nTip: right-click in a code editor or on an annotation to see actions grouped by task."
+            },
+            {
+                "view": "annotationsExplorerView",
+                "contents": "No annotations yet.\n\n[Add an annotation at the cursor](command:annotations.add)\n[Import code comments from the workspace](command:annotations.importCommentsWorkspace)\n[Open the annotation panel](command:annotations.show)\n[Configure generated documentation](command:annotations.configureDocs)\n[Open Out-of-Code Insights settings](command:annotations.openSettings)\n\nTip: right-click in a code editor or on an annotation to see actions grouped by task."
+            }
+        ]
     },
     "scripts": {
         "compile": "webpack --mode development",

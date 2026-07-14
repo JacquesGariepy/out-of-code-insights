@@ -7,6 +7,162 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.4] - 2026-07-14
+
+See the [detailed 1.4.4 release notes](./docs/CHANGELOG-1.4.4.md) for the
+complete implementation and validation catalogue.
+
+### Added
+
+- Documentation Studio with engine-independent public preset IDs and guided
+  native configuration for source pages, static projects, portable/hosted/
+  ordered wikis, autonomous HTML and structured API contracts.
+- Built-in technical-document catalogue for generated README, changelog,
+  architecture, ADR, developer onboarding, runbook and reference content.
+- Workspace-owned JSON templates and explicit API profiles with published JSON
+  Schemas, safe parsing and example files.
+- Complete static-project packaging with deterministic navigation, resources,
+  language metadata, unique page identities and structured diagnostics.
+- Accessible, CSP-hardened static HTML and a constrained OpenAPI catalogue
+  projection that never infers routes from annotation prose or tags.
+- Hashed generation manifest and machine-readable `documentation-report.json`.
+- Safe HTML projections of selected README/changelog/architecture/ADR/
+  onboarding/runbook/reference documents, linked from the web catalogue.
+- Complete native-menu coverage for all 86 contributed user commands,
+  including dedicated **Documentation**, **Review Workflow**, **Kanban** and
+  **Settings & Accounts** groups, focused tree-row groups and a compact
+  Explorer hub.
+- Guided empty-state welcome links in both annotation trees for first capture,
+  workspace import, the panel, documentation setup and settings.
+- **Create GitHub Development Issue from Annotation** with repository/title
+  validation, modal confirmation, VS Code GitHub authentication, issue URL
+  trace metadata and an optional Open Issue action. No manual PAT is collected.
+- Guided changelog metadata and architecture-decision status prompts.
+- Guided conversion between standalone, adjacent or trailing source comments,
+  file headers, documentation blocks and annotations in both directions. The
+  language-aware scanner contains 42 syntax IDs (37 primary tested modes plus
+  five aliases/extras). Reverse writing uses a 16-mode audited allowlist plus a
+  position-level lexical safety check. Source-comment **Remove** is narrower:
+  it is available only for line syntax in 10 audited modes; blocks and
+  documentation blocks remain fully convertible with **Keep**.
+- Collision-resistant generated markers combine the readable eight-character
+  ID prefix with a 128-bit SHA-256 fingerprint while retaining read
+  compatibility with legacy short `OOCI(...)` markers.
+
+### Changed
+
+- Documentation profile IDs and UI labels do not expose the bundled static
+  adapter name; legacy setting identifiers are migrated internally.
+- Documentation watch requests are serialized and an empty annotation store
+  now regenerates an empty portal to clean stale pages.
+- The constrained API serializer defaults to OpenAPI 3.2.0 while retaining an
+  explicit 3.1.2 compatibility option.
+- Edit, Delete, Pin, Severity, file Batch Edit and one-line Move commands now
+  guide annotation/file selection when no editor is open; destructive and
+  file-wide changes require confirmation.
+- **Configure AI Provider & Credentials** now covers the exact 13-provider
+  catalogue, replaces the unsupported TogetherAI entry with LM Studio, guides
+  Azure endpoint/deployment/API-version and local endpoint setup, and
+  offers add/update/remove, keeps only the selected settings or secret source,
+  clears legacy/canonical alternatives and reports storage errors.
+- Ollama and LM Studio can initialize without an API key; hosted providers
+  still require their provider-specific credential.
+- Template creation/editing now includes severity and uses a temporary VS Code
+  document for multiline content before the user saves the template.
+- The extension activates without a workspace so menus, setup and diagnostics
+  remain discoverable. Opening a folder normally reloads the window and
+  attaches persistence plus move/drop services; adding the first folder to an
+  already-running empty window requires **Developer: Reload Window**.
+
+### Fixed
+
+- Ordinary comments placed after code, including adjacent delimiters without
+  whitespace, are now offered by **Convert Code Comments & Headers to
+  Annotations** instead of being silently omitted. Quoted delimiters, nested
+  templates/blocks, regex, raw strings, heredocs, YAML scalars and SQL dollar
+  strings are separated from real comments.
+- Comment-to-annotation and annotation-to-comment conversions no longer assume
+  that the original must be retained. **Keep** copies the item; **Remove**
+  performs a durable move and compensates either resource if the transaction
+  fails. For **Remove** moves, native Undo/Redo mirrors both code and annotation
+  state. Removing a standalone line comment anchors its annotation to the
+  nearest useful code line instead of an empty line; unsafe ranges, positions
+  and configured save participants are refused before mutation.
+- Block and documentation-comment deletion now fails closed, preventing token
+  fusion such as `return/* gap */value` becoming `returnvalue`. Destructive
+  annotation-to-comment conversion requires an exact strong ID/message proof
+  before applying the edit and again after saving the source; whitespace,
+  delimiter neutralization, marker collision or a save participant cannot
+  silently change an annotation being moved.
+- Source-comment deduplication is bijective. One import fingerprint or identity
+  match consumes only one source record, so two equal comments on the same line
+  remain independently convertible. Strong marker mismatches never downgrade
+  to the collision-prone legacy prefix.
+- A failed or rejected asynchronous source restore now conservatively keeps
+  and persists the destination representation. Conversion rollback no longer
+  reports success with both the comment and annotation absent; a cascading
+  persistence failure is surfaced.
+- Authored page slug collisions can no longer overwrite another source file,
+  and dynamic TOC labels are safely quoted.
+- Custom annotation-template variables, name slugs, literal `$` replacements,
+  duplicate names, corrupt imports and asynchronous persistence are handled
+  correctly, with rollback on failed writes.
+- Documentation output paths can no longer be empty, and queued generation is
+  no longer silently discarded.
+- Public create, navigate, incoming/outgoing inspection and remove link
+  commands now use the canonical annotation store. New links retain `targetId`
+  and target URI, survive target moves/re-anchors and resolve relative legacy
+  paths from the source workspace in multi-root windows.
+- Tree, history and linked navigation resolve the current line from canonical
+  offsets even for closed files. GitHub issue bodies use that canonical line
+  and re-fetch the annotation before persisting the issue trace.
+- Kanban live updates now resolve real document lines, own one disposable
+  listener, validate webview messages, escape script data and use a dedicated
+  hidden assignment for **Remove from Kanban**.
+- Annotation persistence now uses exclusive same-directory temporary files,
+  flushes them before atomic rename, preserves the last good envelope on
+  failure, cleans failed temporaries and refuses link/junction path escapes.
+- Annotation-store watcher suppression now compares the canonical SHA-256 of
+  the bytes just written, so a nearby external edit is never discarded merely
+  because it arrived inside a timing window.
+- Transient Windows `EPERM`, `EACCES` and `EBUSY` rename failures are retried
+  with bounded backoff and endpoint revalidation; the writer never falls back
+  to a truncation-prone, non-atomic replacement.
+- Native Comments edits and public annotation lifecycle commands await their
+  durable save barrier before reporting success, preventing UI state from
+  racing shutdown or a following command.
+- Native Comments thread deletion now accepts the `CommentReply` argument that
+  VS Code supplies to `comments/commentThread/context`, resolves its owning
+  thread without weakening the existing direct-thread or annotation-ID paths,
+  and is covered by a focused 3/3 argument-resolution regression.
+- Documentation bundle commits are serialized FIFO per output and use bounded
+  file-system concurrency, an atomically published journal, immediate-parent
+  revalidation and complete rollback cleanup without weakening confinement or
+  fingerprint checks.
+- Extension Host regressions use isolated user-data profiles with an explicit
+  warm-profile override, and deterministic copy/cut tests no longer depend on
+  native clipboard focus for mutation-only cases.
+- Store deserialization validates the complete incoming v2 envelope before it
+  can replace live state.
+- Editor drop rejects targets outside an open workspace and rolls the move back
+  when cancellation arrives after mutation.
+- Review `F8`/`Shift+F8` works while a panel has focus, and the duplicate
+  navigation-stack Tree View registration was removed.
+
+### Security
+
+- Documentation paths reject traversal, absolute/unsafe paths and
+  case-insensitive collisions; staged writes roll back on failure and only a
+  valid prior manifest can authorize stale-file deletion.
+- HTML treats annotation markup as untrusted text and uses local assets only;
+  API profile parsing rejects getters, cycles, unsafe keys and external refs.
+- GitHub issue creation uses VS Code authentication after explicit modal
+  confirmation instead of accepting or storing a custom PAT. Remote-creation
+  success and local trace-save failure are reported as separate outcomes.
+- Annotation storage validates every existing path component physically,
+  refuses symbolic-link/junction/reparse-point escapes and commits through an
+  exclusive `0600` temporary file instead of writing through a hostile target.
+
 ## [1.4.3] - 2026-07-13
 
 ### Added
@@ -197,8 +353,8 @@ See [the focused 1.2.1 release notes](./docs/CHANGELOG-1.2.1.md).
   extension, MCP, and sync), linked from the README.
 - Documentation generator: display-math blocks (`$$ … $$`) are now
   protected from heading demotion and wiki-link rewriting (same treatment
-  as code fences), and a new opt-in `annotation.docs.frontMatter` setting
-  prepends a DocFX-style YAML `title:` block to every generated page.
+  as code fences), and a new opt-in `annotation.docs.pageMetadata` setting
+  prepends a portable YAML `title:` metadata block to every generated page.
 - New `docs/documentation-authoring.md`: user guide for authoring
   documentation from annotations (roles, message format, wiki-links,
   display, end-to-end example), linked from the README.
@@ -324,8 +480,8 @@ See [the focused 1.2.1 release notes](./docs/CHANGELOG-1.2.1.md).
   fully diffable output) and `untaggedLabel`, alongside the existing
   `outputPath`.
 - New command **Generate Annotation Documentation** (book icon in the
-  Annotations view, also in the command palette): builds a DocFX-compatible
-  Markdown site from all annotations: `toc.yml`, overview with counts by
+  Annotations view, also in the command palette): builds a structured Markdown
+  site from all annotations: `toc.yml`, overview with counts by
   type/severity/file, a by-type page (tags act as the annotation type
   taxonomy), a by-file page with clickable `file:line` source links, code
   snippets, discussion threads, and a links page mapping annotation

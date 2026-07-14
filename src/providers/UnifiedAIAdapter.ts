@@ -10,6 +10,124 @@ import { AIProfileManager } from '../managers/AIProfileManager';
 import { AnnotationStore } from '../transactional/AnnotationStore';
 import { ANNOTATION_SCHEMA_VERSION, type AnnotationV2 } from '../transactional/types';
 import { captureAnchor, type TextDocumentLike } from '../anchoring/anchor';
+import {
+    AI_PROVIDER_CATALOG,
+    createAIProviderQuickPickItems,
+    readAIProviderConnectionSettings,
+} from './AIProviderCatalog';
+
+class UnsupportedAIProviderError extends Error {}
+
+export type AIProviderCredentialMutation =
+    | { kind: 'remove' }
+    | { kind: 'settings'; apiKey: string }
+    | { kind: 'secrets'; apiKey: string };
+
+export interface AIProviderCredentialStorage {
+    readSettings(): Record<string, string> | undefined | PromiseLike<Record<string, string> | undefined>;
+    writeSettings(value: Record<string, string> | undefined): void | PromiseLike<void>;
+    readSecret(key: string): string | undefined | PromiseLike<string | undefined>;
+    storeSecret(key: string, value: string): void | PromiseLike<void>;
+    deleteSecret(key: string): void | PromiseLike<void>;
+}
+
+export interface AIProviderCredentialRollbackFailure {
+    location: 'canonical secret' | 'legacy secret' | 'settings';
+    error: unknown;
+}
+
+/**
+ * Reports both the mutation failure and any storage locations that could not
+ * be restored. Secret values are intentionally never included in the error.
+ */
+export class AIProviderCredentialMutationError extends Error {
+    constructor(
+        public readonly mutationError: unknown,
+        public readonly rollbackFailures: readonly AIProviderCredentialRollbackFailure[]
+    ) {
+        super('The credential update failed.');
+        this.name = 'AIProviderCredentialMutationError';
+    }
+}
+
+function cloneCredentialSettings(settings: Record<string, string> | undefined): Record<string, string> | undefined {
+    return settings === undefined ? undefined : { ...settings };
+}
+
+async function writeCredentialSecret(
+    storage: AIProviderCredentialStorage,
+    key: string,
+    value: string | undefined
+): Promise<void> {
+    if (value === undefined) {
+        await storage.deleteSecret(key);
+    } else {
+        await storage.storeSecret(key, value);
+    }
+}
+
+/**
+ * Atomically-as-possible updates the three credential locations used across
+ * extension versions. The current values are read inside this function,
+ * immediately before the first write. Secrets are applied before settings so
+ * VS Code's configuration-change listener only observes the final state.
+ *
+ * VS Code does not expose a cross-storage transaction, therefore every write
+ * failure restores all three locations on a best-effort basis. Settings are
+ * restored last for the same listener-ordering guarantee.
+ */
+export async function applyAIProviderCredentialMutation(
+    provider: string,
+    mutation: AIProviderCredentialMutation,
+    storage: AIProviderCredentialStorage
+): Promise<void> {
+    const canonicalSecretKey = `${provider}-api-key`;
+    const legacySecretKey = `annotation.${provider}Key`;
+    const snapshot = {
+        settings: cloneCredentialSettings(await storage.readSettings()),
+        canonicalSecret: await storage.readSecret(canonicalSecretKey),
+        legacySecret: await storage.readSecret(legacySecretKey),
+    };
+    const nextSettings = cloneCredentialSettings(snapshot.settings) ?? {};
+    const nextCanonicalSecret = mutation.kind === 'secrets' ? mutation.apiKey : undefined;
+
+    if (mutation.kind === 'settings') {
+        nextSettings[provider] = mutation.apiKey;
+    } else {
+        delete nextSettings[provider];
+    }
+
+    // Preserve the absence of a global llm.apiKeys value when the mutation
+    // only removes a key from an already-absent object.
+    const settingsValue =
+        snapshot.settings === undefined && Object.keys(nextSettings).length === 0 ? undefined : nextSettings;
+
+    try {
+        await writeCredentialSecret(storage, canonicalSecretKey, nextCanonicalSecret);
+        await writeCredentialSecret(storage, legacySecretKey, undefined);
+        await storage.writeSettings(settingsValue);
+    } catch (mutationError) {
+        const rollbackFailures: AIProviderCredentialRollbackFailure[] = [];
+        const restore = async (
+            location: AIProviderCredentialRollbackFailure['location'],
+            operation: () => void | PromiseLike<void>
+        ): Promise<void> => {
+            try {
+                await operation();
+            } catch (error) {
+                rollbackFailures.push({ location, error });
+            }
+        };
+
+        await restore('canonical secret', () =>
+            writeCredentialSecret(storage, canonicalSecretKey, snapshot.canonicalSecret)
+        );
+        await restore('legacy secret', () => writeCredentialSecret(storage, legacySecretKey, snapshot.legacySecret));
+        await restore('settings', () => storage.writeSettings(cloneCredentialSettings(snapshot.settings)));
+
+        throw new AIProviderCredentialMutationError(mutationError, rollbackFailures);
+    }
+}
 
 export class UnifiedAIAdapter {
     private aiProvider: UnifiedAIProvider | null = null;
@@ -90,16 +208,35 @@ export class UnifiedAIAdapter {
         const config = vscode.workspace.getConfiguration('annotation');
         const provider = config.get<string>('provider', 'openai');
         const model = config.get<string>('model', 'gpt-4o-mini');
+        const connectionSettings = readAIProviderConnectionSettings(config);
         const llmConfig = vscode.workspace.getConfiguration('llm');
         const apiKeys = llmConfig.get<Record<string, string>>('apiKeys', {});
+        const providerDefinition = AI_PROVIDER_CATALOG.find(({ id }) => id === provider);
+
+        if (!providerDefinition) {
+            this.aiProvider = null;
+            const openSettingsLabel = loc('openSettings', 'Open Settings');
+            const message = loc(
+                'unsupportedAIProvider',
+                'The configured AI provider “{0}” is not supported. Select a provider in Out-of-Code Insights settings.',
+                provider
+            );
+            const action = await vscode.window.showErrorMessage(message, openSettingsLabel);
+            if (action === openSettingsLabel) {
+                await vscode.commands.executeCommand('workbench.action.openSettings', 'annotation.provider');
+            }
+            throw new UnsupportedAIProviderError(message);
+        }
 
         // Check if provider changed
         if (this.aiProvider && this.aiProvider.getCurrentProvider() === provider) {
             // Provider unchanged, but the model or API keys may have been rotated.
             // Push them so a refreshed key takes effect without a window reload.
-            this.aiProvider.updateConfig({ model, apiKeys });
-            await this.aiProvider.ensureInitialized();
-            return;
+            this.aiProvider.updateConfig({ model, apiKeys, connectionSettings });
+            if (await this.aiProvider.ensureInitialized()) {
+                return;
+            }
+            this.aiProvider = null;
         }
 
         // Create new provider if needed
@@ -107,31 +244,43 @@ export class UnifiedAIAdapter {
             provider,
             model,
             apiKeys,
+            connectionSettings,
             context: this.context,
         });
 
         const initialized = await this.aiProvider.initialize();
         if (!initialized) {
             // Show specific error for missing API key
-            const missingKey = !apiKeys[provider];
+            const secretKey = await this.context.secrets.get(`${provider}-api-key`);
+            const missingKey = providerDefinition.apiKeyRequired && !apiKeys[provider] && !secretKey;
             if (missingKey) {
+                const updateApiKeyLabel = loc('updateApiKey', 'Update API Key');
+                const openSettingsLabel = loc('openSettings', 'Open Settings');
                 const action = await vscode.window.showErrorMessage(
                     loc(
                         'noApiKeyConfigured',
                         `No API key configured for ${provider}. You need to add your API key to use AI features.`
                     ),
-                    loc('updateApiKey', 'Update API Key'),
-                    loc('openSettings', 'Open Settings')
+                    updateApiKeyLabel,
+                    openSettingsLabel
                 );
-                if (action === 'Update API Key') {
+                if (action === updateApiKeyLabel) {
                     await this.updateApiKey();
                     return; // Exit after updating key - user can retry the action
-                } else if (action === 'Open Settings') {
+                } else if (action === openSettingsLabel) {
                     vscode.commands.executeCommand('workbench.action.openSettings', `llm.apiKeys.${provider}`);
                 }
             }
             this.aiProvider = null;
-            throw new Error(`Failed to initialize AI provider: ${provider}. Please ensure your API key is configured.`);
+            const guidance = providerDefinition.apiKeyRequired
+                ? loc('verifyAIProviderKey', 'Verify that the provider API key is configured and valid.')
+                : loc(
+                      'verifyLocalAIProvider',
+                      'Verify that the local provider service is running and the selected model is available.'
+                  );
+            throw new Error(
+                loc('aiProviderInitializationFailed', 'Failed to initialize AI provider {0}. {1}', provider, guidance)
+            );
         }
 
         // Add custom profiles
@@ -191,11 +340,15 @@ export class UnifiedAIAdapter {
         // Batch create mixed command
         const batchCreateMixedCmd = vscode.commands.registerCommand('annotations.batchCreateMixed', async () => {
             const editor = vscode.window.activeTextEditor;
-            if (editor) {
-                const selection = editor.selection;
-                const selectedText = editor.document.getText(selection.isEmpty ? undefined : selection);
-                await this.batchCreateMixed(editor, selection, selectedText);
+            if (!editor) {
+                vscode.window.showInformationMessage(
+                    localize('openEditorForAI', 'Open a code file before running an AI analysis command.')
+                );
+                return;
             }
+            const selection = editor.selection;
+            const selectedText = editor.document.getText(selection.isEmpty ? undefined : selection);
+            await this.batchCreateMixed(editor, selection, selectedText);
         });
 
         this.context.subscriptions.push(
@@ -213,13 +366,18 @@ export class UnifiedAIAdapter {
     private async aiSuggestWithProfile(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
+            vscode.window.showInformationMessage(
+                localize('openEditorForAI', 'Open a code file before running an AI analysis command.')
+            );
             return;
         }
 
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            if (!(error instanceof UnsupportedAIProviderError)) {
+                vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            }
             return;
         }
 
@@ -291,6 +449,22 @@ export class UnifiedAIAdapter {
         const document = editor.document;
         const position = editor.selection.active;
         const lineNumber = position.line;
+        const analyzeLabel = localize('yes', 'Yes, Analyze');
+        const confirmation = await vscode.window.showWarningMessage(
+            localize(
+                'confirmProfileAISuggestion',
+                'Send line {0} of {1} to the configured AI provider ({2}) using profile {3}?',
+                lineNumber + 1,
+                vscode.workspace.asRelativePath(document.uri),
+                vscode.workspace.getConfiguration('annotation').get<string>('provider', 'openai'),
+                selected.profile.name
+            ),
+            { modal: true },
+            analyzeLabel
+        );
+        if (confirmation !== analyzeLabel) {
+            return;
+        }
 
         try {
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -312,13 +486,18 @@ export class UnifiedAIAdapter {
     private async analyzeFileWithProfile(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
+            vscode.window.showInformationMessage(
+                localize('openEditorForAI', 'Open a code file before running an AI analysis command.')
+            );
             return;
         }
 
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            if (!(error instanceof UnsupportedAIProviderError)) {
+                vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            }
             return;
         }
 
@@ -402,13 +581,18 @@ export class UnifiedAIAdapter {
     private async analyzeCurrentFile(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
+            vscode.window.showInformationMessage(
+                localize('openEditorForAI', 'Open a code file before running an AI analysis command.')
+            );
             return;
         }
 
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            if (!(error instanceof UnsupportedAIProviderError)) {
+                vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            }
             return;
         }
 
@@ -468,6 +652,9 @@ export class UnifiedAIAdapter {
     private async batchAnnotateFile(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
+            vscode.window.showInformationMessage(
+                localize('openEditorForAI', 'Open a code file before running an AI analysis command.')
+            );
             return;
         }
 
@@ -483,7 +670,9 @@ export class UnifiedAIAdapter {
         try {
             await this.initializeAIProvider();
         } catch (error) {
-            vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            if (!(error instanceof UnsupportedAIProviderError)) {
+                vscode.window.showErrorMessage(localize('aiInitError', 'Failed to initialize AI provider: ') + error);
+            }
             return;
         }
 
@@ -613,7 +802,7 @@ export class UnifiedAIAdapter {
 
             await templateManager.createTemplate({
                 name,
-                message,
+                content: message,
                 tags: ['template', 'batch-created'],
                 severity: 'info',
                 priority: 1,
@@ -776,9 +965,11 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                             vscode.window.showWarningMessage(loc('noSnippetsGenerated', 'No snippets generated'));
                         }
                     } catch (error) {
-                        vscode.window.showErrorMessage(
-                            loc('aiSnippetGenerationFailed', `AI snippet generation failed: {0}`, error)
-                        );
+                        if (!(error instanceof UnsupportedAIProviderError)) {
+                            vscode.window.showErrorMessage(
+                                loc('aiSnippetGenerationFailed', `AI snippet generation failed: {0}`, error)
+                            );
+                        }
                     }
                 }
                 break;
@@ -872,11 +1063,22 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         document: vscode.TextDocument,
         lineNumber: number
     ): Promise<void> {
+        const requestedLine = suggestion.line ?? lineNumber;
+        if (!Number.isInteger(requestedLine) || requestedLine < 0 || requestedLine >= document.lineCount) {
+            vscode.window.showWarningMessage(
+                loc(
+                    'invalidAISuggestionLine',
+                    'Skipped an AI suggestion because line {0} is outside this file.',
+                    requestedLine + 1
+                )
+            );
+            return;
+        }
         const annotation: Annotation = {
             id: this.generateId(),
             message: suggestion.message || 'Generated annotation',
             file: this.getRelativePath(suggestion.file || document.fileName),
-            line: suggestion.line ?? lineNumber,
+            line: requestedLine,
             author:
                 this.profileManager.getActiveProfile()?.name ||
                 vscode.workspace.getConfiguration('annotation').get<string>('username', 'Anonymous'),
@@ -887,17 +1089,22 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             kanbanColumn: suggestion.kanbanColumn || 'todo',
             resolved: false,
             ...(suggestion.priority !== undefined && { priority: suggestion.priority }),
+            ...(suggestion.snippet && { snippet: suggestion.snippet }),
         };
         // Set fileUri/anchor before persisting so the annotation is scoped strictly
         // to this document (no basename collisions across folders).
         await this.annotationManager.populateAnchor(annotation, document, annotation.line);
 
-        await this.addAnnotationDirectly(annotation);
+        await this.addAnnotationDirectly(annotation, document);
 
         vscode.window.showInformationMessage(localize('annotationAdded', 'Annotation added successfully'));
     }
 
-    private async addAnnotationDirectly(annotation: Annotation): Promise<void> {
+    private async addAnnotationDirectly(annotation: Annotation, document: vscode.TextDocument): Promise<void> {
+        if (this.store) {
+            this.store.upsert(this.legacyToV2Snapshot(annotation, document));
+            return;
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const manager = this.annotationManager as any;
         manager.annotations.set(annotation.id, annotation);
@@ -936,12 +1143,15 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
                     kanbanColumn: suggestion.kanbanColumn || 'todo',
                     resolved: false,
                     ...(suggestion.priority !== undefined && { priority: suggestion.priority }),
+                    ...(suggestion.snippet && { snippet: suggestion.snippet }),
                 };
 
-                if (targetDocument && line >= 0 && line < targetDocument.lineCount) {
-                    await this.annotationManager.populateAnchor(annotation, targetDocument, line);
+                if (!targetDocument || !Number.isInteger(line) || line < 0 || line >= targetDocument.lineCount) {
+                    console.warn(`Skipped AI annotation at invalid or unavailable line ${String(line)}`);
+                    continue;
                 }
-                await this.addAnnotationDirectly(annotation);
+                await this.annotationManager.populateAnchor(annotation, targetDocument, line);
+                await this.addAnnotationDirectly(annotation, targetDocument);
                 addedCount++;
             } catch (error) {
                 console.error('Failed to add annotation:', error);
@@ -1069,34 +1279,170 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
             vscode.window.showInformationMessage(loc('aiProviderUpdated', `AI Provider updated to: {0}`, newProvider));
         } catch (error) {
             console.error('Failed to refresh AI provider:', error);
+            if (error instanceof UnsupportedAIProviderError) {
+                return;
+            }
             vscode.window.showErrorMessage(
                 loc('failedToUpdateAIProvider', 'Failed to update AI provider. Check your settings and API keys.')
             );
         }
     }
 
+    private async mutateProviderCredentials(provider: string, mutation: AIProviderCredentialMutation): Promise<void> {
+        await applyAIProviderCredentialMutation(provider, mutation, {
+            // Re-fetch the configuration and inspect the exact global value
+            // at transaction time. A picker can remain open while another
+            // window changes the setting, so the value captured when the
+            // command started is not safe to mutate or use for rollback.
+            readSettings: () =>
+                cloneCredentialSettings(
+                    vscode.workspace.getConfiguration('llm').inspect<Record<string, string>>('apiKeys')?.globalValue
+                ),
+            writeSettings: (value) =>
+                vscode.workspace.getConfiguration('llm').update('apiKeys', value, vscode.ConfigurationTarget.Global),
+            readSecret: (key) => this.context.secrets.get(key),
+            storeSecret: (key, value) => this.context.secrets.store(key, value),
+            deleteSecret: (key) => this.context.secrets.delete(key),
+        });
+    }
+
+    private invalidateProviderIfActive(provider: string): void {
+        const activeProvider = vscode.workspace.getConfiguration('annotation').get<string>('provider', 'openai');
+        if (provider === activeProvider) {
+            // llm.apiKeys is written last by the transaction. The extension's
+            // configuration listener performs the single eager refresh; this
+            // invalidation also covers a no-op settings update (for example a
+            // key kept exclusively in SecretStorage) so the next AI action
+            // cannot reuse an engine carrying the previous key.
+            this.aiProvider = null;
+        }
+    }
+
+    private describeCredentialMutationError(error: unknown): string {
+        if (!(error instanceof AIProviderCredentialMutationError)) {
+            return error instanceof Error ? error.message : String(error);
+        }
+
+        const mutationMessage =
+            error.mutationError instanceof Error ? error.mutationError.message : String(error.mutationError);
+        if (error.rollbackFailures.length === 0) {
+            return `${mutationMessage} Previous credentials were restored.`;
+        }
+
+        const locations = error.rollbackFailures.map(({ location }) => location).join(', ');
+        console.error('Credential rollback was incomplete:', error.rollbackFailures);
+        return `${mutationMessage} Automatic rollback could not restore: ${locations}.`;
+    }
+
     private async updateApiKey(): Promise<void> {
         const config = vscode.workspace.getConfiguration('annotation');
         const provider = config.get<string>('provider', 'openai');
-        const llmConfig = vscode.workspace.getConfiguration('llm');
-        const apiKeys = llmConfig.get<Record<string, string>>('apiKeys', {});
 
-        // Show provider selection
-        const providers = [
-            { label: loc('providerOpenAI', 'OpenAI'), value: 'openai' },
-            { label: loc('providerAnthropic', 'Anthropic (Claude)'), value: 'anthropic' },
-            { label: loc('providerAzure', 'Azure OpenAI'), value: 'azure' },
-            { label: loc('providerMistral', 'MistralAI'), value: 'mistralai' },
-            { label: loc('providerGroq', 'Groq'), value: 'groq' },
-            { label: loc('providerOllama', 'Ollama'), value: 'ollama' },
-        ];
+        const providers = createAIProviderQuickPickItems(loc);
 
         const selectedProvider = await vscode.window.showQuickPick(providers, {
-            placeHolder: loc('selectProviderToUpdate', `Select provider to update API key (current: {0})`, provider),
-            title: loc('updateAIProviderAPIKey', 'Update AI Provider API Key'),
+            placeHolder: loc('selectProviderToManage', 'Select a provider (current: {0})', provider),
+            title: loc('manageAIProviderCredentials', 'Configure AI Provider & Credentials'),
         });
 
         if (!selectedProvider) {
+            return;
+        }
+
+        const providerDefinition = AI_PROVIDER_CATALOG.find(({ id }) => id === selectedProvider.value);
+        if (!providerDefinition) {
+            return;
+        }
+        const supportsConnectionSettings = ['azure', 'lmstudio', 'ollama'].includes(selectedProvider.value);
+        const credentialActions = [
+            {
+                label: loc('useAIProvider', 'Use this provider'),
+                description: loc('useAIProviderDescription', 'Make it the active provider for AI actions'),
+                value: 'use' as const,
+            },
+            ...(supportsConnectionSettings
+                ? [
+                      {
+                          label: loc('configureProviderConnection', 'Configure connection'),
+                          description: loc(
+                              'configureProviderConnectionDescription',
+                              'Set the endpoint and provider-specific connection values'
+                          ),
+                          value: 'connection' as const,
+                      },
+                  ]
+                : []),
+            {
+                label: loc('addOrUpdateApiKey', 'Add or update API key'),
+                description: providerDefinition.apiKeyRequired
+                    ? loc('replaceSavedCredential', 'Choose secure storage or user settings')
+                    : loc('optionalLocalCredential', 'Optional for this local provider'),
+                value: 'update' as const,
+            },
+            {
+                label: loc('removeApiKey', 'Remove saved API key'),
+                description: loc(
+                    'removeCredentialEverywhere',
+                    'Delete this provider key from settings and VS Code secret storage'
+                ),
+                value: 'remove' as const,
+            },
+        ];
+        const credentialAction = await vscode.window.showQuickPick(credentialActions, {
+            title: loc('manageAIProviderCredentials', 'Configure AI Provider & Credentials'),
+            placeHolder: loc('chooseCredentialAction', 'Choose what to configure for {0}', selectedProvider.label),
+        });
+
+        if (!credentialAction) {
+            return;
+        }
+
+        if (credentialAction.value === 'use') {
+            await config.update('provider', selectedProvider.value, vscode.ConfigurationTarget.Global);
+            this.aiProvider = null;
+            vscode.window.showInformationMessage(
+                loc('activeAIProviderChanged', '{0} is now the active AI provider.', selectedProvider.label)
+            );
+            return;
+        }
+
+        if (credentialAction.value === 'connection') {
+            await this.configureProviderConnection(selectedProvider.value, selectedProvider.label);
+            return;
+        }
+
+        if (credentialAction.value === 'remove') {
+            const removeLabel = loc('removeCredentials', 'Remove Credentials');
+            const confirmation = await vscode.window.showWarningMessage(
+                loc(
+                    'confirmRemoveApiKey',
+                    'Remove every saved API key for {0}? AI actions using this provider will stop until a new key is configured.',
+                    selectedProvider.label
+                ),
+                { modal: true },
+                removeLabel
+            );
+            if (confirmation !== removeLabel) {
+                return;
+            }
+
+            this.invalidateProviderIfActive(selectedProvider.value);
+            try {
+                await this.mutateProviderCredentials(selectedProvider.value, { kind: 'remove' });
+                vscode.window.showInformationMessage(
+                    loc('apiKeyRemoved', 'Saved API keys for {0} were removed.', selectedProvider.label)
+                );
+            } catch (error) {
+                const message = this.describeCredentialMutationError(error);
+                vscode.window.showErrorMessage(
+                    loc(
+                        'apiKeyRemovalFailed',
+                        'Could not remove credentials for {0}: {1}',
+                        selectedProvider.label,
+                        message
+                    )
+                );
+            }
             return;
         }
 
@@ -1116,7 +1462,10 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         }
 
         // Get the API key
-        const currentKey = apiKeys[selectedProvider.value] || '';
+        const currentKey =
+            vscode.workspace.getConfiguration('llm').get<Record<string, string>>('apiKeys', {})[
+                selectedProvider.value
+            ] || '';
         const apiKey = await vscode.window.showInputBox({
             prompt: loc('enterApiKeyFor', `Enter API key for {0}`, selectedProvider.label),
             placeHolder:
@@ -1131,44 +1480,134 @@ Provide 3 reusable code snippets with clear names and descriptions.`;
         if (apiKey === undefined) {
             return;
         }
+        if (providerDefinition.apiKeyRequired && apiKey.trim().length === 0) {
+            vscode.window.showErrorMessage(
+                loc('apiKeyCannotBeEmpty', 'API key cannot be empty for {0}.', selectedProvider.label)
+            );
+            return;
+        }
 
+        this.invalidateProviderIfActive(selectedProvider.value);
         try {
             if (storageMethod.value === 'secrets') {
-                // Store in VS Code secrets
-                await this.context.secrets.store(`${selectedProvider.value}-api-key`, apiKey);
-
-                // Remove from settings if it exists
-                const updatedKeys = { ...apiKeys };
-                delete updatedKeys[selectedProvider.value];
-                await llmConfig.update('apiKeys', updatedKeys, vscode.ConfigurationTarget.Global);
-
+                await this.mutateProviderCredentials(selectedProvider.value, { kind: 'secrets', apiKey });
                 vscode.window.showInformationMessage(
                     loc(
                         'apiKeyStoredSecurely',
-                        `API key for {0} stored securely. Refreshing provider...`,
+                        `API key for {0} stored securely. The active provider will reload automatically.`,
                         selectedProvider.label
                     )
                 );
             } else {
-                // Store in settings
-                const updatedKeys = { ...apiKeys, [selectedProvider.value]: apiKey };
-                await llmConfig.update('apiKeys', updatedKeys, vscode.ConfigurationTarget.Global);
-
+                await this.mutateProviderCredentials(selectedProvider.value, { kind: 'settings', apiKey });
                 vscode.window.showInformationMessage(
                     loc(
                         'apiKeyUpdatedInSettings',
-                        `API key for {0} updated in settings. Refreshing provider...`,
+                        `API key for {0} updated in settings. The active provider will reload automatically.`,
                         selectedProvider.label
                     )
                 );
             }
-
-            // If this is the current provider, refresh it
-            if (selectedProvider.value === provider) {
-                await this.refreshProvider();
-            }
         } catch (error) {
-            vscode.window.showErrorMessage(loc('failedToUpdateApiKey', `Failed to update API key: {0}`, error));
+            vscode.window.showErrorMessage(
+                loc(
+                    'failedToUpdateApiKey',
+                    `Failed to update API key: {0}`,
+                    this.describeCredentialMutationError(error)
+                )
+            );
+        }
+    }
+
+    private async configureProviderConnection(provider: string, providerLabel: string): Promise<void> {
+        const configuration = vscode.workspace.getConfiguration('annotation');
+        const validateUrl = (value: string): string | undefined => {
+            try {
+                const url = new URL(value.trim());
+                return url.protocol === 'http:' || url.protocol === 'https:'
+                    ? undefined
+                    : loc('httpEndpointRequired', 'Use an http:// or https:// endpoint.');
+            } catch {
+                return loc('validEndpointRequired', 'Enter a valid endpoint URL.');
+            }
+        };
+
+        const updates: Array<{ key: string; value: string }> = [];
+        if (provider === 'azure') {
+            const endpoint = await vscode.window.showInputBox({
+                title: loc('configureAzureConnection', 'Configure Azure OpenAI Connection'),
+                prompt: loc('azureEndpointPrompt', 'Azure OpenAI endpoint from the deployment resource.'),
+                placeHolder: 'https://your-resource.openai.azure.com',
+                value: configuration.get<string>('azure.endpoint', ''),
+                ignoreFocusOut: true,
+                validateInput: (value) => validateUrl(value),
+            });
+            if (endpoint === undefined) return;
+            const deployment = await vscode.window.showInputBox({
+                title: loc('configureAzureConnection', 'Configure Azure OpenAI Connection'),
+                prompt: loc('azureDeploymentPrompt', 'Deployment name configured in Azure OpenAI.'),
+                value: configuration.get<string>('azure.deployment', ''),
+                ignoreFocusOut: true,
+                validateInput: (value) =>
+                    value.trim().length > 0 ? undefined : loc('valueRequired', 'This value is required.'),
+            });
+            if (deployment === undefined) return;
+            const apiVersion = await vscode.window.showInputBox({
+                title: loc('configureAzureConnection', 'Configure Azure OpenAI Connection'),
+                prompt: loc('azureApiVersionPrompt', 'API version supported by your Azure OpenAI deployment.'),
+                placeHolder: 'YYYY-MM-DD',
+                value: configuration.get<string>('azure.apiVersion', ''),
+                ignoreFocusOut: true,
+                validateInput: (value) =>
+                    value.trim().length > 0 ? undefined : loc('valueRequired', 'This value is required.'),
+            });
+            if (apiVersion === undefined) return;
+            updates.push(
+                { key: 'azure.endpoint', value: endpoint.trim().replace(/\/$/, '') },
+                { key: 'azure.deployment', value: deployment.trim() },
+                { key: 'azure.apiVersion', value: apiVersion.trim() }
+            );
+        } else if (provider === 'lmstudio' || provider === 'ollama') {
+            const settingKey = provider === 'lmstudio' ? 'lmStudio.baseUrl' : 'ollama.baseUrl';
+            const defaultUrl = provider === 'lmstudio' ? 'http://localhost:1234/v1' : 'http://localhost:11434';
+            const endpoint = await vscode.window.showInputBox({
+                title: loc('configureLocalAIConnection', 'Configure {0} Connection', providerLabel),
+                prompt: loc('localAIEndpointPrompt', 'Endpoint of the local model server.'),
+                value: configuration.get<string>(settingKey, defaultUrl),
+                ignoreFocusOut: true,
+                validateInput: (value) => validateUrl(value),
+            });
+            if (endpoint === undefined) return;
+            updates.push({ key: settingKey, value: endpoint.trim().replace(/\/$/, '') });
+        } else {
+            vscode.window.showInformationMessage(
+                loc('providerUsesDefaultConnection', '{0} uses its managed default endpoint.', providerLabel)
+            );
+            return;
+        }
+
+        const previous = updates.map(({ key }) => ({ key, value: configuration.get<string | undefined>(key) }));
+        try {
+            for (const update of updates) {
+                await configuration.update(update.key, update.value, vscode.ConfigurationTarget.Global);
+            }
+            this.aiProvider = null;
+            vscode.window.showInformationMessage(
+                loc('providerConnectionSaved', 'Connection settings saved for {0}.', providerLabel)
+            );
+        } catch (error) {
+            await Promise.allSettled(
+                previous.map(({ key, value }) => configuration.update(key, value, vscode.ConfigurationTarget.Global))
+            );
+            const message = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(
+                loc(
+                    'providerConnectionSaveFailed',
+                    'Could not save the connection for {0}: {1}',
+                    providerLabel,
+                    message
+                )
+            );
         }
     }
 

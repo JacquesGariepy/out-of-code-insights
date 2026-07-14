@@ -1,6 +1,6 @@
 # Authoring documentation from annotations
 
-Out-of-Code Insights can assemble a DocFX-compatible Markdown site from your annotations — without ever
+Out-of-Code Insights can assemble a multi-format documentation portal from your annotations — without ever
 modifying the source files. This guide explains what to write, where it ends up, and how it is displayed.
 
 ## The model in one paragraph
@@ -13,8 +13,10 @@ There is no special annotation type. A **regular annotation becomes documentatio
 
 Three equivalent paths:
 
-1. **Command `Add Documentation Annotation`** (palette) — pick the role (Module, Class, Function,
-   Example, Guide); the annotation is created on the current line with the right tag already applied.
+1. **Editor right-click menu**: choose **Out-of-Code Insights → Documentation →
+   Add Documentation Annotation**, then pick an authored API/guide role or a
+   technical-document role. The annotation is created on the current line with
+   the right tag already applied. The Command Palette is an alternative.
 2. **Any annotation + tag**: create a normal annotation, then `Edit Tags` and add `doc:class`,
    `doc:function`, `doc:method`, `doc:module`, `doc:example` or `doc:guide` (prefix configurable via
    `annotation.docs.tagPrefix`).
@@ -32,6 +34,13 @@ Use **`Edit Annotation Message (Markdown)`** to write multi-line Markdown comfor
 | `doc:function` / `doc:method` | `###` entry                                          | Nested under the nearest preceding `doc:class`, top-level otherwise |
 | `doc:example`                 | `Example —` block with the annotation's code snippet | Attaches to the nearest preceding class/function (or the module)    |
 | `doc:guide`                   | Section of the standalone guide page                 | Independent of any file structure                                   |
+| `doc:readme`                  | Curated section in generated `README.md`             | Explicit content only; project claims are never inferred            |
+| `doc:changelog`               | Entry in generated `CHANGELOG.md`                    | Requires explicit version/release and category tags                 |
+| `doc:architecture`            | Section in `technical/architecture.md`               | Explicit architectural context                                      |
+| `doc:adr`                     | One decision page plus the ADR index                 | Optional explicit proposed/accepted/rejected/superseded status      |
+| `doc:onboarding`              | Section in `technical/onboarding.md`                 | Developer setup and first-task guidance                             |
+| `doc:runbook`                 | Section in `technical/runbook.md`                    | Operational procedure or recovery guidance                          |
+| `doc:reference`               | Grouped entry in `technical/reference.md`            | Explicit technical-reference content                                |
 
 Placement follows **code proximity**: annotate the `class` line with `doc:class`, each method line with
 `doc:function`, and the generator mirrors your code structure. Because annotations re-anchor when code
@@ -64,17 +73,21 @@ See [[UserService]] and [[Creating users]]. ← wiki-links to other entries
 
 ## Generating and displaying
 
+- **Configure**: right-click in the editor or an Annotations tree item, then
+  choose **Documentation → Configure Documentation Studio**. Pick a built-in or
+  workspace JSON preset that selects document kinds, bounded structure options,
+  and source-page, static-project, Wiki, HTML, or API-catalogue output profiles.
 - **Generate**: 📖 icon in the Annotations view or `Generate Annotation Documentation`; enable
   `annotation.docs.watch` to regenerate automatically on every annotation change. Output (default
-  `docs/annotations/`): `toc.yml`, `index.md`, `api/<file>.md`, `guide.md`, plus the inventory pages.
-  All names/sections are configurable through the `annotation.docs.*` settings (`siteTitle`, `tagPrefix`,
-  `apiFolder`, `guideFile`, `includeInventory`, `includeAuthored`, `includeTimestamp`, `untaggedLabel`,
-  `frontMatter` for DocFX YAML metadata).
+  `docs/annotations/`) is staged, managed by `.ooci-docs-manifest.json`, and accompanied by
+  `documentation-report.json` diagnostics. All names/sections are configurable through `annotation.docs.*`.
 - **In the editor**, a documentation annotation looks like any annotation — gutter icon, line highlight,
   and an inline summary showing the **first line of the message** (heading marker stripped, capped). The
   full Markdown lives in the annotations panel, the Markdown editor, and the generated site.
-- **Publishing**: the output is plain Markdown — readable on GitHub as-is, and a DocFX project can point
-  at the folder directly (`toc.yml` is generated; enable `annotation.docs.frontMatter` for page metadata).
+- **Publishing**: the complete preset includes a publishable static project,
+  hosted Wiki package, autonomous HTML site and constrained OpenAPI catalogue
+  projection. See [Documentation Studio](./documentation-studio.md) for build,
+  hosting, custom-template and CI instructions.
 
 ## End-to-end example
 

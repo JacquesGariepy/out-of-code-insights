@@ -18,8 +18,9 @@ extension reloads external changes live (`annotation.watchExternalChanges`).
 
 1. Annotate while coding (extension): cursor on a line → **Add Annotation**, or the Comments gutter `+`.
 2. Tag for purpose: `bug`, `decision`, `todo`, or a `doc:*` role for documentation.
-3. Generate documentation: **Generate Annotation Documentation** → a DocFX-compatible Markdown site under
-   `docs/annotations/` (configurable).
+3. Configure and generate documentation from the editor or tree right-click
+   **Documentation** menu. Version 1.4.4 writes a managed, reproducible
+   multi-format bundle under `docs/annotations/` (configurable).
 4. Onboard agents: **Set Up AI Agent Instructions** writes a marked block into `CLAUDE.md` and `AGENTS.md`
    telling agents to annotate through the MCP tools (not source comments) and to tag docs with `doc:*`.
 

@@ -1,6 +1,10 @@
 import { localize } from './localize';
 
 export interface LinkedAnnotation {
+    /** Stable target used by current versions; file/line remain migration fallbacks. */
+    targetId?: string;
+    /** Authoritative URI fallback for multi-root workspaces. */
+    targetUri?: string;
     targetFile: string;
     targetLine: number;
     relationship: 'implements' | 'references' | 'related' | string;

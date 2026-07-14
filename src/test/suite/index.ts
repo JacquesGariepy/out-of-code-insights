@@ -15,7 +15,9 @@ export async function run(): Promise<void> {
     });
 
     const testsRoot = path.resolve(__dirname, '..');
-    const files = await glob('**/*.test.js', { cwd: testsRoot });
+    const files = (await glob('**/*.test.js', { cwd: testsRoot })).sort((left, right) =>
+        left.localeCompare(right, 'en')
+    );
 
     files.forEach((f) => mocha.addFile(path.resolve(testsRoot, f)));
 

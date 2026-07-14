@@ -1,137 +1,110 @@
-# LLM providers
+# AI providers
 
-Out-of-Code Insights supports thirteen LLM providers. This page
-lists them, recommends models, and shows the configuration
-needed for each.
+Out-of-Code Insights exposes one catalogue of 13 provider IDs through Settings
+and **Configure AI Provider & Credentials**. The command guides provider
+selection, connection details and credential storage; users do not need to
+edit JSON manually.
 
-For end-to-end AI usage instructions, see
-[ai-features.md](./ai-features.md).
+For the AI analysis workflows that consume this configuration, see
+[AI features](./ai-features.md).
 
----
+## Supported provider catalogue
 
-## Supported providers
+| Provider           | `annotation.provider` | Credential                                    |
+| ------------------ | --------------------- | --------------------------------------------- |
+| OpenAI             | `openai`              | Required                                      |
+| Anthropic (Claude) | `anthropic`           | Required                                      |
+| Azure OpenAI       | `azure`               | Required, plus the three Azure fields below   |
+| Cerebras           | `cerebras`            | Required                                      |
+| DeepSeek           | `deepseek`            | Required                                      |
+| Google Gemini      | `google`              | Required                                      |
+| Groq               | `groq`                | Required                                      |
+| Meta               | `meta`                | Required                                      |
+| Mistral AI         | `mistralai`           | Required                                      |
+| Ollama (local)     | `ollama`              | No key required; an optional value is allowed |
+| OpenRouter         | `openrouter`          | Required                                      |
+| LM Studio (local)  | `lmstudio`            | No key required; an optional value is allowed |
+| xAI                | `xai`                 | Required                                      |
 
-| Provider | Setting key | Notes |
-|---|---|---|
-| OpenAI | `openai` | GPT-4o, GPT-4o-mini, o1 |
-| Anthropic | `anthropic` | Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus |
-| Anthropic Claude Code SDK | `claude` | Same models, uses the official SDK with REST fallback |
-| Azure OpenAI | `azure` | Bring your own deployment |
-| Google | `google` | Gemini 1.5 Pro, Gemini 1.5 Flash |
-| Mistral AI | `mistralai` | Mistral Large, Mistral Small, Codestral |
-| Groq | `groq` | Llama 3.x, Mixtral - very fast inference |
-| Cerebras | `cerebras` | Llama 3.x - extremely fast inference |
-| DeepSeek | `deepseek` | DeepSeek-V3, DeepSeek-Coder |
-| Meta | `meta` | Llama API |
-| Ollama | `ollama` | Local models - no API key required |
-| OpenRouter | `openrouter` | Aggregator across many providers |
-| TogetherAI | `togetherai` | Open-weight model hosting |
-| xAI | `xai` | Grok models |
+The extension rejects unknown provider IDs instead of silently starting a
+different engine. Anthropic models use the `anthropic` provider ID; `claude`
+is not a selectable provider ID in the active catalogue.
 
----
+## Guided setup
 
-## Selecting a provider
+1. Right-click in a code editor and choose **Out-of-Code Insights → Settings
+   & Accounts → Configure AI Provider & Credentials**. The same command is
+   available from the tree `...` menu and the Command Palette.
+2. Choose one of the 13 providers.
+3. For Azure OpenAI, enter the endpoint, deployment and API version. For
+   Ollama or LM Studio, confirm the local server URL.
+4. For providers that require a key, choose **Add/Update**, then select VS Code
+   Secret Storage (recommended) or visible user settings.
+5. Select a model with `annotation.model`, then run an AI action.
 
-Set two settings - provider and model:
+The command can also remove a provider credential. Removal requires
+confirmation and clears the provider from visible settings plus every
+recognized secret-storage name. Add/Update keeps only the selected storage
+source so an obsolete key cannot unexpectedly win.
 
-```jsonc
-{
-    "annotation.provider": "anthropic",
-    "annotation.model": "claude-3-5-sonnet-20241022"
-}
-```
-
-Switching providers does **not** invalidate your user profiles or
-custom AI profiles; the new provider is used for the next
-AI-generated annotation.
-
----
-
-## Configuring API keys
-
-Two storage options - pick one:
-
-### Option A: VS Code SecretStorage (recommended)
-
-Run the command `Out-of-Code Insights: Update AI Provider API
-Key` and follow the prompt. Keys live in the OS keychain, never
-in `settings.json`.
-
-### Option B: settings.json
-
-```jsonc
-{
-    "llm.apiKeys": {
-        "openai": "sk-...",
-        "anthropic": "sk-ant-...",
-        "google": "AIza...",
-        "groq": "gsk_..."
-    }
-}
-```
-
-Settings.json keys are convenient but readable by anything that
-can read your settings - avoid on shared machines and never
-commit a settings file with keys to version control.
-
----
-
-## Provider-specific notes
-
-### Anthropic / Claude
-
-The Claude provider has two flavours:
-
-- `"annotation.provider": "anthropic"` - uses the OpenAI-compatible
-  REST endpoint via the unified adapter
-- `"annotation.provider": "claude"` - uses the official
-  `@anthropic-ai/claude-code` SDK with automatic fallback to REST
-  if the SDK fails to load (handled by `ClaudeIntegration`)
-
-Toggle the SDK path with:
-
-```jsonc
-{
-    "annotation.claudeUseSDK": true   // true by default
-}
-```
-
-Set it to `false` to force REST and bypass the SDK entirely
-(useful for environments where the SDK has loading issues).
+## Connection settings
 
 ### Azure OpenAI
 
-Azure deployments require a deployment name as the model and a
-custom endpoint, configured via standard Azure env vars or the
-provider's setting bag. The unified adapter abstracts the
-difference.
+Azure requires all three connection values in addition to its credential:
+
+```jsonc
+{
+    "annotation.provider": "azure",
+    "annotation.azure.endpoint": "https://your-resource.openai.azure.com",
+    "annotation.azure.deployment": "your-deployment",
+    "annotation.azure.apiVersion": "your-supported-api-version",
+}
+```
+
+The guided command validates that endpoint, deployment and API version are
+present before the provider session is created.
 
 ### Ollama
 
-Ollama runs locally - no API key. Set the provider and model:
+Ollama defaults to its local server and does not require a key:
 
 ```jsonc
 {
     "annotation.provider": "ollama",
-    "annotation.model": "llama3.1:8b"
+    "annotation.ollama.baseUrl": "http://localhost:11434",
+    "annotation.model": "your-local-model",
 }
 ```
 
-Ensure the Ollama daemon is running (`ollama serve`) and the
-chosen model is pulled (`ollama pull llama3.1:8b`).
+### LM Studio
 
----
+LM Studio uses its OpenAI-compatible local endpoint and does not require a
+key:
 
-## Recommended starting points
+```jsonc
+{
+    "annotation.provider": "lmstudio",
+    "annotation.lmStudio.baseUrl": "http://localhost:1234/v1",
+    "annotation.model": "your-loaded-model",
+}
+```
 
-| Use case | Provider | Model |
-|---|---|---|
-| Best balance of quality & cost | Anthropic | `claude-3-5-sonnet-20241022` |
-| Cheapest paid | OpenAI | `gpt-4o-mini` |
-| Free / fastest | Groq | `llama-3.3-70b-versatile` |
-| Privacy / offline | Ollama | `llama3.1:8b` |
-| Highest reasoning ceiling | OpenAI | `o1` (slow, expensive) |
+## Visible settings storage
 
-The extension does not endorse any specific provider; choose
-based on your privacy requirements, cost ceiling, and the
-languages you work with.
+Secret Storage is recommended because it is backed by VS Code's credential
+store. If a user deliberately chooses visible user settings, the equivalent
+shape is:
+
+```jsonc
+{
+    "llm.apiKeys": {
+        "openai": "...",
+        "anthropic": "...",
+        "azure": "...",
+    },
+}
+```
+
+Do not commit credentials to a repository or share a settings file containing
+them. Local-provider entries are optional and may be omitted.
