@@ -1,9 +1,6 @@
-# 1.4.4 source candidate — Documentation Studio and guided workflows
+# 1.4.4 — Documentation Studio and guided workflows
 
-> Prepared on 2026-07-13; candidate verification remains in progress. This
-> version must not be published or tagged until the user gives explicit release
-> confirmation.
-> The Marketplace and Open VSX release remains 1.4.3.
+Release date: 2026-07-14.
 
 ## Outcome
 
@@ -14,7 +11,7 @@ autonomous web site, and a constrained API-catalogue projection. Public preset
 IDs do not require users to name a build engine, while current outputs are
 implemented by bundled adapters.
 
-The same candidate also completes a menu-first interaction pass: 86 public
+This release also completes a menu-first interaction pass: 86 public
 commands have visible homes, both trees guide first-time users, historical
 cursor-only mutations offer pickers, canonical links are tested end to end,
 credentials have one guided manager and annotations can create authenticated
@@ -60,15 +57,24 @@ pickers and persists only explicit overrides.
 - SHA-256 managed-file manifest; stale cleanup trusts only a valid prior
   manifest and preserves unrelated output files.
 - Structured report for renderer warnings/errors, consumable by CI.
-- Guided comment/header/docblock ↔ annotation conversion backed by a
-  language-aware catalogue of 42 syntax IDs: 37 primary modes covered by the
-  catalogue test and five compatibility aliases/extras. Both directions
-  preview selectable records and require confirmation; source writes use one
-  undoable `WorkspaceEdit` and sanitized `OOCI(...)` identity markers prevent
-  rerun duplicates.
-- Comment import remains available for `typescriptreact`, `javascriptreact`,
-  `vue` and `php`; reverse writing is deliberately disabled in those four
-  mixed-context modes until syntax-aware region placement is implemented.
+- Guided standalone/adjacent/trailing comment, header and docblock ↔ annotation
+  conversion backed by a language-aware catalogue of 42 syntax IDs: 37 primary
+  modes covered by the catalogue test and five compatibility aliases/extras.
+  Every scanned record can be copied with **Keep**. Source-comment **Remove**
+  is intentionally limited to line syntax in 10 audited modes: TypeScript,
+  JavaScript, Java, C, C++, C#, Go, Rust, Kotlin and Dart. Blocks and docblocks
+  remain Keep-only because removing one without neighbouring lexical context
+  could fuse language tokens.
+- Reverse writing is enabled at lexer-proven positions for 16 audited modes:
+  TypeScript, JavaScript, C, C++, Java, C#, Go, Rust, Kotlin, Dart, Python,
+  TOML, Lua, CSS, SCSS and Clojure. Other modes fail closed. Configured save
+  participants disable destructive **Remove** before mutation while **Keep**
+  remains available.
+- Generated comments use a readable eight-character ID prefix plus a 128-bit
+  SHA-256 fingerprint in `OOCI(...)`. Legacy short markers remain readable.
+  Destructive moves require an exact strong ID and message match both before
+  the source edit and after the saved file is rescanned. Native Undo/Redo then
+  mirrors both resources for completed **Remove** moves.
 
 ## Guided developer and team workflows
 
@@ -144,22 +150,42 @@ tests use isolated profiles (or an explicit warm-profile override), and
 mutation regressions use deterministic clipboard helpers where native focus is
 not the behavior under test.
 
+Source-comment conversion now fails closed around the cases that could lose or
+merge developer code. Inline blocks such as `return/* gap */value` are
+Keep-only; removing the comment can no longer produce `returnvalue`. A
+destructive annotation-to-comment move is refused when significant edge
+whitespace, comment-terminator neutralization, a legacy/wrong marker or a save
+participant prevents the scanner from recovering the exact ID and message.
+
+Deduplication is one-to-one across exact import provenance, strong generated
+identity and the legacy line/message fallback. One existing annotation can no
+longer hide two equal source comments on the same line, and a failed strong
+fingerprint match never falls back to the shared eight-character prefix. If a
+rollback cannot restore the source because its asynchronous edit is rejected,
+throws or finds divergent text, the destination representation is reinstalled
+and durably persisted. The transaction never reports success with both
+representations absent; any cascading persistence failure is surfaced.
+
 Obsolete credential/search/focus/activity/edit/severity/link command aliases
 were removed. The remaining ten runtime-only commands are an exact tested
 allow-list: eight Kanban webview protocols and two target-bearing panel/CodeLens
 bridges.
 
-## Validation expected before release confirmation
+## Release validation
 
-- TypeScript typecheck and production bundle
-- ESLint and formatting checks
-- complete Node unit/integration suite
-- focused Extension Host documentation/template flows
-- mocked GitHub authentication/API transaction and AI credential lifecycle
-  coverage remain follow-up QA; existing GitHub tests make no network request
-- package/audit and VSIX smoke installation
-- JSONP task-ledger parse and JSON Schema parse
-- generated-bundle inspection, including stale cleanup and hostile inputs
+- TypeScript typecheck, zero-warning ESLint, formatting and production Webpack
+  bundle: passed.
+- Complete Node unit/integration suite: 723 passing.
+- Complete VS Code Extension Host suite: 674 passing and four intentional
+  pending real-editor scenarios.
+- Root extension, MCP server and license server production audits: zero known
+  vulnerabilities; both standalone services build and the license server passes
+  51/51 tests.
+- Exact `out-of-code-insights-1.4.4.vsix`: 95 entries, no source, test,
+  workspace ledger, dependency tree or source-map leakage; isolated VS Code
+  installation reports `jacquesgariepy.out-of-code-insights@1.4.4`.
+- JSONP task-ledger parse, generated-bundle inspection, stale cleanup, hostile
+  input, mocked GitHub transaction and AI credential lifecycle: passed without
+  a real network mutation.
 
-The release/tag/marketplace steps are intentionally excluded until explicit
-confirmation is received.
+Registry links are verified after the release workflow completes.

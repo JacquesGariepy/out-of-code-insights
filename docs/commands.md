@@ -333,20 +333,34 @@ Menu home: editor → **Import/Export & Tools**, or right-click a code file in
 Explorer → **Out-of-Code Insights**. The legacy import commands remain the
 fast marker-based TODO/FIXME workflow. The two guided conversion commands
 use a language-aware catalogue of 42 syntax IDs (37 primary tested modes plus
-five aliases/extras) for standalone comments, file headers and documentation
-blocks.
+five aliases/extras) for standalone, adjacent and trailing comments (with or
+without delimiter whitespace), file headers and documentation blocks.
 
 **Convert Code Comments & Headers to Annotations...** previews every detected
-record with its line range and kind, supports multi-selection and asks for
-confirmation without modifying source. **Write Annotations into Code
-Comments...** previews a sanitized `OOCI(...)` identity marker, lets the user
-choose the standard or documentation-comment style, confirms the source
-change, and applies one `WorkspaceEdit` so a single Undo restores the file.
-Identity markers and normalized-content checks prevent rerun duplicates.
-Import remains available for `typescriptreact`, `javascriptreact`, `vue` and
-`php`. Reverse writing is deliberately disabled in those four modes because a
-safe delimiter and placement depend on whether the target is code, JSX,
-template, style, HTML or PHP.
+record with its exact range and kind, supports multi-selection, then asks
+whether to **Keep Source Comments** (copy) or **Remove Source Comments**
+(move). Keep supports every scanned record. Remove is offered only when all
+selected records use line syntax in the 10 audited removal modes: TypeScript,
+JavaScript, Java, C, C++, C#, Go, Rust, Kotlin and Dart. Blocks and docblocks
+remain Keep-only to prevent lexical token fusion.
+
+**Write Annotations into Code Comments...** previews an `OOCI(...)` identity
+marker, lets the user choose the standard or documentation-comment style, then
+asks whether to keep or remove the source annotations. New markers combine the
+readable eight-character ID prefix with a 128-bit SHA-256 fingerprint; legacy
+short markers remain readable. A destructive Remove requires the exact ID and
+message to round-trip before the source edit and again after save. Reverse
+writing is limited to the 16 audited modes listed in the feature catalogue and
+to lexer-proven positions. Other modes fail closed.
+
+Escape cancels before mutation. For completed **Remove** moves, native
+**Undo/Redo** plus **Undo Conversion** restore both resources; **Keep** is an
+ordinary copy operation. Exact import provenance, strong markers and legacy
+fallbacks are consumed one-to-one, so equal comments on the same line remain
+independently selectable. If source rollback is rejected or throws, the
+destination representation is conservatively kept and persisted; a cascading
+failure is surfaced. Destructive Move is also unavailable while configured
+save participants could rewrite or coalesce the source edit.
 
 | Command ID                                   | Title                                          | Default keybinding |
 | -------------------------------------------- | ---------------------------------------------- | ------------------ |

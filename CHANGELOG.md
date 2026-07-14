@@ -7,10 +7,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
-> Source candidate for 1.4.4. It is not tagged or published; Marketplace and
-> Open VSX remain on 1.4.3 until explicit user confirmation authorizes release.
-> See the [detailed 1.4.4 candidate notes](./docs/CHANGELOG-1.4.4.md) for the
-> complete implementation and validation catalogue.
+## [1.4.4] - 2026-07-14
+
+See the [detailed 1.4.4 release notes](./docs/CHANGELOG-1.4.4.md) for the
+complete implementation and validation catalogue.
 
 ### Added
 
@@ -38,14 +38,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
   validation, modal confirmation, VS Code GitHub authentication, issue URL
   trace metadata and an optional Open Issue action. No manual PAT is collected.
 - Guided changelog metadata and architecture-decision status prompts.
-- Guided conversion between standalone source comments, file headers,
-  documentation blocks and annotations in both directions. The language-aware
-  catalogue contains 42 syntax IDs (37 primary tested modes plus five
-  aliases/extras); selection previews, confirmation, `OOCI(...)` markers and
-  one-step `WorkspaceEdit` Undo keep the workflow explicit and reversible.
-- Comment import remains available for `typescriptreact`, `javascriptreact`,
-  `vue` and `php`; reverse writing is deliberately disabled in those four
-  mixed-context modes until syntax-aware region placement is implemented.
+- Guided conversion between standalone, adjacent or trailing source comments,
+  file headers, documentation blocks and annotations in both directions. The
+  language-aware scanner contains 42 syntax IDs (37 primary tested modes plus
+  five aliases/extras). Reverse writing uses a 16-mode audited allowlist plus a
+  position-level lexical safety check. Source-comment **Remove** is narrower:
+  it is available only for line syntax in 10 audited modes; blocks and
+  documentation blocks remain fully convertible with **Keep**.
+- Collision-resistant generated markers combine the readable eight-character
+  ID prefix with a 128-bit SHA-256 fingerprint while retaining read
+  compatibility with legacy short `OOCI(...)` markers.
 
 ### Changed
 
@@ -74,6 +76,32 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ### Fixed
 
+- Ordinary comments placed after code, including adjacent delimiters without
+  whitespace, are now offered by **Convert Code Comments & Headers to
+  Annotations** instead of being silently omitted. Quoted delimiters, nested
+  templates/blocks, regex, raw strings, heredocs, YAML scalars and SQL dollar
+  strings are separated from real comments.
+- Comment-to-annotation and annotation-to-comment conversions no longer assume
+  that the original must be retained. **Keep** copies the item; **Remove**
+  performs a durable move and compensates either resource if the transaction
+  fails. For **Remove** moves, native Undo/Redo mirrors both code and annotation
+  state. Removing a standalone line comment anchors its annotation to the
+  nearest useful code line instead of an empty line; unsafe ranges, positions
+  and configured save participants are refused before mutation.
+- Block and documentation-comment deletion now fails closed, preventing token
+  fusion such as `return/* gap */value` becoming `returnvalue`. Destructive
+  annotation-to-comment conversion requires an exact strong ID/message proof
+  before applying the edit and again after saving the source; whitespace,
+  delimiter neutralization, marker collision or a save participant cannot
+  silently change an annotation being moved.
+- Source-comment deduplication is bijective. One import fingerprint or identity
+  match consumes only one source record, so two equal comments on the same line
+  remain independently convertible. Strong marker mismatches never downgrade
+  to the collision-prone legacy prefix.
+- A failed or rejected asynchronous source restore now conservatively keeps
+  and persists the destination representation. Conversion rollback no longer
+  reports success with both the comment and annotation absent; a cascading
+  persistence failure is surfaced.
 - Authored page slug collisions can no longer overwrite another source file,
   and dynamic TOC labels are safely quoted.
 - Custom annotation-template variables, name slugs, literal `$` replacements,

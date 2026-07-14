@@ -5,9 +5,7 @@ managed, reproducible documentation bundle without changing a source file.
 One run can produce source pages, a publishable static project, Markdown wiki
 packages, an autonomous HTML site, and a constrained OpenAPI projection.
 
-> **Availability:** this guide describes the **1.4.4 source candidate**. It is
-> not published yet; the Marketplace and Open VSX release remains **1.4.3**.
-> Tagging and publication require explicit user confirmation.
+> **Availability:** Documentation Studio is included in version **1.4.4**.
 
 ## Quick start
 

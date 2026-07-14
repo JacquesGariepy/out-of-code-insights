@@ -34,38 +34,31 @@ when that is the workflow you want.
 | Native VS Code experience     | Interactive Inlay Hints, gutter, CodeLens, Comments, Tree View, grouped menus, commands, and keyboard access |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-## What is new in 1.4.3
+## What is new in 1.4.4
 
-- Click the **Move** handle directly beside an inline annotation, move the
-  cursor to any line or file, then press **Enter** to drop or **Escape** to
-  cancel. The target line and status bar show the active move state.
-- Click the annotation message itself to open it in the panel. CodeLens, hover
-  links and native Comments threads expose the same move workflow.
-- You do not need to memorize command IDs: every contributed command has a
-  visible native menu home. Right-click in the editor, an annotation tree item,
-  a workspace file in Explorer or a native annotation comment; the Annotations
-  view `...` menu exposes workspace actions. The Command Palette remains a
-  searchable alternative.
-- Move transactions now roll back in memory if persistence fails, preventing
-  the editor state and `annotations.json` from disagreeing.
-- The documented `annotation.codelens.*` settings now work as configured.
-- Resolve keeps the record and marks it resolved; shutdown flushes pending
-  saves, and failed writes remain retryable instead of being silently lost.
+- **Documentation Studio** generates managed source pages, technical documents,
+  static projects, wiki packages, autonomous HTML and a constrained API
+  catalogue from one annotation corpus.
+- All 86 user commands have visible native menu homes. Right-click in the
+  editor, an annotation tree item, a workspace file in Explorer or a native
+  annotation comment; the Command Palette remains a searchable alternative.
+- Convert standalone comments, trailing comments, headers and documentation
+  blocks to annotations — or annotations back to language-aware comments. A
+  clear **Keep** choice copies every supported record; **Remove** is offered
+  only when the selected representation can be moved without changing code or
+  annotation content.
+- Stable identity-based links, canonical closed-file navigation, confined
+  atomic persistence and durable command completion protect team data across
+  edits and restarts.
+- One guided AI credential manager covers the exact 13-provider catalogue, and
+  an annotation can create a guarded GitHub development issue through VS Code
+  authentication without asking for a personal access token.
+- Editor/tree drag-and-drop, the keyboard move workflow, the responsive panel,
+  review mode and Kanban share the same canonical annotation store.
 
-See the [1.4.3 release notes](./docs/CHANGELOG-1.4.3.md) or open the
-[v1.4.3 GitHub release](https://github.com/JacquesGariepy/out-of-code-insights/releases/tag/v1.4.3).
-
-> **1.4.4 source candidate:** Documentation Studio and the expanded menus
-> described below are present in this repository but are not published yet.
-> The Marketplace and Open VSX release remains **1.4.3**. Version 1.4.4 will
-> not be tagged or published without explicit user confirmation. Review the
-> [candidate 1.4.4 changelog](./docs/CHANGELOG-1.4.4.md) before confirming.
-
-The candidate now exposes 86 public commands through novice-friendly native
-menus. It adds guided conversion between standalone source comments/file
-headers/docblocks and annotations in both directions, stable identity-based
-links, canonical closed-file navigation, safer persistence and Kanban updates,
-and a single exact 13-provider AI catalogue.
+See the [complete 1.4.4 release notes](./docs/CHANGELOG-1.4.4.md). The
+[1.4.3 notes](./docs/CHANGELOG-1.4.3.md) remain available for the previous
+increment.
 
 ## Start in 60 seconds
 
@@ -496,23 +489,44 @@ Share annotations across a team through the license server: set `annotation.sync
 ### Comment import & styling
 
 - **Import Code Comments as Annotations** (active file) and **Import Code Comments from Workspace** turn better-comments-style markers (`// !`, `// ?`, `// *`, `TODO`, `FIXME`, `HACK`, also `#`, `--`, `<!-- -->` syntaxes) into tagged, severity-mapped annotations; reruns never duplicate.
-- **Convert Code Comments & Headers to Annotations...** scans standalone line
-  comments, block comments, documentation blocks and file headers in the
-  selected code file. It shows locations and kinds, lets you select the exact
-  records, asks for confirmation, and leaves source text unchanged.
+- **Convert Code Comments & Headers to Annotations...** scans standalone,
+  adjacent and trailing line comments (including delimiters without a space),
+  block comments, documentation blocks and file headers in the selected code
+  file. It shows exact locations and kinds, lets you select the records, then
+  asks what happens to the source. **Keep Source Comments** copies every
+  supported record. **Remove Source Comments** is offered only when every
+  selected record uses line-comment syntax in one of 10 audited modes:
+  TypeScript, JavaScript, Java, C, C++, C#, Go, Rust, Kotlin and Dart. Block
+  comments and documentation blocks are Keep-only in 1.4.4 because deleting a
+  block without its neighbouring lexical tokens could fuse code such as
+  `return/* note */value`. Escape cancels before any mutation.
 - **Write Annotations into Code Comments...** performs the reverse conversion.
   Select annotations, choose the language's standard comment or documentation
-  block style, review the marker preview, then confirm the edit. VS Code applies
-  one `WorkspaceEdit`, so **Undo** removes the inserted comments in one step.
+  block style, review the marker preview, then choose whether the original
+  annotations are kept or removed. Before a destructive **Remove**, the
+  generated comment must round-trip the exact annotation ID and message. The
+  extension proves both again from the saved source before deleting the
+  annotation. If source restoration is rejected or throws during rollback, the
+  destination annotation is conservatively kept and persisted to avoid losing
+  both representations. For completed **Remove** moves, native
+  **Undo** and **Redo**, plus **Undo Conversion**, restore both code and
+  annotation state; **Keep** remains an ordinary copy operation.
 - The language-aware syntax catalogue contains 42 IDs: 37 primary modes
   validated by the catalogue test plus five compatibility aliases/extras.
-  Generated comments include a sanitized `OOCI(...)` identity marker; the
-  marker and normalized content checks prevent duplicate materialization on
-  reruns. Unsupported language modes are reported without changing the file.
-- Import remains available for `typescriptreact`, `javascriptreact`, `vue` and
-  `php`, but reverse writing is deliberately disabled in those four
-  mixed-context modes. Safe insertion depends on whether the target is code,
-  JSX, template, style, HTML or PHP; syntax-aware placement remains tracked in
+  New generated comments use
+  `OOCI(<8-character-prefix>~<128-bit-SHA-256-fingerprint>)`; legacy short
+  `OOCI(<prefix>)` markers remain readable. Exact import provenance, strong
+  markers and legacy fallbacks are matched bijectively: one existing
+  annotation suppresses only one source record, so equal comments on the same
+  line remain independently selectable. Unsupported language modes are
+  reported without changing the file.
+- Reverse writing is enabled only for 16 audited modes: TypeScript, JavaScript,
+  C, C++, Java, C#, Go, Rust, Kotlin, Dart, Python, TOML, Lua, CSS, SCSS and
+  Clojure. Each requested line must also pass the position-aware preamble,
+  continuation, directive and lexical-state checks. Other catalogue modes stay
+  import/Keep-capable and fail closed for writing. **Remove** also fails closed
+  while format-on-save, save code actions or automatic whitespace cleanup are
+  configured; broader parser/save-participant support remains tracked in
   `tasks.jsonp`.
 - `annotation.severityStyles` / `annotation.tagStyles` map severities and tags to decoration colors (inline text, background, border, gutter visibility).
 - **Edit Annotation Message (Markdown)** opens a multiline editor panel; the inline editor decoration shows only the first line of the message.

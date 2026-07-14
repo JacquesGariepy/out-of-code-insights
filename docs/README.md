@@ -4,9 +4,8 @@ Supplementary documentation for **Out-of-Code Insights**. End-user quickstart
 and the command reference live in the project [README](../README.md); this
 folder is for deeper material.
 
-> Documentation Studio material marked 1.4.4 describes the source candidate,
-> not a published extension. Marketplace and Open VSX remain on 1.4.3 until
-> explicit user confirmation authorizes a release.
+> Documentation Studio and the expanded guided workflows are included in
+> version 1.4.4.
 
 ## Contents
 
