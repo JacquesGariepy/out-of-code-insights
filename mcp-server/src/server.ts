@@ -158,7 +158,7 @@ export function buildServer(store: AnnotationFileStore): McpServer {
         'generate_docs',
         {
             description:
-                'Generate a Markdown documentation site (DocFX-compatible: index, by-type, by-file, links, ' +
+                'Generate a portable Markdown documentation set (index, by-type, by-file, links, ' +
                 'toc.yml, plus authored API pages from doc:* tags) from all annotations. Files are written ' +
                 'under <workspace>/<outputPath> (default docs/annotations). Returns the written paths.',
             inputSchema: {

@@ -35,6 +35,13 @@ export interface ReviewStatistics {
     unresolved: number;
 }
 
+export interface ReviewModeManagerOptions {
+    /** Disable command registration for isolated hosts/tests that provide their own command surface. */
+    registerCommands?: boolean;
+    /** Delay before the currently displayed annotation is marked as viewed. */
+    autoMarkDelayMs?: number;
+}
+
 export class ReviewModeManager extends EventEmitter {
     private isActive = false;
     private currentIndex = -1;
@@ -43,25 +50,35 @@ export class ReviewModeManager extends EventEmitter {
     private readonly statusBarItem: vscode.StatusBarItem;
     private reviewPanel?: vscode.WebviewPanel;
     private readonly disposables: vscode.Disposable[] = [];
+    private readonly autoMarkDelayMs: number;
+    private autoMarkTimer: ReturnType<typeof setTimeout> | undefined;
+    private autoMarkAnnotationId: string | undefined;
+    private storeRefreshQueue: Promise<void> = Promise.resolve();
 
     constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly store: AnnotationStore,
         private readonly getUsername: () => string,
-        private readonly navigation?: AnnotationNavigation
+        private readonly navigation?: AnnotationNavigation,
+        options: ReviewModeManagerOptions = {}
     ) {
         super();
+
+        this.autoMarkDelayMs = Math.max(0, options.autoMarkDelayMs ?? 1000);
 
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
         this.statusBarItem.command = 'annotations.stopReview';
         this.disposables.push(this.statusBarItem);
+        void vscode.commands.executeCommand('setContext', 'outOfCodeInsights.reviewModeActive', false);
 
-        this.registerCommands();
+        if (options.registerCommands !== false) {
+            this.registerCommands();
+        }
 
         this.disposables.push(
             this.store.onDidChange(() => {
                 if (this.isActive) {
-                    this.updateFilteredAnnotations();
+                    this.queueStoreRefresh();
                 }
             })
         );
@@ -69,52 +86,89 @@ export class ReviewModeManager extends EventEmitter {
 
     private registerCommands(): void {
         this.disposables.push(
-            vscode.commands.registerCommand('annotations.startReview', () => {
-                this.startReview();
-            })
+            vscode.commands.registerCommand('annotations.startReview', (filter?: ReviewFilter) =>
+                this.startReview(filter)
+            )
+        );
+
+        this.disposables.push(vscode.commands.registerCommand('annotations.stopReview', () => this.stopReview()));
+
+        this.disposables.push(
+            vscode.commands.registerCommand('annotations.nextAnnotation', () =>
+                this.isActive ? this.navigateNext() : Promise.resolve()
+            )
         );
 
         this.disposables.push(
-            vscode.commands.registerCommand('annotations.stopReview', () => {
-                this.stopReview();
-            })
+            vscode.commands.registerCommand('annotations.previousAnnotation', () =>
+                this.isActive ? this.navigatePrevious() : Promise.resolve()
+            )
         );
 
         this.disposables.push(
-            vscode.commands.registerCommand('annotations.nextAnnotation', () => {
-                if (this.isActive) {
-                    this.navigateNext();
-                }
-            })
-        );
-
-        this.disposables.push(
-            vscode.commands.registerCommand('annotations.previousAnnotation', () => {
-                if (this.isActive) {
-                    this.navigatePrevious();
-                }
-            })
-        );
-
-        this.disposables.push(
-            vscode.commands.registerCommand('annotations.markAsViewed', () => {
+            vscode.commands.registerCommand('annotations.markAsViewed', async () => {
                 if (this.isActive && this.currentIndex >= 0) {
                     const annotation = this.filteredAnnotations[this.currentIndex];
                     if (annotation) {
-                        this.markAsViewed(annotation.id);
+                        await this.markAsViewed(annotation.id);
                     }
                 }
             })
         );
 
         this.disposables.push(
-            vscode.commands.registerCommand('annotations.reviewMode.filter', () => {
-                this.showFilterPanel();
-            })
+            vscode.commands.registerCommand('annotations.reviewMode.filter', () => this.showFilterPanel())
         );
     }
 
+    private queueStoreRefresh(): void {
+        this.storeRefreshQueue = this.storeRefreshQueue
+            .then(() => this.refreshAfterStoreChange())
+            .catch((error: unknown) => {
+                const message = error instanceof Error ? error.message : String(error);
+                void vscode.window.showErrorMessage(
+                    localize('reviewMode.refreshFailed', 'Unable to refresh review mode: {0}', message)
+                );
+            });
+    }
+
+    private async refreshAfterStoreChange(): Promise<void> {
+        if (!this.isActive) {
+            return;
+        }
+
+        const previousIndex = this.currentIndex;
+        const previousId = this.filteredAnnotations[previousIndex]?.id;
+        await this.updateFilteredAnnotations();
+
+        if (!this.isActive) {
+            return;
+        }
+        if (this.filteredAnnotations.length === 0) {
+            this.stopReview();
+            return;
+        }
+
+        const preservedIndex = previousId
+            ? this.filteredAnnotations.findIndex((annotation) => annotation.id === previousId)
+            : -1;
+        this.currentIndex =
+            preservedIndex >= 0
+                ? preservedIndex
+                : Math.min(Math.max(previousIndex, 0), this.filteredAnnotations.length - 1);
+
+        const currentId = this.filteredAnnotations[this.currentIndex]?.id;
+        if (currentId !== previousId) {
+            await this.navigateToCurrentAnnotation();
+            return;
+        }
+
+        this.updateStatusBar();
+        this.updateReviewPanel();
+    }
+
     public async startReview(filter?: ReviewFilter): Promise<void> {
+        this.cancelAutoMark();
         this.isActive = true;
         this.activeFilter = filter || {};
 
@@ -129,9 +183,14 @@ export class ReviewModeManager extends EventEmitter {
         }
 
         this.currentIndex = 0;
-        await this.navigateToCurrentAnnotation();
-        this.updateStatusBar();
-        this.showReviewPanel();
+        await vscode.commands.executeCommand('setContext', 'outOfCodeInsights.reviewModeActive', true);
+        try {
+            await this.navigateToCurrentAnnotation();
+            this.showReviewPanel();
+        } catch (error) {
+            this.stopReview();
+            throw error;
+        }
 
         this.emit('reviewStarted', {
             totalAnnotations: this.filteredAnnotations.length,
@@ -144,9 +203,11 @@ export class ReviewModeManager extends EventEmitter {
     }
 
     public stopReview(): void {
+        this.cancelAutoMark();
         this.isActive = false;
         this.currentIndex = -1;
         this.filteredAnnotations = [];
+        void vscode.commands.executeCommand('setContext', 'outOfCodeInsights.reviewModeActive', false);
 
         this.statusBarItem.hide();
 
@@ -200,6 +261,10 @@ export class ReviewModeManager extends EventEmitter {
             return;
         }
 
+        if (this.autoMarkAnnotationId === annotationId) {
+            this.cancelAutoMark();
+        }
+
         const reviewState: ReviewState = {
             viewed: true,
             viewedBy: this.getUsername() || 'Unknown',
@@ -207,22 +272,34 @@ export class ReviewModeManager extends EventEmitter {
         };
 
         this.store.update(annotationId, { reviewState });
+        await this.storeRefreshQueue;
 
-        this.updateStatusBar();
-        this.updateReviewPanel();
+        if (!this.isActive) {
+            this.updateStatusBar();
+            this.updateReviewPanel();
+        }
 
         this.emit('annotationViewed', { annotationId, reviewState });
     }
 
     public async applyFilter(filter: ReviewFilter): Promise<void> {
+        const previousId = this.filteredAnnotations[this.currentIndex]?.id;
         this.activeFilter = filter;
 
         if (this.isActive) {
             await this.updateFilteredAnnotations();
 
             if (this.filteredAnnotations.length > 0) {
-                this.currentIndex = 0;
-                await this.navigateToCurrentAnnotation();
+                const preservedIndex = previousId
+                    ? this.filteredAnnotations.findIndex((annotation) => annotation.id === previousId)
+                    : -1;
+                this.currentIndex = preservedIndex >= 0 ? preservedIndex : 0;
+                if (this.filteredAnnotations[this.currentIndex]?.id !== previousId) {
+                    await this.navigateToCurrentAnnotation();
+                } else {
+                    this.updateStatusBar();
+                    this.updateReviewPanel();
+                }
             } else {
                 vscode.window.showInformationMessage(
                     localize('reviewMode.noMatchingAnnotations', 'No annotations match the current filter.')
@@ -329,7 +406,6 @@ export class ReviewModeManager extends EventEmitter {
         });
 
         this.filteredAnnotations = sorted;
-        this.updateStatusBar();
     }
 
     private async navigateToCurrentAnnotation(): Promise<void> {
@@ -337,6 +413,7 @@ export class ReviewModeManager extends EventEmitter {
             return;
         }
 
+        this.cancelAutoMark();
         const annotation = this.filteredAnnotations[this.currentIndex];
 
         if (this.navigation) {
@@ -344,15 +421,34 @@ export class ReviewModeManager extends EventEmitter {
         }
 
         // Auto-mark as viewed after a short delay (legacy behaviour).
-        setTimeout(() => {
+        this.autoMarkAnnotationId = annotation.id;
+        this.autoMarkTimer = setTimeout(() => {
+            this.autoMarkTimer = undefined;
+            this.autoMarkAnnotationId = undefined;
+            if (!this.isActive || this.filteredAnnotations[this.currentIndex]?.id !== annotation.id) {
+                return;
+            }
             const refreshed = this.store.get(annotation.id);
             if (refreshed && !refreshed.reviewState?.viewed) {
-                this.markAsViewed(annotation.id);
+                void this.markAsViewed(annotation.id).catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : String(error);
+                    void vscode.window.showErrorMessage(
+                        localize('reviewMode.markViewedFailed', 'Unable to mark annotation as viewed: {0}', message)
+                    );
+                });
             }
-        }, 1000);
+        }, this.autoMarkDelayMs);
 
         this.updateStatusBar();
         this.updateReviewPanel();
+    }
+
+    private cancelAutoMark(): void {
+        if (this.autoMarkTimer !== undefined) {
+            clearTimeout(this.autoMarkTimer);
+            this.autoMarkTimer = undefined;
+        }
+        this.autoMarkAnnotationId = undefined;
     }
 
     private updateStatusBar(): void {
@@ -417,7 +513,7 @@ export class ReviewModeManager extends EventEmitter {
     }
 
     private updateReviewPanel(): void {
-        if (!this.reviewPanel || this.currentIndex < 0) {
+        if (!this.reviewPanel || this.currentIndex < 0 || this.currentIndex >= this.filteredAnnotations.length) {
             return;
         }
 

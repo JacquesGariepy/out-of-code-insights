@@ -12,12 +12,13 @@ import { NavigationStackDataProvider } from '../tree/NavigationStackTree';
 import { LinkedAnnotationManager } from './LinkedAnnotationManager';
 import { TemplateManager, AnnotationTemplate } from './TemplateManager';
 import { ReviewModeManager } from './ReviewModeManager';
+import { AnnotationNavigation } from '../transactional/AnnotationNavigation';
 import { SnippetManager, SnippetHistoryEntry } from './SnippetManager';
 import { AnnotationStore } from '../transactional/AnnotationStore';
 import type { VisibilityFilter } from '../transactional/VisibilityFilter';
-import { KanbanView } from '../views/KanbanView';
 import { AnnotationManagerErrorHandling } from './AnnotationManagerErrorHandling';
 import { escapeHtml, generateNonce } from '../common/utils';
+import { parseGitHubRepository, validateGitHubRepository } from '../common/githubRepository';
 import {
     captureAnchor,
     findAnchor,
@@ -29,6 +30,14 @@ import {
     reanchor,
 } from '../anchoring/anchor';
 import { inlineLabel, resolveAnnotationStyle, StyleSpec } from '../decorations/annotationStyle';
+import {
+    AI_PROVIDER_CATALOG,
+    canReuseAIProviderSession,
+    createAIProviderEngineOptions,
+    isAIProviderId,
+    missingAIProviderConnectionFields,
+    readAIProviderConnectionSettings,
+} from '../providers/AIProviderCatalog';
 
 interface CopySourceSnapshot {
     uri: string;
@@ -52,21 +61,16 @@ export class AnnotationManager extends EventEmitter {
     public stackDataProvider?: NavigationStackDataProvider;
     public navigationStack: NavigationStack;
     private configManager: ConfigurationManager;
-    // Lot 5 R2 worktree B: LinkedAnnotationManager + ReviewModeManager have
-    // been migrated to take an AnnotationStore. We keep instantiating them
-    // here during R2 (backed by a dedicated empty store) so their VS Code
-    // command registrations stay alive until worker-1 wires the real
-    // store-backed instances in extension.ts. R3 deletes this whole class
-    // and the field declarations together. The fields are optional so
-    // future de-instantiation tweaks don't require touching every call site.
+    // Store-backed managers remain hosted here during the R2 coexistence
+    // window, but production injects the authoritative AnnotationStore.
     private linkedAnnotationManager: LinkedAnnotationManager | undefined;
+    private readonly canonicalStore: AnnotationStore;
     private templateManager: TemplateManager;
     private reviewModeManager: ReviewModeManager | undefined;
     private snippetManager: SnippetManager;
     /**
-     * Backing store for the legacy linked/review manager pair during R2.
-     * Always empty (no I/O) so legacy command handlers operate on a no-op
-     * surface. Disposed when AnnotationManager itself disposes.
+     * Fallback store used only by isolated callers that do not inject the
+     * production store. Disposed when AnnotationManager itself disposes.
      */
     private legacyEmptyStoreForRetiredManagers: AnnotationStore | undefined;
     public annotations: Map<string, Annotation> = new Map();
@@ -144,21 +148,14 @@ export class AnnotationManager extends EventEmitter {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     private llm: any = undefined;
     private llmKey: string | undefined;
+    private llmConnectionSignature: string | undefined;
     private providerKeys: Record<string, string | undefined> = {};
     private catParticipant: vscode.ChatParticipant | undefined;
 
-    // Reset search to initial state
-    public async resetSearch(): Promise<void> {
-        // Remove all highlights from the webview
-        if (this.annotationsPanel) {
-            this.annotationsPanel.webview.postMessage({ command: 'clearFocus' });
-        }
-        vscode.window.showInformationMessage(localize('searchReset', 'Search reset.'));
-    }
-
     constructor(
         private readonly context: vscode.ExtensionContext,
-        private readonly sharedVisibilityFilter?: VisibilityFilter
+        private readonly sharedVisibilityFilter?: VisibilityFilter,
+        sharedAnnotationStore?: AnnotationStore
     ) {
         super();
         this.configManager = new ConfigurationManager();
@@ -170,25 +167,31 @@ export class AnnotationManager extends EventEmitter {
         this.disposables.push(this.outputChannel);
         this.log('Extension starting...');
 
-        // Initialize new managers.
-        // Lot 5 R2 worktree B: LinkedAnnotationManager + ReviewModeManager
-        // were migrated to consume an AnnotationStore. To preserve VS Code
-        // command registration during the R2 coexistence window (those
-        // managers register commands like `annotations.startReview` in their
-        // ctor), we keep instantiating them HERE — backed by a dedicated
-        // empty store. The empty store carries no annotations, so every
-        // command operates on a no-op surface; users invoke the real flow
-        // via the store-backed instances that worker-1 wires in
-        // extension.ts. R3 retires this whole class together with the
-        // duplicate instantiation.
-        this.legacyEmptyStoreForRetiredManagers = new AnnotationStore();
-        this.legacyEmptyStoreForRetiredManagers.markInitialized();
-        this.linkedAnnotationManager = new LinkedAnnotationManager(context, this.legacyEmptyStoreForRetiredManagers);
+        const managerStore = sharedAnnotationStore ?? new AnnotationStore();
+        this.canonicalStore = managerStore;
+        if (!sharedAnnotationStore) {
+            managerStore.markInitialized();
+            this.legacyEmptyStoreForRetiredManagers = managerStore;
+        }
+        const navigation = new AnnotationNavigation(managerStore, this.navigationStack, {
+            openTextDocumentAt: async (fileUri, offset) => {
+                const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(fileUri));
+                const editor = await vscode.window.showTextDocument(document);
+                const position = document.positionAt(offset);
+                editor.selection = new vscode.Selection(position, position);
+                editor.revealRange(
+                    new vscode.Range(position, position),
+                    vscode.TextEditorRevealType.InCenterIfOutsideViewport
+                );
+            },
+        });
+        this.linkedAnnotationManager = new LinkedAnnotationManager(context, managerStore, navigation);
         this.templateManager = new TemplateManager(context);
         this.reviewModeManager = new ReviewModeManager(
             context,
-            this.legacyEmptyStoreForRetiredManagers,
-            () => this.config.username || 'Unknown'
+            managerStore,
+            () => this.config.username || 'Unknown',
+            navigation
         );
         this.snippetManager = SnippetManager.getInstance();
         // Initialize annotation display state from globalState
@@ -232,6 +235,8 @@ export class AnnotationManager extends EventEmitter {
         this.createChatParticipant(this.context);
 
         try {
+            this.log('Registering additional commands...');
+            this.registerAdditionalCommands();
             if (this.annotationsEnabled) {
                 await this.loadKanbanColumns(); // Load kanban columns first
                 await this.loadAnnotations();
@@ -245,8 +250,6 @@ export class AnnotationManager extends EventEmitter {
                 if (repairedOpenDocumentAnchors) {
                     await this.saveAnnotations();
                 }
-                this.log('Registering additional commands...');
-                this.registerAdditionalCommands(); // Register only non-core commands
                 this.log('Registering CodeLens provider...');
                 this.registerCodeLensProvider();
                 this.log('Registering event handlers...');
@@ -295,108 +298,118 @@ export class AnnotationManager extends EventEmitter {
     }
 
     public async configureProviderAndKeys(): Promise<void> {
+        this.llm = undefined;
+        this.llmKey = undefined;
+        this.llmConnectionSignature = undefined;
+        this.providerKeys = {};
         const config = vscode.workspace.getConfiguration('annotation');
         const chosenProvider = config.get<string>('provider', 'openai');
+        const chosenProviderDefinition = AI_PROVIDER_CATALOG.find(({ id }) => id === chosenProvider);
+        if (!isAIProviderId(chosenProvider) || !chosenProviderDefinition) {
+            vscode.window.showErrorMessage(
+                localize(
+                    'unsupportedAIProvider',
+                    'The configured AI provider “{0}” is not supported. Select a provider in Out-of-Code Insights settings.',
+                    chosenProvider
+                )
+            );
+            return;
+        }
         this.provider = chosenProvider;
         const secretStorage = this.context.secrets;
+        const configuredKeys = vscode.workspace.getConfiguration('llm').get<Record<string, string>>('apiKeys', {});
 
-        // List of supported providers
-        const providers = [
-            'openai',
-            'anthropic',
-            'azure',
-            'cerebras',
-            'deepseek',
-            'google',
-            'groq',
-            'meta',
-            'mistralai',
-            'ollama',
-            'openrouter',
-            'togetherai',
-            'xai',
-        ];
-
-        for (const prov of providers) {
-            const keyName = `annotation.${prov}Key`;
-            let key = await secretStorage.get(keyName);
-            if (!key && this.provider === prov) {
+        for (const providerDefinition of AI_PROVIDER_CATALOG) {
+            const prov = providerDefinition.id;
+            const providerLabel = loc(providerDefinition.localizationKey, providerDefinition.defaultLabel);
+            const legacyKeyName = `annotation.${prov}Key`;
+            let key = await secretStorage.get(`${prov}-api-key`);
+            key ??= configuredKeys[prov];
+            key ??= await secretStorage.get(legacyKeyName);
+            if (!key && this.provider === prov && providerDefinition.apiKeyRequired) {
                 key = await vscode.window.showInputBox({
-                    prompt: localize('enterProviderAPIKey', 'Enter your {0} API key', prov),
+                    prompt: localize('enterProviderAPIKey', 'Enter your {0} API key', providerLabel),
                     password: true,
                 });
                 if (!key) {
                     vscode.window.showErrorMessage(
-                        localize('providerKeyRequired', '{0} key is required for AI suggestions.', prov)
+                        localize('providerKeyRequired', '{0} key is required for AI suggestions.', providerLabel)
                     );
                     continue;
                 }
-                await secretStorage.store(keyName, key);
+                await Promise.all([
+                    secretStorage.store(`${prov}-api-key`, key),
+                    secretStorage.store(legacyKeyName, key),
+                ]);
             }
             this.providerKeys[prov] = key;
         }
 
         this.llmKey = this.providerKeys[this.provider];
-        if (!this.llmKey) {
+        if (chosenProviderDefinition.apiKeyRequired && !this.llmKey) {
             vscode.window.showErrorMessage(
-                localize('noAPIKeyFound', 'No API key found for provider {0}.', this.provider)
+                localize(
+                    'noAPIKeyFound',
+                    'No API key found for provider {0}.',
+                    loc(chosenProviderDefinition.localizationKey, chosenProviderDefinition.defaultLabel)
+                )
             );
             return;
         }
-        this.llm = igniteEngine(this.provider, { apiKey: this.llmKey });
+        const connectionSettings = readAIProviderConnectionSettings(config);
+        const missingConnectionFields = missingAIProviderConnectionFields(this.provider, connectionSettings);
+        if (missingConnectionFields.length > 0) {
+            const openSettingsLabel = localize('openSettings', 'Open Settings');
+            const action = await vscode.window.showErrorMessage(
+                localize(
+                    'aiProviderConnectionIncomplete',
+                    'Complete the {0} connection settings before using AI: {1}.',
+                    loc(chosenProviderDefinition.localizationKey, chosenProviderDefinition.defaultLabel),
+                    missingConnectionFields.join(', ')
+                ),
+                openSettingsLabel
+            );
+            if (action === openSettingsLabel) {
+                await vscode.commands.executeCommand('workbench.action.openSettings', 'annotation.azure');
+            }
+            return;
+        }
+        const engineOptions = createAIProviderEngineOptions(this.provider, this.llmKey, connectionSettings);
+        this.llm = igniteEngine(this.provider, engineOptions);
+        this.llmConnectionSignature = JSON.stringify(connectionSettings);
     }
 
     public async ensureAiConfigured(): Promise<boolean> {
         const provider = vscode.workspace.getConfiguration('annotation').get<string>('provider', 'openai');
-        const stored = await this.context.secrets.get(`annotation.${provider}Key`);
-        if (stored && this.llm) {
+        const configured = vscode.workspace.getConfiguration('llm').get<Record<string, string>>('apiKeys', {})[
+            provider
+        ];
+        const stored =
+            (await this.context.secrets.get(`${provider}-api-key`)) ??
+            configured ??
+            (await this.context.secrets.get(`annotation.${provider}Key`));
+        const configuredConnectionSignature = JSON.stringify(
+            readAIProviderConnectionSettings(vscode.workspace.getConfiguration('annotation'))
+        );
+        if (
+            canReuseAIProviderSession({
+                configuredProvider: provider,
+                activeProvider: this.provider,
+                activeApiKey: this.llmKey,
+                storedApiKey: stored,
+                hasEngine: !!this.llm,
+                activeConnectionSignature: this.llmConnectionSignature,
+                configuredConnectionSignature,
+            })
+        ) {
             return true;
         }
         try {
             await this.configureProviderAndKeys();
-            return !!this.llmKey;
+            return !!this.llm;
         } catch {
             return false;
         }
-    }
-
-    // Generic methods to update or reset a provider API key
-    private async updateProviderKey(provider: string): Promise<void> {
-        const secretStorage = this.context.secrets;
-        const newKey = await vscode.window.showInputBox({
-            prompt: localize('enterNewProviderAPIKey', 'Enter your new {0} API key', provider),
-            password: true,
-        });
-        if (!newKey) {
-            vscode.window.showInformationMessage(localize('noKeyEnteredCanceled', 'No key entered. Update canceled.'));
-            return;
-        }
-        await secretStorage.store(`annotation.${provider}Key`, newKey);
-        this.providerKeys[provider] = newKey;
-        if (this.provider === provider) {
-            this.llmKey = newKey;
-            this.llm = igniteEngine(this.provider, { apiKey: this.llmKey });
-        }
-        vscode.window.showInformationMessage(
-            localize('providerKeyUpdatedSuccessfully', '{0} key updated successfully!', provider)
-        );
-    }
-
-    private async resetProviderKey(provider: string): Promise<void> {
-        const secretStorage = this.context.secrets;
-        await secretStorage.delete(`annotation.${provider}Key`);
-        this.providerKeys[provider] = undefined;
-        if (this.provider === provider) {
-            this.llmKey = undefined;
-            this.llm = undefined;
-        }
-        vscode.window.showInformationMessage(
-            localize(
-                'providerKeyReset',
-                '{0} key has been reset. Next AI Suggest request will prompt for a new key.',
-                provider
-            )
-        );
     }
 
     public createChatParticipant(context: vscode.ExtensionContext) {
@@ -505,7 +518,14 @@ export class AnnotationManager extends EventEmitter {
             }
             const config = vscode.workspace.getConfiguration('annotation');
             const chosenModel = config.get<string>('model', 'gpt-4o-mini');
-            const models = await loadModels(this.provider, { apiKey: this.llmKey });
+            const models = await loadModels(
+                this.provider,
+                createAIProviderEngineOptions(
+                    this.provider,
+                    this.llmKey,
+                    readAIProviderConnectionSettings(vscode.workspace.getConfiguration('annotation'))
+                )
+            );
             if (!models || !models.chat || !Array.isArray(models.chat) || models.chat.length === 0) {
                 vscode.window.showErrorMessage(
                     localize('noChatModelsAvailable', 'No chat models available for this provider.')
@@ -754,12 +774,27 @@ export class AnnotationManager extends EventEmitter {
     // ====== DELEGATION METHODS FOR NEW MANAGERS ======
 
     // LinkedAnnotationManager delegation
-    public async createLinkedAnnotation(sourceId: string, targetFile: string, targetLine: number): Promise<void> {
-        return this.linkedAnnotationManager?.createLink(sourceId, targetFile, targetLine);
+    public async createLinkedAnnotation(
+        sourceId: string,
+        targetFile: string,
+        targetLine: number,
+        relationship = 'related',
+        targetId?: string
+    ): Promise<void> {
+        return this.linkedAnnotationManager?.createLink(sourceId, targetFile, targetLine, relationship, targetId);
     }
 
-    public async navigateToLinked(annotationId: string): Promise<void> {
-        return this.linkedAnnotationManager?.goToLinkedAnnotation(annotationId);
+    public async navigateToLinked(annotationId: string, targetIndex = 0): Promise<void> {
+        return this.linkedAnnotationManager?.goToLinkedAnnotation(annotationId, targetIndex);
+    }
+
+    public async removeLinkedAnnotation(
+        sourceId: string,
+        targetFile: string,
+        targetLine: number,
+        targetId?: string
+    ): Promise<void> {
+        return this.linkedAnnotationManager?.removeLink(sourceId, targetFile, targetLine, targetId);
     }
 
     // TemplateManager delegation
@@ -806,86 +841,19 @@ export class AnnotationManager extends EventEmitter {
     // ====== END DELEGATION METHODS ======
 
     private registerAdditionalCommands(): void {
-        // Only register commands that are not already registered in extension.ts
-        // These are more complex commands that need full initialization
+        // Contextual commands called by CodeLens, inlay hints and extension UI.
+        // Guided user commands are registered under their contributed ids so
+        // they remain discoverable from the task-based menus.
         this.disposables.push(
-            vscode.commands.registerCommand('annotations.updateProviderKey', async () => {
-                const provider = await vscode.window.showQuickPick(
-                    [
-                        'openai',
-                        'anthropic',
-                        'azure',
-                        'cerebras',
-                        'deepseek',
-                        'google',
-                        'groq',
-                        'meta',
-                        'mistralai',
-                        'ollama',
-                        'openrouter',
-                        'togetherai',
-                        'xai',
-                    ],
-                    { placeHolder: 'Select the provider to update the API key for' }
-                );
-                if (provider) await this.updateProviderKey(provider);
-            }),
-            vscode.commands.registerCommand('annotations.resetProviderKey', async () => {
-                const provider = await vscode.window.showQuickPick(
-                    [
-                        'openai',
-                        'anthropic',
-                        'azure',
-                        'cerebras',
-                        'deepseek',
-                        'google',
-                        'groq',
-                        'meta',
-                        'mistralai',
-                        'ollama',
-                        'openrouter',
-                        'togetherai',
-                        'xai',
-                    ],
-                    { placeHolder: 'Select the provider to reset the API key for' }
-                );
-                if (provider) await this.resetProviderKey(provider);
-            }),
-
-            // Command to reset search
-            vscode.commands.registerCommand('annotations.resetSearch', this.resetSearch.bind(this)),
-
-            // Commands for search with improved focus
-            vscode.commands.registerCommand('annotations.searchAndFocus', async () => {
-                await this.keywordSearch();
-            }),
-
-            // Command for direct annotation focus
-            vscode.commands.registerCommand('annotations.focusAnnotation', async (annotationId: string) => {
-                await this.focusOnAnnotation(annotationId);
-            }),
-
-            // Commands not included in core commands list
-            vscode.commands.registerCommand('annotations.editInline', async (annotation?: Annotation) => {
-                if (!annotation) {
-                    const editor = this.getActiveEditor();
-                    if (!editor) return;
-                    annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
-                }
-                if (annotation) await this.editAnnotationInline(annotation);
-            }),
             vscode.commands.registerCommand('annotations.manage', this.manageAnnotationCommand.bind(this)),
-            vscode.commands.registerCommand('annotations.showActivityBar', this.showAnnotationsPanel.bind(this)),
-            vscode.commands.registerCommand(
-                'annotations.autoResolveStale',
-                this.autoResolveStaleAnnotations.bind(this)
-            ),
             vscode.commands.registerCommand('annotations.filterBySeverity', this.filterBySeverity.bind(this)),
+            vscode.commands.registerCommand(
+                'annotations.createDevelopmentIssue',
+                this.createDevelopmentIssue.bind(this)
+            ),
             vscode.commands.registerCommand('annotations.navigateToPanel', async (annotationId: string) => {
                 await this.navigateFromAnnotationToPanel(annotationId);
             }),
-            vscode.commands.registerCommand('annotations.changeSeverity', this.changeSeverity.bind(this)),
-            vscode.commands.registerCommand('annotations.editTags', this.editAnnotationTags.bind(this)),
             vscode.commands.registerCommand('stack.back', async () => {
                 const id = this.navigationStack.back();
                 if (id) {
@@ -896,414 +864,6 @@ export class AnnotationManager extends EventEmitter {
                 const id = this.navigationStack.forward();
                 if (id) {
                     await this.navigateToAnnotation(id, false);
-                }
-            }),
-
-            // LinkedAnnotationManager commands
-            vscode.commands.registerCommand('annotations.createLink', async () => {
-                const editor = this.getActiveEditor();
-                if (!editor) return;
-                const sourceAnnotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
-                if (!sourceAnnotation) {
-                    vscode.window.showErrorMessage(
-                        localize('noAnnotationOnLineToLink', 'No annotation on this line to link from.')
-                    );
-                    return;
-                }
-
-                // Ask user what they want to do
-                const action = await vscode.window.showQuickPick(
-                    [
-                        { label: '$(link) Link to existing annotation', value: 'existing' },
-                        { label: '$(add) Create new linked annotation', value: 'new' },
-                    ],
-                    {
-                        placeHolder: 'How would you like to link this annotation?',
-                    }
-                );
-
-                if (!action) return;
-
-                if (action.value === 'existing') {
-                    // Show list of all annotations to link to
-                    const allAnnotations = Array.from(this.annotations.values())
-                        .filter((a) => a.id !== sourceAnnotation.id)
-                        .sort((a, b) => a.file.localeCompare(b.file));
-
-                    if (allAnnotations.length === 0) {
-                        vscode.window.showInformationMessage(
-                            localize('noOtherAnnotationsToLink', 'No other annotations found to link to.')
-                        );
-                        return;
-                    }
-
-                    const items = allAnnotations.map((annotation) => ({
-                        label: `$(file) ${annotation.file}:${annotation.line}`,
-                        description:
-                            annotation.message.substring(0, 60) + (annotation.message.length > 60 ? '...' : ''),
-                        detail: `Author: ${annotation.author || 'Unknown'} | ${new Date(annotation.timestamp).toLocaleDateString()}`,
-                        annotation: annotation,
-                    }));
-
-                    const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: 'Select annotation to link to',
-                        matchOnDescription: true,
-                        matchOnDetail: true,
-                    });
-
-                    if (selected && selected.annotation) {
-                        // Ask for relationship type
-                        const relationship = await vscode.window.showQuickPick(
-                            [
-                                { label: 'Related to', value: 'related' },
-                                { label: 'Implements', value: 'implements' },
-                                { label: 'References', value: 'references' },
-                                { label: 'Depends on', value: 'depends-on' },
-                                { label: 'Blocks', value: 'blocks' },
-                                { label: 'Duplicates', value: 'duplicates' },
-                            ],
-                            {
-                                placeHolder: 'Select relationship type',
-                            }
-                        );
-
-                        if (relationship) {
-                            await this.linkedAnnotationManager?.createLink(
-                                sourceAnnotation.id,
-                                selected.annotation.file,
-                                selected.annotation.line,
-                                relationship.value
-                            );
-                            vscode.window.showInformationMessage(
-                                localize(
-                                    'linkedToAnnotation',
-                                    'Linked to annotation in {0}:{1}',
-                                    selected.annotation.file,
-                                    selected.annotation.line
-                                )
-                            );
-                        }
-                    }
-                } else {
-                    // Create new annotation at specified location
-                    const targetFile = await vscode.window.showInputBox({
-                        prompt: localize('enterTargetFile', 'Enter target file path (relative to workspace)'),
-                        placeHolder: 'src/file.ts',
-                        value: editor.document.fileName,
-                    });
-                    if (!targetFile) return;
-
-                    const targetLine = await vscode.window.showInputBox({
-                        prompt: localize('enterTargetLine', 'Enter target line number'),
-                        placeHolder: '1',
-                        validateInput: (value) => {
-                            const num = parseInt(value);
-                            return isNaN(num) || num < 1 ? 'Please enter a valid line number' : null;
-                        },
-                    });
-                    if (!targetLine) return;
-
-                    const message = await vscode.window.showInputBox({
-                        prompt: localize('enterAnnotationMessage', 'Enter annotation message'),
-                        placeHolder: 'Related implementation...',
-                    });
-                    if (!message) return;
-                    const targetLineIndex = parseInt(targetLine, 10) - 1;
-
-                    // Create the new annotation FIRST
-                    const newAnnotation: Annotation = {
-                        id: this.generateId(),
-                        file: this.getRelativePath(targetFile),
-                        line: targetLineIndex,
-                        message: message,
-                        author: this.currentUser,
-                        timestamp: new Date().toISOString(),
-                        severity: this.config.defaultSeverity,
-                    };
-                    // Capture anchor if the target document is currently open
-                    const linkedDoc = vscode.workspace.textDocuments.find(
-                        (d) =>
-                            this.normalizePath(this.getRelativePath(d.fileName)) ===
-                            this.normalizePath(this.getRelativePath(targetFile))
-                    );
-                    if (linkedDoc) {
-                        await this.populateAnchor(newAnnotation, linkedDoc, newAnnotation.line);
-                    }
-                    this.annotations.set(newAnnotation.id, newAnnotation);
-                    await this.saveAnnotations();
-                    await this.refreshAnnotations();
-
-                    // THEN link the annotations (now that target exists)
-                    await this.linkedAnnotationManager?.createLink(
-                        sourceAnnotation.id,
-                        this.getRelativePath(targetFile),
-                        targetLineIndex,
-                        'related'
-                    );
-
-                    vscode.window.showInformationMessage(
-                        localize('createdAndLinkedAnnotation', 'Created and linked new annotation')
-                    );
-                }
-            }),
-            vscode.commands.registerCommand('annotations.navigateToLinked', async (annotationId?: string) => {
-                if (!annotationId) {
-                    const editor = this.getActiveEditor();
-                    if (!editor) return;
-                    const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
-                    if (!annotation) {
-                        vscode.window.showErrorMessage(localize('noAnnotationOnLine', 'No annotation on this line.'));
-                        return;
-                    }
-                    annotationId = annotation.id;
-                }
-
-                const annotation = this.annotations.get(annotationId);
-                if (!annotation || !annotation.linkedAnnotations || annotation.linkedAnnotations.length === 0) {
-                    vscode.window.showInformationMessage(
-                        localize('thisAnnotationHasNoLinks', 'This annotation has no links.')
-                    );
-                    return;
-                }
-
-                if (annotation.linkedAnnotations.length === 1) {
-                    // Direct navigation if only one link
-                    await this.navigateToLinked(annotationId);
-                } else {
-                    // Show picker if multiple links
-                    const items = annotation.linkedAnnotations.map((link, index) => {
-                        // Find the target annotation to show its message
-                        const targetAnnotation = Array.from(this.annotations.values()).find(
-                            (a) => a.file === link.targetFile && a.line === link.targetLine + 1
-                        );
-
-                        return {
-                            label: `$(link) ${link.relationship || 'related'} → ${link.targetFile}:${link.targetLine + 1}`,
-                            description: targetAnnotation
-                                ? targetAnnotation.message.substring(0, 60) +
-                                  (targetAnnotation.message.length > 60 ? '...' : '')
-                                : '',
-                            detail: targetAnnotation
-                                ? `Author: ${targetAnnotation.author || 'Unknown'} | ${new Date(targetAnnotation.timestamp).toLocaleDateString()}`
-                                : '',
-                            index: index,
-                        };
-                    });
-
-                    const selected = await vscode.window.showQuickPick(items, {
-                        placeHolder: 'Select linked annotation to navigate to',
-                    });
-
-                    if (selected !== undefined) {
-                        await this.linkedAnnotationManager?.goToLinkedAnnotation(annotationId, selected.index);
-                    }
-                }
-            }),
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            vscode.commands.registerCommand('annotations.showLinks', async (treeItemOrId?: any) => {
-                let annotationId: string;
-
-                // If called from TreeView inline action, treeItemOrId is the TreeItem
-                if (treeItemOrId && typeof treeItemOrId === 'object' && treeItemOrId.annotation) {
-                    annotationId = treeItemOrId.annotation.id;
-                } else if (typeof treeItemOrId === 'string') {
-                    // Called with annotation ID directly
-                    annotationId = treeItemOrId;
-                } else {
-                    // Called from command palette, find annotation at cursor position
-                    const editor = this.getActiveEditor();
-                    if (!editor) return;
-                    const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
-                    if (!annotation) {
-                        vscode.window.showErrorMessage(localize('noAnnotationOnLine', 'No annotation on this line.'));
-                        return;
-                    }
-                    annotationId = annotation.id;
-                }
-
-                const annotation = this.annotations.get(annotationId);
-                if (!annotation) return;
-
-                // Create webview panel to show links
-                const panel = vscode.window.createWebviewPanel(
-                    'annotationLinks',
-                    `Links for: ${annotation.message.substring(0, 50)}...`,
-                    vscode.ViewColumn.Two,
-                    { enableScripts: true }
-                );
-
-                // Find all incoming links
-                const incomingLinks = Array.from(this.annotations.values()).filter(
-                    (a) =>
-                        a.linkedAnnotations &&
-                        a.linkedAnnotations.some(
-                            (link) => link.targetFile === annotation.file && link.targetLine === annotation.line
-                        )
-                );
-
-                panel.webview.html = this.getLinksWebviewContent(annotation, incomingLinks);
-
-                // Handle messages from webview
-                panel.webview.onDidReceiveMessage(
-                    async (message) => {
-                        if (message.command === 'navigate') {
-                            try {
-                                // Try to open the file with workspace URI
-                                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-                                let uri: vscode.Uri;
-
-                                if (workspaceFolder) {
-                                    // Try as relative path from workspace
-                                    uri = vscode.Uri.joinPath(workspaceFolder.uri, message.file);
-                                    try {
-                                        await vscode.workspace.fs.stat(uri);
-                                    } catch {
-                                        // Try as absolute path
-                                        uri = vscode.Uri.file(message.file);
-                                    }
-                                } else {
-                                    uri = vscode.Uri.file(message.file);
-                                }
-
-                                const document = await vscode.workspace.openTextDocument(uri);
-                                const editor = await vscode.window.showTextDocument(document);
-                                const position = new vscode.Position(message.line, 0);
-                                editor.selection = new vscode.Selection(position, position);
-                                editor.revealRange(
-                                    new vscode.Range(position, position),
-                                    vscode.TextEditorRevealType.InCenter
-                                );
-
-                                // Find and focus the annotation at that line
-                                const annotation = this.findAnnotation(message.file, message.line);
-                                if (annotation) {
-                                    // Add to navigation stack
-                                    this.navigationStack.push(annotation.id);
-                                    // Highlight temporarily
-                                    this.highlightLineTemporarily(editor, annotation.line);
-                                    // Focus in panel if open
-                                    this.focusAnnotationInPanel(annotation.id);
-                                }
-                            } catch (error) {
-                                vscode.window.showErrorMessage(
-                                    localize(
-                                        'failedToNavigate',
-                                        'Failed to navigate to {0}:{1}: {2}',
-                                        message.file,
-                                        message.line + 1,
-                                        String(error)
-                                    )
-                                );
-                            }
-                        }
-                    },
-                    undefined,
-                    this.disposables
-                );
-            }),
-            vscode.commands.registerCommand('annotations.removeLink', async (annotationId?: string) => {
-                if (!annotationId) {
-                    const editor = this.getActiveEditor();
-                    if (!editor) return;
-                    const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
-                    if (!annotation) {
-                        vscode.window.showErrorMessage(localize('noAnnotationOnLine', 'No annotation on this line.'));
-                        return;
-                    }
-                    annotationId = annotation.id;
-                }
-
-                const annotation = this.annotations.get(annotationId);
-                if (!annotation || !annotation.linkedAnnotations || annotation.linkedAnnotations.length === 0) {
-                    vscode.window.showInformationMessage(
-                        localize('noLinkedAnnotationsToRemove', 'No linked annotations to remove.')
-                    );
-                    return;
-                }
-
-                // Show quick pick of linked annotations to remove
-                const items = annotation.linkedAnnotations.map((link, index) => ({
-                    label: `${link.targetFile}:${link.targetLine + 1}`,
-                    description: link.relationship,
-                    index: index,
-                }));
-
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select link to remove',
-                });
-
-                if (selected) {
-                    const linkToRemove = annotation.linkedAnnotations[selected.index];
-                    await this.linkedAnnotationManager?.removeLink(
-                        annotationId,
-                        linkToRemove.targetFile,
-                        linkToRemove.targetLine
-                    );
-                }
-            }),
-
-            // Kanban commands
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            vscode.commands.registerCommand('annotations.moveToColumn', async (treeItemOrId?: any) => {
-                let annotationId: string;
-
-                // If called from TreeView inline action, treeItemOrId is the TreeItem
-                if (treeItemOrId && typeof treeItemOrId === 'object' && treeItemOrId.annotation) {
-                    annotationId = treeItemOrId.annotation.id;
-                } else if (typeof treeItemOrId === 'string') {
-                    // Called with annotation ID directly
-                    annotationId = treeItemOrId;
-                } else {
-                    // Called from command palette, find annotation at cursor position
-                    const editor = this.getActiveEditor();
-                    if (!editor) return;
-                    const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
-                    if (!annotation) {
-                        vscode.window.showErrorMessage(localize('noAnnotationOnLine', 'No annotation on this line.'));
-                        return;
-                    }
-                    annotationId = annotation.id;
-                }
-
-                // Get current kanban columns dynamically
-                const items = Array.from(this.kanbanColumns.entries()).map(([id, name]) => ({
-                    label: name,
-                    value: id,
-                }));
-
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select column to move annotation to',
-                });
-
-                if (selected) {
-                    const annotation = this.annotations.get(annotationId);
-                    if (annotation) {
-                        annotation.kanbanColumn = selected.value;
-                        await this.saveAnnotations();
-                        this.emit('annotationChanged', annotation);
-                        vscode.window.showInformationMessage(
-                            localize('annotationMovedTo', 'Annotation moved to {0}', selected.label)
-                        );
-
-                        // Update Kanban view if it's open
-                        if (KanbanView.currentPanel) {
-                            const updatedAnnotations = Array.from(this.annotations.values());
-                            KanbanView.currentPanel.webview.postMessage({
-                                command: 'updateAnnotations',
-                                annotations: updatedAnnotations.map((a) => ({
-                                    id: a.id,
-                                    message: a.message,
-                                    severity: a.severity,
-                                    file: a.file?.split('/').pop() || 'Unknown',
-                                    filePath: a.file,
-                                    line: a.line,
-                                    tags: a.tags || [],
-                                    kanbanColumn: a.kanbanColumn || 'todo',
-                                    timestamp: a.timestamp,
-                                })),
-                            });
-                        }
-                    }
                 }
             }),
 
@@ -1380,8 +940,7 @@ export class AnnotationManager extends EventEmitter {
                 await this.templateManager.createTemplateFromUI();
             }),
             vscode.commands.registerCommand('annotations.manageTemplates', async () => {
-                // Show template management UI using createTemplateFromUI method
-                await this.templateManager.createTemplateFromUI();
+                await this.templateManager.manageTemplatesFromUI();
             }),
 
             // SnippetManager commands
@@ -1498,6 +1057,22 @@ export class AnnotationManager extends EventEmitter {
     }
 
     public async moveAnnotationUp(annotationId: string): Promise<void> {
+        const canonical = this.canonicalStore.get(annotationId);
+        if (canonical) {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(canonical.fileUri));
+            const line = document.positionAt(canonical.startOffset).line;
+            if (line === 0) {
+                vscode.window.showWarningMessage(
+                    localize('cannotMoveAboveFirstLine', 'Cannot move annotation above the first line.')
+                );
+                return;
+            }
+            this.canonicalStore.setAnnotationLine(annotationId, line - 1, document);
+            await this.refreshAnnotations();
+            this.updateAnnotationsPanel();
+            vscode.window.showInformationMessage(localize('annotationMovedUp', 'Annotation moved up successfully!'));
+            return;
+        }
         const annotation = this.annotations.get(annotationId);
         if (!annotation) return;
 
@@ -1518,6 +1093,24 @@ export class AnnotationManager extends EventEmitter {
     }
 
     public async moveAnnotationDown(annotationId: string): Promise<void> {
+        const canonical = this.canonicalStore.get(annotationId);
+        if (canonical) {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(canonical.fileUri));
+            const line = document.positionAt(canonical.startOffset).line;
+            if (line >= document.lineCount - 1) {
+                vscode.window.showWarningMessage(
+                    localize('cannotMoveBelowLastLine', 'Cannot move annotation below the last line.')
+                );
+                return;
+            }
+            this.canonicalStore.setAnnotationLine(annotationId, line + 1, document);
+            await this.refreshAnnotations();
+            this.updateAnnotationsPanel();
+            vscode.window.showInformationMessage(
+                localize('annotationMovedDown', 'Annotation moved down successfully!')
+            );
+            return;
+        }
         const annotation = this.annotations.get(annotationId);
         if (!annotation) return;
 
@@ -1560,10 +1153,46 @@ export class AnnotationManager extends EventEmitter {
         }
     }
 
-    private async batchEditAnnotations(): Promise<void> {
+    private async batchEditAnnotations(annotationArgument?: unknown): Promise<void> {
         const editor = this.getActiveEditor();
-        if (!editor) return;
-        const fileAnnotations = this.getAnnotationsForFile(editor.document.fileName);
+        const suppliedId = this.annotationIdFromCommandArgument(annotationArgument);
+        const suppliedAnnotation = suppliedId ? this.annotations.get(suppliedId) : undefined;
+        let file = suppliedAnnotation?.file ?? editor?.document.fileName;
+
+        if (!file) {
+            const byFile = new Map<string, number>();
+            for (const annotation of this.annotations.values()) {
+                byFile.set(annotation.file, (byFile.get(annotation.file) ?? 0) + 1);
+            }
+            const selected = await vscode.window.showQuickPick(
+                [...byFile.entries()]
+                    .sort(([left], [right]) => left.localeCompare(right))
+                    .map(([candidate, count]) => ({
+                        label: candidate,
+                        description: localize('annotationCount', '{0} annotation(s)', count),
+                        file: candidate,
+                    })),
+                {
+                    title: localize('batchEditAnnotationsTitle', 'Batch edit annotations'),
+                    placeHolder: localize(
+                        'selectFileToBatchEdit',
+                        'Select the file whose annotations you want to edit'
+                    ),
+                    matchOnDescription: true,
+                }
+            );
+            file = selected?.file;
+        }
+        if (!file) {
+            if (this.annotations.size === 0) {
+                vscode.window.showInformationMessage(localize('noAnnotations', 'No annotations found.'));
+            }
+            return;
+        }
+
+        const fileAnnotations = suppliedAnnotation
+            ? [...this.annotations.values()].filter((annotation) => annotation.file === suppliedAnnotation.file)
+            : this.getAnnotationsForFile(file);
         if (fileAnnotations.length === 0) {
             vscode.window.showInformationMessage(
                 localize('noAnnotationsForFile', 'No annotations found for this file.')
@@ -1577,6 +1206,21 @@ export class AnnotationManager extends EventEmitter {
                 text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
         });
         if (!newMessage) return;
+
+        const updateLabel = localize('updateAnnotations', 'Update {0} Annotations', fileAnnotations.length);
+        const confirmation = await vscode.window.showWarningMessage(
+            localize(
+                'confirmBatchEditAnnotations',
+                'Replace the message on all {0} annotations in {1}?',
+                fileAnnotations.length,
+                suppliedAnnotation?.file ?? vscode.workspace.asRelativePath(file)
+            ),
+            { modal: true },
+            updateLabel
+        );
+        if (confirmation !== updateLabel) {
+            return;
+        }
 
         for (const annotation of fileAnnotations) {
             annotation.message = newMessage;
@@ -1689,21 +1333,6 @@ export class AnnotationManager extends EventEmitter {
         }
     }
 
-    private async editAnnotationInline(annotation: Annotation): Promise<void> {
-        const newMessage = await vscode.window.showInputBox({
-            prompt: localize('editAnnotationPrompt', 'Edit annotation message'),
-            value: annotation.message,
-            validateInput: (text) =>
-                text.trim().length === 0 ? localize('emptyMessageError', 'Message cannot be empty') : null,
-        });
-        if (!newMessage) return;
-        annotation.message = newMessage;
-        annotation.timestamp = new Date().toISOString();
-        await this.saveAnnotations();
-        await this.refreshAnnotations();
-        vscode.window.showInformationMessage(localize('annotationModified', 'Annotation modified successfully!'));
-    }
-
     private async manageAnnotationCommand(annotations: Annotation[]): Promise<void> {
         const options = annotations.flatMap((annotation) => {
             const description = inlineLabel(annotation.message, 80) || annotation.id;
@@ -1756,66 +1385,191 @@ export class AnnotationManager extends EventEmitter {
         );
     }
 
-    private async convertAnnotationToIssue(): Promise<void> {
-        const editor = this.getActiveEditor();
-        if (!editor) return;
-        const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
+    public async createDevelopmentIssue(annotationArgument?: unknown): Promise<void> {
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize(
+                'selectAnnotationForDevelopmentIssue',
+                'Select the annotation to turn into a GitHub development issue'
+            )
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationIssue', 'No annotation found on this line.'));
+            return;
+        }
+        const annotationId = annotation.id;
+
+        const dialogTitle = localize('createGitHubDevelopmentIssue', 'Create GitHub Development Issue');
+        const configuration = vscode.workspace.getConfiguration('annotation');
+        const repositoryInput = await vscode.window.showInputBox({
+            title: dialogTitle,
+            prompt: localize(
+                'chooseGitHubIssueRepository',
+                'Choose the destination repository. It will be saved for this workspace.'
+            ),
+            placeHolder: 'owner/repository',
+            value: configuration.get<string>('github.repository', '').trim(),
+            ignoreFocusOut: true,
+            validateInput: (value) =>
+                validateGitHubRepository(value)
+                    ? localize(
+                          'invalidGitHubRepositoryFormat',
+                          'Enter a repository as owner/repository (for example, octocat/hello-world).'
+                      )
+                    : undefined,
+        });
+        if (repositoryInput === undefined) {
             return;
         }
 
-        const repo = vscode.workspace.getConfiguration('annotation').get<string>('github.repository', '');
-        if (!repo || !repo.includes('/')) {
+        const repository = parseGitHubRepository(repositoryInput);
+        if (!repository) {
+            vscode.window.showErrorMessage(localize('invalidGitHubRepository', 'The GitHub repository is invalid.'));
+            return;
+        }
+        const suggestedTitle = `Annotation: ${inlineLabel(annotation.message, 220) || annotation.id}`.slice(0, 256);
+        const title = await vscode.window.showInputBox({
+            title: dialogTitle,
+            prompt: localize('reviewGitHubIssueTitle', 'Review or edit the issue title.'),
+            value: suggestedTitle,
+            ignoreFocusOut: true,
+            validateInput: (value) => {
+                const trimmed = value.trim();
+                if (trimmed.length === 0) {
+                    return localize('githubIssueTitleEmpty', 'Issue title cannot be empty.');
+                }
+                return trimmed.length > 256
+                    ? localize('githubIssueTitleTooLong', 'Issue title cannot exceed 256 characters.')
+                    : undefined;
+            },
+        });
+        if (title === undefined) {
+            return;
+        }
+
+        const createLabel = localize('createIssue', 'Create Issue');
+        const confirmation = await vscode.window.showWarningMessage(
+            localize(
+                'confirmCreateGitHubIssue',
+                'Create an issue in {0} from “{1}”? VS Code will request GitHub access.',
+                repository.fullName,
+                inlineLabel(annotation.message, 80) || annotation.id
+            ),
+            { modal: true },
+            createLabel
+        );
+        if (confirmation !== createLabel) {
+            return;
+        }
+
+        try {
+            await configuration.update('github.repository', repository.fullName, vscode.ConfigurationTarget.Workspace);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(
-                'GitHub repository not configured properly. Set "annotation.github.repository": "owner/repo" in settings.'
+                localize(
+                    'githubRepositorySaveFailed',
+                    'Could not save the GitHub repository for this workspace: {0}',
+                    message
+                )
             );
             return;
         }
 
-        const [owner, repoName] = repo.split('/');
-        const secretStorage = this.context.secrets;
-        let githubToken = await secretStorage.get('annotation.github.token');
-        if (!githubToken) {
-            githubToken = await vscode.window.showInputBox({
-                prompt: 'Enter your GitHub personal access token (with repo scope)',
-                password: true,
-            });
-            if (!githubToken) {
-                vscode.window.showErrorMessage('GitHub token is required to create issues.');
+        try {
+            const currentAnnotation = this.canonicalStore.get(annotationId);
+            if (!currentAnnotation) {
+                vscode.window.showErrorMessage(localize('annotationNotFound', 'Annotation not found.'));
                 return;
             }
-            await secretStorage.store('annotation.github.token', githubToken);
-        }
-
-        try {
+            const sourceDocument = await vscode.workspace.openTextDocument(vscode.Uri.parse(currentAnnotation.fileUri));
+            const sourceLine = sourceDocument.positionAt(currentAnnotation.startOffset).line;
+            const session = await vscode.authentication.getSession('github', ['repo'], { createIfNone: true });
             const { Octokit } = await import('@octokit/rest');
-            const octokit = new Octokit({ auth: githubToken });
-            const title = `Annotation: ${annotation.message.substring(0, 50)}`;
-            const body = `**File:** ${annotation.file}\n**Line:** ${annotation.line + 1}\n**Message:** ${annotation.message}\n\n_Converted from Out-of-Code Insights annotation._`;
-
+            const octokit = new Octokit({ auth: session.accessToken });
             const response = await octokit.issues.create({
-                owner,
-                repo: repoName,
-                title,
-                body,
+                owner: repository.owner,
+                repo: repository.repository,
+                title: title.trim(),
+                body: [
+                    '## Source annotation',
+                    '',
+                    `- **File:** \`${currentAnnotation.file.replace(/`/g, '\\`')}\``,
+                    `- **Line:** ${sourceLine + 1}`,
+                    `- **Author:** ${currentAnnotation.author || 'Unknown'}`,
+                    '',
+                    currentAnnotation.message,
+                    '',
+                    '---',
+                    '_Created from an Out-of-Code Insights annotation._',
+                ].join('\n'),
             });
-
-            if (response && response.data && response.data.html_url) {
-                vscode.window.showInformationMessage(`GitHub issue created: ${response.data.html_url}`);
-                annotation.tags = annotation.tags || [];
-                if (!annotation.tags.includes('GitHubIssue')) {
-                    annotation.tags.push('GitHubIssue');
-                }
-                await this.saveAnnotations();
-                await this.refreshAnnotations();
-                this.emit('annotationChanged');
-            } else {
-                vscode.window.showErrorMessage('Failed to create GitHub issue.');
+            const issueUrl = response.data.html_url;
+            if (!issueUrl) {
+                throw new Error(localize('githubIssueUrlMissing', 'GitHub did not return an issue URL.'));
             }
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        } catch (error: any) {
-            vscode.window.showErrorMessage('Error creating GitHub issue: ' + error.message);
+
+            const issueNumber = response.data.number;
+            const timestamp = new Date().toISOString();
+            const openLabel = localize('openIssue', 'Open Issue');
+            try {
+                const latestAnnotation = this.canonicalStore.get(annotationId);
+                if (!latestAnnotation) {
+                    throw new Error(localize('annotationNotFound', 'Annotation not found.'));
+                }
+                this.canonicalStore.update(annotationId, {
+                    tags: [...new Set([...(latestAnnotation.tags ?? []), 'GitHubIssue'])],
+                    thread: [
+                        ...(latestAnnotation.thread ?? []),
+                        {
+                            id: this.generateId(),
+                            author: this.currentUser || 'Out-of-Code Insights',
+                            timestamp,
+                            message: localize(
+                                'githubDevelopmentIssueTrace',
+                                'GitHub development issue #{0}: {1} ({2})',
+                                issueNumber,
+                                issueUrl,
+                                repository.fullName
+                            ),
+                        },
+                    ],
+                });
+                await this.refreshAnnotations();
+                this.updateAnnotationsPanel();
+                this.emit('annotationChanged');
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                this.log(
+                    `GitHub issue #${issueNumber} was created, but its annotation trace was not saved: ${message}`
+                );
+                const action = await vscode.window.showWarningMessage(
+                    localize(
+                        'githubIssueCreatedTraceFailed',
+                        'GitHub issue #{0} was created, but its annotation trace could not be saved: {1}',
+                        issueNumber,
+                        message
+                    ),
+                    openLabel
+                );
+                if (action === openLabel) {
+                    await vscode.env.openExternal(vscode.Uri.parse(issueUrl));
+                }
+                return;
+            }
+
+            const action = await vscode.window.showInformationMessage(
+                localize('githubIssueCreated', 'GitHub issue #{0} created in {1}.', issueNumber, repository.fullName),
+                openLabel
+            );
+            if (action === openLabel) {
+                await vscode.env.openExternal(vscode.Uri.parse(issueUrl));
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.log(`Failed to create GitHub development issue: ${message}`);
+            vscode.window.showErrorMessage(
+                localize('githubIssueCreationFailed', 'Could not create the GitHub issue: {0}', message)
+            );
         }
     }
 
@@ -2151,20 +1905,23 @@ export class AnnotationManager extends EventEmitter {
         vscode.window.showInformationMessage(localize('tagFilterApplied', 'Filter by tag applied.'));
     }
 
-    private async togglePinAnnotation(): Promise<void> {
+    private async togglePinAnnotation(annotationArgument?: unknown): Promise<void> {
         const editor = this.getActiveEditor();
-        if (!editor) return;
-        const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize('selectAnnotationToTogglePin', 'Select an annotation to pin or unpin')
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationPin', 'No annotation found on this line.'));
             return;
         }
         annotation.pinned = !annotation.pinned;
         await this.saveAnnotations();
         await this.refreshAnnotations();
-        this.clearDecorations(editor);
-        const allAnnotations = this.getAnnotationsForFile(editor.document.fileName);
-        await this.applyAnnotations(editor, allAnnotations);
+        if (editor && this.annotationMatchesDocument(annotation, editor.document)) {
+            this.clearDecorations(editor);
+            const allAnnotations = this.getAnnotationsForFile(editor.document.fileName);
+            await this.applyAnnotations(editor, allAnnotations);
+        }
         this.updateAnnotationsPanel();
         vscode.window.showInformationMessage(
             annotation.pinned
@@ -2173,12 +1930,12 @@ export class AnnotationManager extends EventEmitter {
         );
     }
 
-    private async setAnnotationSeverity(): Promise<void> {
-        const editor = this.getActiveEditor();
-        if (!editor) return;
-        const annotation = this.findAnnotation(editor.document.fileName, editor.selection.active.line);
+    private async setAnnotationSeverity(annotationArgument?: unknown): Promise<void> {
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize('selectAnnotationForSeverity', 'Select an annotation whose severity you want to change')
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationPin', 'No annotation found on this line.'));
             return;
         }
         const severity = await vscode.window.showQuickPick(['info', 'warning', 'error'], {
@@ -2348,7 +2105,99 @@ export class AnnotationManager extends EventEmitter {
         this.updateAnnotationsPanel();
     }
 
-    public async navigateToAnnotation(annotationId: string, record = true): Promise<void> {
+    private annotationIdFromCommandArgument(value: unknown): string | undefined {
+        if (typeof value === 'string' && value.length > 0) {
+            return value;
+        }
+        if (typeof value !== 'object' || value === null) {
+            return undefined;
+        }
+        const candidate = value as { id?: unknown; annotation?: { id?: unknown } };
+        if (typeof candidate.annotation?.id === 'string') {
+            return candidate.annotation.id;
+        }
+        return typeof candidate.id === 'string' ? candidate.id : undefined;
+    }
+
+    private async pickAnnotationId(placeHolder: string): Promise<string | undefined> {
+        const items = [...this.annotations.values()]
+            .sort((left, right) => left.file.localeCompare(right.file) || left.line - right.line)
+            .map((annotation) => ({
+                label:
+                    annotation.message
+                        .replace(/\r\n?/g, '\n')
+                        .split('\n')
+                        .find((line) => line.trim().length > 0)
+                        ?.replace(/^#{1,6}\s+/, '')
+                        .trim()
+                        .slice(0, 100) || 'Untitled annotation',
+                description: `${annotation.file}:${annotation.line + 1}`,
+                detail: annotation.resolved
+                    ? 'Resolved annotation'
+                    : annotation.reviewState
+                      ? annotation.reviewState.viewed
+                          ? localize(
+                                'reviewedByDetail',
+                                'Reviewed by {0} on {1}',
+                                annotation.reviewState.viewedBy || localize('unknownAuthor', 'Unknown'),
+                                new Date(annotation.reviewState.viewedAt).toLocaleString()
+                            )
+                          : localize('reviewNotViewedDetail', 'Review: Not viewed')
+                      : annotation.severity
+                        ? `Severity: ${annotation.severity}`
+                        : 'Open annotation',
+                id: annotation.id,
+            }));
+        if (items.length === 0) {
+            vscode.window.showInformationMessage(localize('noAnnotations', 'No annotations found.'));
+            return undefined;
+        }
+        return (await vscode.window.showQuickPick(items, { placeHolder }))?.id;
+    }
+
+    private async annotationForGuidedCommand(
+        annotationArgument: unknown,
+        placeHolder: string
+    ): Promise<Annotation | undefined> {
+        const suppliedId = this.annotationIdFromCommandArgument(annotationArgument);
+        if (suppliedId) {
+            const supplied = this.annotations.get(suppliedId);
+            if (!supplied) {
+                vscode.window.showErrorMessage(localize('annotationNotFound', 'Annotation not found.'));
+            }
+            return supplied;
+        }
+
+        const editor = this.getActiveEditor();
+        const atCursor = editor
+            ? this.findAnnotation(editor.document.fileName, editor.selection.active.line)
+            : undefined;
+        const annotationId = atCursor?.id ?? (await this.pickAnnotationId(placeHolder));
+        return annotationId ? this.annotations.get(annotationId) : undefined;
+    }
+
+    public async navigateToAnnotation(annotationArgument?: unknown, record = true): Promise<void> {
+        const annotationId =
+            this.annotationIdFromCommandArgument(annotationArgument) ??
+            (await this.pickAnnotationId(localize('selectAnnotationToNavigate', 'Select an annotation to open')));
+        if (!annotationId) {
+            return;
+        }
+        const canonical = this.canonicalStore.get(annotationId);
+        if (canonical) {
+            const uri = vscode.Uri.parse(canonical.fileUri);
+            const document = await vscode.workspace.openTextDocument(uri);
+            const editor = await vscode.window.showTextDocument(document);
+            const safeOffset = Math.max(0, Math.min(canonical.startOffset, document.getText().length));
+            const position = document.positionAt(safeOffset);
+            const range = document.lineAt(position.line).range;
+            editor.selection = new vscode.Selection(range.start, range.end);
+            editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+            if (record) {
+                this.navigationStack.push(annotationId);
+            }
+            return;
+        }
         const annotation = this.annotations.get(annotationId);
         if (!annotation) {
             vscode.window.showErrorMessage(`Annotation not found for id: ${annotationId}`);
@@ -3785,216 +3634,6 @@ export class AnnotationManager extends EventEmitter {
     private getWebviewUri(fileName: string): string {
         const resourcePath = vscode.Uri.joinPath(this.context.extensionUri, 'media', fileName);
         return this.annotationsPanel?.webview.asWebviewUri(resourcePath).toString() || '';
-    }
-
-    private getLinksWebviewContent(annotation: Annotation, incomingLinks: Annotation[]): string {
-        const outgoingLinks = annotation.linkedAnnotations || [];
-        const linksNonce = generateNonce();
-        return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${linksNonce}'; img-src data:;">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Annotation Links</title>
-            <style>
-                body {
-                    font-family: var(--vscode-font-family);
-                    color: var(--vscode-foreground);
-                    background-color: var(--vscode-editor-background);
-                    padding: 20px;
-                    line-height: 1.6;
-                }
-                
-                h2 {
-                    color: var(--vscode-textLink-foreground);
-                    border-bottom: 1px solid var(--vscode-panel-border);
-                    padding-bottom: 10px;
-                    margin-bottom: 20px;
-                }
-                
-                .annotation-box {
-                    background-color: var(--vscode-editor-inactiveSelectionBackground);
-                    border: 1px solid var(--vscode-panel-border);
-                    border-radius: 4px;
-                    padding: 15px;
-                    margin-bottom: 20px;
-                }
-                
-                .link-section {
-                    margin: 20px 0;
-                }
-                
-                .link-item {
-                    background-color: var(--vscode-list-hoverBackground);
-                    border: 1px solid var(--vscode-panel-border);
-                    border-radius: 4px;
-                    padding: 10px;
-                    margin: 10px 0;
-                    cursor: pointer;
-                    transition: background-color 0.2s;
-                }
-                
-                .link-item:hover {
-                    background-color: var(--vscode-list-activeSelectionBackground);
-                }
-                
-                .relationship {
-                    display: inline-block;
-                    background-color: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
-                    padding: 2px 8px;
-                    border-radius: 3px;
-                    font-size: 12px;
-                    margin-right: 10px;
-                    text-transform: uppercase;
-                }
-                
-                .file-path {
-                    color: var(--vscode-textLink-foreground);
-                    font-family: var(--vscode-editor-font-family);
-                    font-size: 13px;
-                }
-                
-                .message {
-                    margin-top: 5px;
-                    font-style: italic;
-                    opacity: 0.8;
-                }
-                
-                .meta {
-                    font-size: 12px;
-                    opacity: 0.7;
-                    margin-top: 5px;
-                }
-                
-                .empty {
-                    opacity: 0.6;
-                    font-style: italic;
-                }
-                
-                .stats {
-                    background-color: var(--vscode-sideBar-background);
-                    padding: 15px;
-                    border-radius: 4px;
-                    margin-bottom: 20px;
-                    display: flex;
-                    justify-content: space-around;
-                    text-align: center;
-                }
-                
-                .stat-item {
-                    flex: 1;
-                }
-                
-                .stat-value {
-                    font-size: 24px;
-                    font-weight: bold;
-                    color: var(--vscode-textLink-foreground);
-                }
-                
-                .stat-label {
-                    font-size: 12px;
-                    opacity: 0.7;
-                }
-            </style>
-        </head>
-        <body>
-            <h1>🔗 Annotation Links</h1>
-            
-            <div class="annotation-box">
-                <strong>Current Annotation:</strong><br>
-                <span class="file-path" style="cursor: pointer; color: var(--vscode-textLink-foreground);"
-                      data-navigate-file="${escapeHtml(annotation.file)}"
-                      data-navigate-line="${annotation.line - 1}">
-                    \u{1F4C4} ${escapeHtml(annotation.file)}:${annotation.line}
-                </span><br>
-                \u{1F4AC} ${escapeHtml(annotation.message)}<br>
-                <span class="meta">\u{1F464} ${escapeHtml(annotation.author || 'Unknown')} | \u{1F4C5} ${new Date(annotation.timestamp).toLocaleString()}</span>
-            </div>
-            
-            <div class="stats">
-                <div class="stat-item">
-                    <div class="stat-value">${outgoingLinks.length}</div>
-                    <div class="stat-label">Outgoing Links</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${incomingLinks.length}</div>
-                    <div class="stat-label">Incoming Links</div>
-                </div>
-                <div class="stat-item">
-                    <div class="stat-value">${outgoingLinks.length + incomingLinks.length}</div>
-                    <div class="stat-label">Total Connections</div>
-                </div>
-            </div>
-            
-            <div class="link-section">
-                <h2>➡️ Outgoing Links (${outgoingLinks.length})</h2>
-                ${
-                    outgoingLinks.length > 0
-                        ? outgoingLinks
-                              .map((link) => {
-                                  const targetAnnotations = Array.from(this.annotations.values());
-                                  const target = targetAnnotations.find(
-                                      (a) => a.file === link.targetFile && a.line === link.targetLine
-                                  );
-                                  return `
-                        <div class="link-item"
-                             data-navigate-file="${escapeHtml(link.targetFile)}"
-                             data-navigate-line="${link.targetLine - 1}">
-                            <span class="relationship">${escapeHtml(link.relationship || 'related')}</span>
-                            <span class="file-path">${escapeHtml(link.targetFile)}:${link.targetLine}</span>
-                            ${target ? `<div class="message">${escapeHtml(target.message)}</div>` : ''}
-                            ${target ? `<div class="meta">\u{1F464} ${escapeHtml(target.author || 'Unknown')} | \u{1F4C5} ${new Date(target.timestamp).toLocaleDateString()}</div>` : ''}
-                        </div>
-                    `;
-                              })
-                              .join('')
-                        : '<p class="empty">No outgoing links</p>'
-                }
-            </div>
-
-            <div class="link-section">
-                <h2>\u{2B05}\u{FE0F} Incoming Links (${incomingLinks.length})</h2>
-                ${
-                    incomingLinks.length > 0
-                        ? incomingLinks
-                              .map((source) => {
-                                  const link = source.linkedAnnotations?.find(
-                                      (l) => l.targetFile === annotation.file && l.targetLine === annotation.line
-                                  );
-                                  return `
-                        <div class="link-item"
-                             data-navigate-file="${escapeHtml(source.file)}"
-                             data-navigate-line="${source.line - 1}">
-                            <span class="relationship">${escapeHtml(link?.relationship || 'related')}</span>
-                            <span class="file-path">${escapeHtml(source.file)}:${source.line}</span>
-                            <div class="message">${escapeHtml(source.message)}</div>
-                            <div class="meta">\u{1F464} ${escapeHtml(source.author || 'Unknown')} | \u{1F4C5} ${new Date(source.timestamp).toLocaleDateString()}</div>
-                        </div>
-                    `;
-                              })
-                              .join('')
-                        : '<p class="empty">No incoming links</p>'
-                }
-            </div>
-
-            <script nonce="${linksNonce}">
-                const vscode = acquireVsCodeApi();
-
-                document.addEventListener('click', function(e) {
-                    const el = e.target.closest('[data-navigate-file]');
-                    if (el) {
-                        vscode.postMessage({
-                            command: 'navigate',
-                            file: el.dataset.navigateFile,
-                            line: parseInt(el.dataset.navigateLine, 10)
-                        });
-                    }
-                });
-            </script>
-        </body>
-        </html>`;
     }
 
     public dispose(): void {
@@ -6044,49 +5683,60 @@ export class AnnotationManager extends EventEmitter {
         }
     }
 
-    public async deleteAnnotationCommand(): Promise<void> {
-        const editor = this.getActiveEditor();
-        if (!editor) return;
-        const line = editor.selection.active.line;
-        const annotation = this.findAnnotation(editor.document.fileName, line);
+    public async deleteAnnotationCommand(annotationArgument?: unknown): Promise<void> {
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize('selectAnnotationToDelete', 'Select an annotation to delete')
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationDelete', 'No annotation found on this line.'));
+            return;
+        }
+        const deleteLabel = localize('deleteAnnotation', 'Delete Annotation');
+        const confirmation = await vscode.window.showWarningMessage(
+            localize(
+                'confirmDeleteAnnotation',
+                'Delete “{0}” from {1}:{2}?',
+                inlineLabel(annotation.message, 80) || annotation.id,
+                annotation.file,
+                annotation.line + 1
+            ),
+            { modal: true },
+            deleteLabel
+        );
+        if (confirmation !== deleteLabel) {
             return;
         }
         await this.deleteAnnotation(annotation.id);
     }
 
-    public async editAnnotationCommand(): Promise<void> {
-        const editor = this.getActiveEditor();
-        if (!editor) return;
-        const line = editor.selection.active.line;
-        const annotation = this.findAnnotation(editor.document.fileName, line);
+    public async editAnnotationCommand(annotationArgument?: unknown): Promise<void> {
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize('selectAnnotationToEdit', 'Select an annotation to edit')
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationEdit', 'No annotation found on this line.'));
             return;
         }
         await this.modifyAnnotation(annotation.id);
     }
 
-    public async moveUpCommand(): Promise<void> {
-        const editor = this.getActiveEditor();
-        if (!editor) return;
-        const line = editor.selection.active.line;
-        const annotation = this.findAnnotation(editor.document.fileName, line);
+    public async moveUpCommand(annotationArgument?: unknown): Promise<void> {
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize('selectAnnotationToMoveUp', 'Select an annotation to move up one line')
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationMove', 'No annotation found on this line.'));
             return;
         }
         await this.moveAnnotationUp(annotation.id);
     }
 
-    public async moveDownCommand(): Promise<void> {
-        const editor = this.getActiveEditor();
-        if (!editor) return;
-        const line = editor.selection.active.line;
-        const annotation = this.findAnnotation(editor.document.fileName, line);
+    public async moveDownCommand(annotationArgument?: unknown): Promise<void> {
+        const annotation = await this.annotationForGuidedCommand(
+            annotationArgument,
+            localize('selectAnnotationToMoveDown', 'Select an annotation to move down one line')
+        );
         if (!annotation) {
-            vscode.window.showErrorMessage(localize('noAnnotationMove', 'No annotation found on this line.'));
             return;
         }
         await this.moveAnnotationDown(annotation.id);
@@ -6176,8 +5826,23 @@ export class AnnotationManager extends EventEmitter {
         }
     }
 
-    private async replyToAnnotation(annotationId: string): Promise<void> {
+    private async replyToAnnotation(annotationArgument?: unknown): Promise<void> {
         try {
+            let annotationId = this.annotationIdFromCommandArgument(annotationArgument);
+            if (!annotationId) {
+                const editor = vscode.window.activeTextEditor;
+                const atCursor = editor
+                    ? this.findAnnotation(editor.document.fileName, editor.selection.active.line)
+                    : undefined;
+                annotationId =
+                    atCursor?.id ??
+                    (await this.pickAnnotationId(
+                        localize('selectAnnotationToReply', 'Select an annotation to reply to')
+                    ));
+            }
+            if (!annotationId) {
+                return;
+            }
             const annotation = this.annotations.get(annotationId);
             if (!annotation) return;
             const reply = await vscode.window.showInputBox({

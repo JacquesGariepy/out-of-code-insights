@@ -1,0 +1,14 @@
+{
+    "$schema": "../../schemas/document-template.schema.json",
+    "schemaVersion": 1,
+    "id": "engineering-portal",
+    "label": "Engineering portal",
+    "description": "Managed, reproducible documentation preset for developers and reviewers.",
+    "formats": ["markdown", "static-site", "hosted-wiki", "html", "openapi"],
+    "documents": ["readme", "changelog", "architecture", "adr", "onboarding", "runbook", "reference"],
+    "includeInventory": true,
+    "includeAuthored": true,
+    "apiFolder": "api",
+    "guideFile": "guide.md",
+    "language": "fr-CA"
+}

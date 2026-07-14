@@ -20,6 +20,15 @@ export interface TemplateVariable {
 
 const TEMPLATES_STORAGE_KEY = 'annotation.templates';
 
+interface TemplateQuickPickItem extends vscode.QuickPickItem {
+    templateId: string;
+}
+
+interface MutationResult<T> {
+    result: T;
+    changed: boolean;
+}
+
 // Default built-in templates
 const DEFAULT_TEMPLATES: AnnotationTemplate[] = [
     {
@@ -80,6 +89,7 @@ const DEFAULT_TEMPLATES: AnnotationTemplate[] = [
 export class TemplateManager {
     private context: vscode.ExtensionContext;
     private templates: Map<string, AnnotationTemplate>;
+    private mutationQueue: Promise<void> = Promise.resolve();
 
     constructor(context: vscode.ExtensionContext) {
         this.context = context;
@@ -90,78 +100,116 @@ export class TemplateManager {
     private loadTemplates(): void {
         // Load built-in templates
         DEFAULT_TEMPLATES.forEach((template) => {
-            this.templates.set(template.id, template);
+            this.templates.set(template.id, this.cloneTemplate(template));
         });
 
         // Load custom templates from global state
-        const customTemplates = this.context.globalState.get<AnnotationTemplate[]>(TEMPLATES_STORAGE_KEY, []);
-        customTemplates.forEach((template) => {
-            if (!template.isBuiltIn) {
-                this.templates.set(template.id, template);
+        const storedTemplates = this.context.globalState.get<unknown>(TEMPLATES_STORAGE_KEY, []);
+        if (!Array.isArray(storedTemplates)) {
+            return;
+        }
+
+        storedTemplates.forEach((storedTemplate) => {
+            if (!this.isImportableTemplate(storedTemplate)) {
+                return;
+            }
+
+            try {
+                const normalized = this.normalizeTemplate(storedTemplate);
+                const storedId =
+                    typeof storedTemplate.id === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(storedTemplate.id)
+                        ? storedTemplate.id
+                        : undefined;
+                const id =
+                    storedId && !this.templates.has(storedId) ? storedId : this.generateTemplateId(normalized.name);
+                this.templates.set(id, {
+                    ...normalized,
+                    id,
+                    isBuiltIn: false,
+                    variables: this.extractVariables(normalized.content),
+                });
+            } catch {
+                // Ignore malformed persisted entries without preventing the
+                // remaining templates (including built-ins) from loading.
             }
         });
     }
 
-    private saveCustomTemplates(): void {
-        const customTemplates = Array.from(this.templates.values()).filter((t) => !t.isBuiltIn);
-        this.context.globalState.update(TEMPLATES_STORAGE_KEY, customTemplates);
+    private async saveCustomTemplates(): Promise<void> {
+        const customTemplates = Array.from(this.templates.values())
+            .filter((template) => !template.isBuiltIn)
+            .map((template) => this.cloneTemplate(template));
+        await this.context.globalState.update(TEMPLATES_STORAGE_KEY, customTemplates);
     }
 
     public getAllTemplates(): AnnotationTemplate[] {
-        return Array.from(this.templates.values());
+        return Array.from(this.templates.values(), (template) => this.cloneTemplate(template));
     }
 
     public getTemplate(id: string): AnnotationTemplate | undefined {
-        return this.templates.get(id);
+        const template = this.templates.get(id);
+        return template ? this.cloneTemplate(template) : undefined;
     }
 
     public async createTemplate(template: Omit<AnnotationTemplate, 'id'>): Promise<AnnotationTemplate> {
-        const id = this.generateTemplateId(template.name);
-        const newTemplate: AnnotationTemplate = {
-            ...template,
-            id,
-            isBuiltIn: false,
-            variables: this.extractVariables(template.content),
-        };
+        return this.enqueuePersistedMutation(() => {
+            const normalized = this.normalizeTemplate(template);
+            const id = this.generateTemplateId(normalized.name);
+            const newTemplate: AnnotationTemplate = {
+                ...normalized,
+                id,
+                isBuiltIn: false,
+                variables: this.extractVariables(normalized.content),
+            };
 
-        this.templates.set(id, newTemplate);
-        this.saveCustomTemplates();
-
-        return newTemplate;
+            this.templates.set(id, newTemplate);
+            return { result: this.cloneTemplate(newTemplate), changed: true };
+        });
     }
 
     public async updateTemplate(
         id: string,
         updates: Partial<AnnotationTemplate>
     ): Promise<AnnotationTemplate | undefined> {
-        const template = this.templates.get(id);
-        if (!template || template.isBuiltIn) {
-            return undefined;
-        }
+        return this.enqueuePersistedMutation(() => {
+            const template = this.templates.get(id);
+            if (!template || template.isBuiltIn) {
+                return { result: undefined, changed: false };
+            }
 
-        const updatedTemplate: AnnotationTemplate = {
-            ...template,
-            ...updates,
-            id, // Ensure ID doesn't change
-            isBuiltIn: false,
-            variables: updates.content ? this.extractVariables(updates.content) : template.variables,
-        };
+            const normalized = this.normalizeTemplate({
+                name: updates.name === undefined ? template.name : updates.name,
+                description: Object.prototype.hasOwnProperty.call(updates, 'description')
+                    ? updates.description
+                    : template.description,
+                content: updates.content === undefined ? template.content : updates.content,
+                tags: Object.prototype.hasOwnProperty.call(updates, 'tags') ? updates.tags : template.tags,
+                severity: Object.prototype.hasOwnProperty.call(updates, 'severity')
+                    ? updates.severity
+                    : template.severity,
+            });
+            const updatedTemplate: AnnotationTemplate = {
+                ...normalized,
+                id,
+                isBuiltIn: false,
+                variables: this.extractVariables(normalized.content),
+            };
 
-        this.templates.set(id, updatedTemplate);
-        this.saveCustomTemplates();
-
-        return updatedTemplate;
+            this.templates.set(id, updatedTemplate);
+            return { result: this.cloneTemplate(updatedTemplate), changed: true };
+        });
     }
 
     public async deleteTemplate(id: string): Promise<boolean> {
-        const template = this.templates.get(id);
-        if (!template || template.isBuiltIn) {
-            return false;
-        }
+        return this.enqueuePersistedMutation(() => {
+            const template = this.templates.get(id);
+            if (!template || template.isBuiltIn) {
+                return { result: false, changed: false };
+            }
 
-        this.templates.delete(id);
-        this.saveCustomTemplates();
-        return true;
+            this.templates.delete(id);
+            return { result: true, changed: true };
+        });
     }
 
     public async applyTemplate(template: AnnotationTemplate, variableValues?: Record<string, string>): Promise<string> {
@@ -178,14 +226,23 @@ export class TemplateManager {
 
         // Replace variables with values
         if (variableValues) {
-            for (const [variable, value] of Object.entries(variableValues)) {
-                const regex = new RegExp(`{{\\s*${variable}\\s*}}`, 'g');
-                content = content.replace(regex, value);
+            for (const variable of variables) {
+                if (!Object.prototype.hasOwnProperty.call(variableValues, variable)) {
+                    continue;
+                }
+
+                const value = variableValues[variable];
+                if (typeof value !== 'string') {
+                    throw new TypeError(`Template variable "${variable}" must be a string.`);
+                }
+
+                const regex = new RegExp(`{{\\s*${this.escapeRegExp(variable)}\\s*}}`, 'g');
+                content = content.replace(regex, () => value);
             }
         }
 
         // Replace any remaining variables with empty strings
-        content = content.replace(/{{[^}]+}}/g, '');
+        content = content.replace(/{{\s*[^{}\r\n]+?\s*}}/g, '');
 
         return content;
     }
@@ -193,12 +250,13 @@ export class TemplateManager {
     public async showTemplateQuickPick(): Promise<AnnotationTemplate | undefined> {
         const templates = this.getAllTemplates();
 
-        const items: vscode.QuickPickItem[] = templates.map((template) => ({
+        const items: TemplateQuickPickItem[] = templates.map((template) => ({
             label: template.name,
             description: template.description,
             detail: template.isBuiltIn
                 ? localize('builtInTemplate', 'Built-in template')
                 : localize('customTemplate', 'Custom template'),
+            templateId: template.id,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
@@ -209,7 +267,7 @@ export class TemplateManager {
             return undefined;
         }
 
-        return templates.find((t) => t.name === selected.label);
+        return this.getTemplate(selected.templateId);
     }
 
     public async exportTemplates(): Promise<string> {
@@ -219,34 +277,42 @@ export class TemplateManager {
 
     public async importTemplates(jsonData: string): Promise<number> {
         try {
-            const parsedTemplates = JSON.parse(jsonData);
+            const parsedTemplates: unknown = JSON.parse(jsonData);
             if (!Array.isArray(parsedTemplates)) {
                 throw new Error('Invalid format: expected an array of templates.');
             }
-            const importedTemplates = parsedTemplates as AnnotationTemplate[];
-            let importCount = 0;
 
-            for (const template of importedTemplates) {
-                if (!template.isBuiltIn && template.id && template.name && template.content) {
-                    // Generate new ID to avoid conflicts
-                    const newId = this.generateTemplateId(template.name);
-                    const newTemplate: AnnotationTemplate = {
-                        ...template,
-                        id: newId,
-                        isBuiltIn: false,
-                        variables: this.extractVariables(template.content),
-                    };
+            const candidates: Array<Omit<AnnotationTemplate, 'id' | 'isBuiltIn' | 'variables'>> = [];
+            for (const parsedTemplate of parsedTemplates) {
+                if (!this.isImportableTemplate(parsedTemplate)) {
+                    continue;
+                }
 
-                    this.templates.set(newId, newTemplate);
-                    importCount++;
+                try {
+                    candidates.push(this.normalizeTemplate(parsedTemplate));
+                } catch {
+                    // Keep the import resilient: one malformed entry must not
+                    // discard other valid templates in the same document.
                 }
             }
 
-            if (importCount > 0) {
-                this.saveCustomTemplates();
+            if (candidates.length === 0) {
+                return 0;
             }
 
-            return importCount;
+            return await this.enqueuePersistedMutation(() => {
+                for (const candidate of candidates) {
+                    const id = this.generateTemplateId(candidate.name);
+                    this.templates.set(id, {
+                        ...candidate,
+                        id,
+                        isBuiltIn: false,
+                        variables: this.extractVariables(candidate.content),
+                    });
+                }
+
+                return { result: candidates.length, changed: true };
+            });
         } catch (error) {
             throw new Error(
                 localize(
@@ -259,12 +325,15 @@ export class TemplateManager {
     }
 
     private extractVariables(content: string): string[] {
-        const variableRegex = /{{\\s*([^}]+)\\s*}}/g;
+        const variableRegex = /{{\s*([^{}\r\n]+?)\s*}}/g;
         const variables = new Set<string>();
-        let match;
+        let match: RegExpExecArray | null;
 
         while ((match = variableRegex.exec(content)) !== null) {
-            variables.add(match[1].trim());
+            const variable = match[1].trim();
+            if (variable.length > 0) {
+                variables.add(variable);
+            }
         }
 
         return Array.from(variables);
@@ -293,10 +362,16 @@ export class TemplateManager {
     }
 
     private generateTemplateId(name: string): string {
-        const baseId = name
-            .toLowerCase()
-            .replace(/\\s+/g, '-')
-            .replace(/[^a-z0-9-]/g, '');
+        const baseId =
+            name
+                .normalize('NFKD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .trim()
+                .replace(/\s+/g, '-')
+                .replace(/[^a-z0-9-]/g, '-')
+                .replace(/-+/g, '-')
+                .replace(/^-|-$/g, '') || 'template';
         let id = baseId;
         let counter = 1;
 
@@ -306,6 +381,165 @@ export class TemplateManager {
         }
 
         return id;
+    }
+
+    private normalizeTemplate(template: unknown): Omit<AnnotationTemplate, 'id' | 'isBuiltIn' | 'variables'> {
+        if (!template || typeof template !== 'object' || Array.isArray(template)) {
+            throw new TypeError('Template must be an object.');
+        }
+
+        const candidate = template as Record<string, unknown>;
+        if (typeof candidate.name !== 'string') {
+            throw new TypeError('Template name must be a string.');
+        }
+        const name = candidate.name.trim().replace(/\s+/g, ' ');
+        if (name.length === 0) {
+            throw new TypeError('Template name is required.');
+        }
+
+        if (typeof candidate.content !== 'string') {
+            throw new TypeError('Template content must be a string.');
+        }
+        if (candidate.content.trim().length === 0) {
+            throw new TypeError('Template content is required.');
+        }
+
+        let description: string | undefined;
+        if (candidate.description !== undefined) {
+            if (typeof candidate.description !== 'string') {
+                throw new TypeError('Template description must be a string.');
+            }
+            description = candidate.description.trim() || undefined;
+        }
+
+        let tags: string[] | undefined;
+        if (candidate.tags !== undefined) {
+            if (!Array.isArray(candidate.tags) || candidate.tags.some((tag) => typeof tag !== 'string')) {
+                throw new TypeError('Template tags must be an array of strings.');
+            }
+            const normalizedTags = Array.from(
+                new Set(candidate.tags.map((tag) => (tag as string).trim()).filter((tag) => tag.length > 0))
+            );
+            tags = normalizedTags.length > 0 ? normalizedTags : undefined;
+        }
+
+        let severity: string | undefined;
+        if (candidate.severity !== undefined) {
+            if (typeof candidate.severity !== 'string') {
+                throw new TypeError('Template severity must be a string.');
+            }
+            severity = candidate.severity.trim() || undefined;
+        }
+
+        return {
+            name,
+            description,
+            content: candidate.content,
+            tags,
+            severity,
+        };
+    }
+
+    private isImportableTemplate(template: unknown): template is Record<string, unknown> {
+        if (!template || typeof template !== 'object' || Array.isArray(template)) {
+            return false;
+        }
+
+        const isBuiltIn = (template as Record<string, unknown>).isBuiltIn;
+        return isBuiltIn === undefined || isBuiltIn === false;
+    }
+
+    private enqueuePersistedMutation<T>(mutation: () => MutationResult<T>): Promise<T> {
+        const operation = this.mutationQueue.then(async () => {
+            const previousTemplates = new Map(this.templates);
+            const { result, changed } = mutation();
+
+            if (!changed) {
+                return result;
+            }
+
+            try {
+                await this.saveCustomTemplates();
+            } catch (error) {
+                this.templates = previousTemplates;
+                throw error;
+            }
+
+            return result;
+        });
+
+        this.mutationQueue = operation.then(
+            () => undefined,
+            () => undefined
+        );
+        return operation;
+    }
+
+    private cloneTemplate(template: AnnotationTemplate): AnnotationTemplate {
+        return {
+            ...template,
+            tags: template.tags ? [...template.tags] : undefined,
+            variables: template.variables ? [...template.variables] : undefined,
+        };
+    }
+
+    private async editMultilineContent(initialContent: string, title: string): Promise<string | undefined> {
+        const document = await vscode.workspace.openTextDocument({
+            content: initialContent,
+            language: 'markdown',
+        });
+        await vscode.window.showTextDocument(document, { preview: false });
+        const useLabel = localize('useTemplateContent', 'Use This Content');
+        const choice = await vscode.window.showInformationMessage(
+            localize(
+                'editTemplateContentInstructions',
+                '{0}: edit the temporary document, then choose “{1}”.',
+                title,
+                useLabel
+            ),
+            useLabel
+        );
+        const closeTemporaryEditor = async (): Promise<void> => {
+            if (vscode.window.activeTextEditor?.document.uri.toString() === document.uri.toString()) {
+                await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+            }
+        };
+        if (choice !== useLabel) {
+            await closeTemporaryEditor();
+            return undefined;
+        }
+        const content = document.getText();
+        if (!content.trim()) {
+            vscode.window.showErrorMessage(localize('contentRequired', 'Content is required'));
+            await closeTemporaryEditor();
+            return undefined;
+        }
+        await closeTemporaryEditor();
+        return content;
+    }
+
+    private async pickTemplateSeverity(current?: string): Promise<string | undefined> {
+        const none = '__none__';
+        const selected = await vscode.window.showQuickPick(
+            [
+                { label: localize('severityDefault', 'Default severity'), value: none },
+                { label: '$(info) ' + localize('severityInfo', 'Info'), value: 'info' },
+                { label: '$(warning) ' + localize('severityWarning', 'Warning'), value: 'warning' },
+                { label: '$(error) ' + localize('severityError', 'Error'), value: 'error' },
+                { label: '$(flame) ' + localize('severityCritical', 'Critical'), value: 'critical' },
+            ],
+            {
+                title: localize('templateSeverity', 'Template severity'),
+                placeHolder: current
+                    ? localize('currentTemplateSeverity', 'Current severity: {0}', current)
+                    : localize('chooseTemplateSeverity', 'Choose the severity applied by this template'),
+            }
+        );
+        return selected ? (selected.value === none ? '' : selected.value) : undefined;
+    }
+
+    private escapeRegExp(value: string): string {
+        return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 
     // UI Commands
@@ -327,13 +561,10 @@ export class TemplateManager {
             placeHolder: localize('templateDescriptionPlaceholder', 'Brief description of the template'),
         });
 
-        const content = await vscode.window.showInputBox({
-            prompt: localize('templateContent', 'Enter template content (use {{variable}} for variables)'),
-            placeHolder: localize('templateContentPlaceholder', 'e.g., Issue: {{description}}\\nImpact: {{impact}}'),
-            validateInput: (value) => {
-                return value.trim() === '' ? localize('contentRequired', 'Content is required') : undefined;
-            },
-        });
+        const content = await this.editMultilineContent(
+            localize('templateContentStarter', 'Issue: {{description}}\nImpact: {{impact}}'),
+            localize('createTemplateContent', 'Create template content')
+        );
 
         if (!content) {
             return;
@@ -343,6 +574,10 @@ export class TemplateManager {
             prompt: localize('templateTags', 'Enter tags (comma-separated, optional)'),
             placeHolder: localize('templateTagsPlaceholder', 'e.g., bug, ui, critical'),
         });
+        const severity = await this.pickTemplateSeverity();
+        if (severity === undefined) {
+            return;
+        }
 
         const tagArray = tags
             ? tags
@@ -356,9 +591,170 @@ export class TemplateManager {
             description: description || undefined,
             content,
             tags: tagArray.length > 0 ? tagArray : undefined,
+            severity: severity || undefined,
         });
 
         vscode.window.showInformationMessage(localize('templateCreated', 'Template "{0}" created successfully', name));
+    }
+
+    public async manageTemplatesFromUI(): Promise<void> {
+        const customCount = this.getAllTemplates().filter((template) => !template.isBuiltIn).length;
+        const action = await vscode.window.showQuickPick(
+            [
+                { label: '$(add) ' + localize('createTemplate', 'Create template'), value: 'create' as const },
+                {
+                    label: '$(edit) ' + localize('editTemplate', 'Edit custom template'),
+                    description: localize('customTemplateCount', '{0} custom', customCount),
+                    value: 'edit' as const,
+                },
+                { label: '$(trash) ' + localize('deleteTemplate', 'Delete custom template'), value: 'delete' as const },
+                {
+                    label: '$(cloud-download) ' + localize('importTemplates', 'Import templates from JSON'),
+                    value: 'import' as const,
+                },
+                {
+                    label: '$(cloud-upload) ' + localize('exportTemplates', 'Export custom templates to JSON'),
+                    value: 'export' as const,
+                },
+            ],
+            {
+                title: localize('manageTemplates', 'Manage annotation templates'),
+                placeHolder: localize('selectTemplateAction', 'Choose a template action'),
+            }
+        );
+        switch (action?.value) {
+            case 'create':
+                await this.createTemplateFromUI();
+                break;
+            case 'edit':
+                await this.editTemplateFromUI();
+                break;
+            case 'delete':
+                await this.deleteTemplateFromUI();
+                break;
+            case 'import':
+                await this.importTemplatesFromUI();
+                break;
+            case 'export':
+                await this.exportTemplatesFromUI();
+                break;
+        }
+    }
+
+    private async selectCustomTemplate(placeHolder: string): Promise<AnnotationTemplate | undefined> {
+        const templates = this.getAllTemplates().filter((template) => !template.isBuiltIn);
+        if (templates.length === 0) {
+            vscode.window.showInformationMessage(localize('noCustomTemplates', 'No custom templates are available.'));
+            return undefined;
+        }
+        const selected = await vscode.window.showQuickPick(
+            templates.map((template) => ({
+                label: template.name,
+                description: template.description,
+                detail: template.id,
+                templateId: template.id,
+            })),
+            { placeHolder, matchOnDescription: true, matchOnDetail: true }
+        );
+        return selected ? this.getTemplate(selected.templateId) : undefined;
+    }
+
+    private async editTemplateFromUI(): Promise<void> {
+        const template = await this.selectCustomTemplate(
+            localize('selectTemplateToEdit', 'Select a custom template to edit')
+        );
+        if (!template) {
+            return;
+        }
+        const name = await vscode.window.showInputBox({
+            title: localize('editTemplateName', 'Edit template name'),
+            value: template.name,
+            validateInput: (value) => (value.trim() ? undefined : localize('nameRequired', 'Name is required')),
+        });
+        if (name === undefined) {
+            return;
+        }
+        const description = await vscode.window.showInputBox({
+            title: localize('editTemplateDescription', 'Edit template description'),
+            value: template.description ?? '',
+        });
+        if (description === undefined) {
+            return;
+        }
+        const content = await this.editMultilineContent(
+            template.content,
+            localize('editTemplateContent', 'Edit template content')
+        );
+        if (content === undefined) {
+            return;
+        }
+        const tags = await vscode.window.showInputBox({
+            title: localize('editTemplateTags', 'Edit template tags'),
+            prompt: localize('enterTags', 'Enter tags separated by commas'),
+            value: (template.tags ?? []).join(', '),
+        });
+        if (tags === undefined) {
+            return;
+        }
+        const severity = await this.pickTemplateSeverity(template.severity);
+        if (severity === undefined) {
+            return;
+        }
+        await this.updateTemplate(template.id, {
+            name,
+            description: description || undefined,
+            content,
+            tags: tags
+                .split(',')
+                .map((tag) => tag.trim())
+                .filter(Boolean),
+            severity: severity || undefined,
+        });
+        vscode.window.showInformationMessage(localize('templateUpdated', 'Template "{0}" updated.', name.trim()));
+    }
+
+    private async importTemplatesFromUI(): Promise<void> {
+        const selected = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            canSelectFiles: true,
+            canSelectFolders: false,
+            filters: { JSON: ['json'] },
+            title: localize('importTemplates', 'Import annotation templates'),
+        });
+        const uri = selected?.[0];
+        if (!uri) {
+            return;
+        }
+        const imported = await this.importTemplates(
+            Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8')
+        );
+        if (imported === 0) {
+            vscode.window.showWarningMessage(
+                localize('noTemplatesImported', 'The selected file did not contain any valid custom templates.')
+            );
+            return;
+        }
+        vscode.window.showInformationMessage(localize('templatesImported', '{0} template(s) imported.', imported));
+    }
+
+    private async exportTemplatesFromUI(): Promise<void> {
+        const workspace = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const defaultUri = workspace
+            ? vscode.Uri.joinPath(workspace, '.out-of-code-insights', 'annotation-templates.json')
+            : undefined;
+        const uri = await vscode.window.showSaveDialog({
+            defaultUri,
+            filters: { JSON: ['json'] },
+            title: localize('exportTemplates', 'Export annotation templates'),
+        });
+        if (!uri) {
+            return;
+        }
+        const json = await this.exportTemplates();
+        await vscode.workspace.fs.writeFile(uri, Buffer.from(`${json}\n`, 'utf8'));
+        vscode.window.showInformationMessage(
+            localize('templatesExported', 'Custom templates exported to {0}.', uri.fsPath)
+        );
     }
 
     public async deleteTemplateFromUI(): Promise<void> {
@@ -369,9 +765,10 @@ export class TemplateManager {
             return;
         }
 
-        const items: vscode.QuickPickItem[] = templates.map((template) => ({
+        const items: TemplateQuickPickItem[] = templates.map((template) => ({
             label: template.name,
             description: template.description,
+            templateId: template.id,
         }));
 
         const selected = await vscode.window.showQuickPick(items, {
@@ -382,7 +779,7 @@ export class TemplateManager {
             return;
         }
 
-        const template = templates.find((t) => t.name === selected.label);
+        const template = this.getTemplate(selected.templateId);
         if (!template) {
             return;
         }

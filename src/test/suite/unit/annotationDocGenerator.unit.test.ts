@@ -1,5 +1,5 @@
 /**
- * Pure-logic tests for the DocFX-compatible documentation generator.
+ * Pure-logic tests for the portable Markdown documentation generator.
  * No vscode dependency — runs in the fast `test:unit` pass.
  */
 import * as assert from 'assert';
@@ -28,7 +28,7 @@ function makeAnn(overrides: Partial<DocAnnotation> = {}): DocAnnotation {
 }
 
 suite('AnnotationDocGenerator — file set', () => {
-    test('produces the five DocFX site files', () => {
+    test('produces the five portable documentation files', () => {
         const files = generateDocSet([makeAnn()]);
         assert.deepStrictEqual([...files.keys()].sort(), [
             'by-file.md',
@@ -115,6 +115,32 @@ suite('AnnotationDocGenerator — by-file.md details', () => {
         assert.ok(byFile.includes('[src/foo.ts](<src/foo.ts>)'), 'no #L fragment when the line is unknown');
     });
 
+    test('percent-encodes source paths while preserving the line fragment', () => {
+        const byFile =
+            generateDocSet([makeAnn({ file: 'src/a folder/file #1.ts' })], {
+                sourceLinkPrefix: '../../',
+            }).get('by-file.md') ?? '';
+        assert.ok(
+            byFile.includes('[src/a folder/file #1.ts:42](<../../src/a%20folder/file%20%231.ts#L42>)'),
+            'spaces and # belong to the encoded path while #L remains a URL fragment'
+        );
+    });
+
+    test('sanitizes hostile annotation ids before using them in HTML anchors and links', () => {
+        const hostileId = 'x"><script>alert(1)</script>';
+        const files = generateDocSet([makeAnn({ id: hostileId })]);
+        const byFile = files.get('by-file.md') ?? '';
+        const anchor = /<a id="([^"]+)"><\/a>/.exec(byFile)?.[1];
+
+        assert.ok(anchor, 'a sanitized anchor is emitted');
+        assert.match(anchor, /^ann-[A-Za-z0-9_-]+-[a-z0-9]{7}$/);
+        assert.ok(!byFile.includes('<script>'), 'the hostile id cannot inject markup');
+        assert.ok(
+            (files.get('by-type.md') ?? '').includes(`by-file.md#${anchor}`),
+            'cross-links use the same sanitized anchor'
+        );
+    });
+
     test('escapes pipes so messages cannot break tables', () => {
         const files = generateDocSet([makeAnn({ message: 'a | b' })]);
         const byType = files.get('by-type.md') ?? '';
@@ -189,6 +215,31 @@ suite('AnnotationDocGenerator — doc:* role parsing and helpers', () => {
     test('fileSlug produces url-safe page names', () => {
         assert.strictEqual(fileSlug('src/managers/Foo.Bar.ts'), 'src-managers-Foo-Bar-ts');
     });
+
+    test('colliding source paths never overwrite an authored page', () => {
+        const files = generateDocSet([
+            makeAnn({ id: 'a', file: 'src/a.b.ts', tags: ['doc:module'], message: '# First' }),
+            makeAnn({ id: 'b', file: 'src/a-b.ts', tags: ['doc:module'], message: '# Second' }),
+        ]);
+        const apiPages = [...files.keys()].filter((name) => name.startsWith('api/'));
+        assert.strictEqual(apiPages.length, 2);
+        assert.strictEqual(new Set(apiPages).size, 2);
+        const index = files.get('index.md') ?? '';
+        assert.ok(index.includes('page slug collision'), 'the collision is visible as a generation warning');
+    });
+
+    test('toc safely quotes authored labels that contain YAML syntax', () => {
+        const toc =
+            generateDocSet([
+                makeAnn({
+                    id: 'yaml',
+                    file: 'src/yaml.ts',
+                    tags: ['doc:module'],
+                    message: '# API: "quoted" # value',
+                }),
+            ]).get('toc.yml') ?? '';
+        assert.ok(toc.includes('- name: "API: \\"quoted\\" # value"'));
+    });
 });
 
 suite('AnnotationDocGenerator — authored documentation (doc:* tags)', () => {
@@ -251,12 +302,43 @@ suite('AnnotationDocGenerator — authored documentation (doc:* tags)', () => {
     test('api page nests function under class and example under function, with signatures', () => {
         const api = generateDocSet(docSet()).get('api/src-user-ts.md') ?? '';
         assert.ok(api.startsWith('# User module'), 'module title heads the page');
+        assert.ok(api.includes('<a id="ann-mod"></a>'), 'the module has a stable deep-link anchor');
         assert.ok(api.includes('## UserService'), 'class is h2');
         assert.ok(api.includes('### createUser'), 'member function is h3 under the class');
         assert.ok(api.includes('#### Example — Basic usage'), 'example is h4 under the function');
         assert.ok(api.includes('```typescript\nexport class UserService {\n```'), 'class signature');
         assert.ok(api.includes("await svc.createUser('ada');"), 'example snippet rendered');
         assert.ok(api.includes('### Notes'), 'authored h1 inside class body demoted below the class heading');
+    });
+
+    test('uses safe dynamic fences when signatures and snippets contain Markdown fences', () => {
+        const signature = 'export class Fenced {\n```\n~~~';
+        const snippet = 'before\n~~~\n```typescript\ninside\n```\nafter';
+        const files = generateDocSet([
+            makeAnn({
+                id: 'class-fence',
+                tags: ['doc:class'],
+                message: '# Fenced\n\nClass with a fenced signature.',
+                anchorText: signature,
+                language: 'typescript',
+            }),
+            makeAnn({
+                id: 'snippet-fence',
+                file: 'src/snippet.ts',
+                snippet: { code: snippet, language: 'typescript' },
+            }),
+        ]);
+
+        const api = files.get('api/src-foo-ts.md') ?? '';
+        assert.ok(
+            api.includes(`\`\`\`\`typescript\n${signature}\n\`\`\`\``),
+            'the signature fence is longer than embedded backtick fences'
+        );
+        const byFile = files.get('by-file.md') ?? '';
+        assert.ok(
+            byFile.includes(`\`\`\`\`typescript\n${snippet}\n\`\`\`\``),
+            'the snippet remains fenced when it contains both tilde and backtick fences'
+        );
     });
 
     test('wiki-links resolve across pages and into guide.md', () => {
@@ -348,6 +430,16 @@ suite('AnnotationDocGenerator — configurable output (no hardcoded layout)', ()
         assert.ok(guide.includes('[UserService](reference/src-user-ts.md#ann-cls)'), 'guide → api link');
     });
 
+    test('throws an explicit error when guideFile collides with another generated output', () => {
+        assert.throws(
+            () =>
+                generateDocSet([makeAnn({ id: 'guide', tags: ['doc:guide'], message: '# Guide\n\nBody.' })], {
+                    guideFile: 'index.md',
+                }),
+            /Documentation output path collision at "index\.md"/
+        );
+    });
+
     test('includeInventory=false drops inventory pages and their toc/index sections', () => {
         const files = generateDocSet([makeAnn({ tags: ['doc:guide'], message: '# G\n\nBody.' })], {
             includeInventory: false,
@@ -399,17 +491,17 @@ suite('AnnotationDocGenerator — configurable output (no hardcoded layout)', ()
         assert.ok(out.includes('## real heading'), 'heading after inline math must still be demoted');
     });
 
-    test('frontMatter=true prepends a DocFX YAML title block to every page', () => {
+    test('pageMetadata=true prepends a YAML title metadata block to every page', () => {
         const files = generateDocSet([makeAnn({ tags: ['doc:guide'], message: '# G "quoted"\n\nBody.' })], {
-            frontMatter: true,
+            pageMetadata: true,
             title: 'My Site',
         });
         const index = files.get('index.md') ?? '';
-        assert.ok(index.startsWith('---\ntitle: "My Site"\n---\n\n# My Site'), 'index carries front matter');
+        assert.ok(index.startsWith('---\ntitle: "My Site"\n---\n\n# My Site'), 'index carries page metadata');
         const guide = files.get('guide.md') ?? '';
-        assert.ok(guide.startsWith('---\ntitle: "Guide"\n---'), 'guide page carries front matter');
+        assert.ok(guide.startsWith('---\ntitle: "Guide"\n---'), 'guide page carries page metadata');
         const offByDefault = generateDocSet([makeAnn()]).get('index.md') ?? '';
-        assert.ok(offByDefault.startsWith('# '), 'no front matter unless requested');
+        assert.ok(offByDefault.startsWith('# '), 'no page metadata unless requested');
     });
 
     test('custom untaggedLabel replaces the default bucket name', () => {

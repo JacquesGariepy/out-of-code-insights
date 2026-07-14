@@ -54,7 +54,7 @@ Annotations are persisted as a JSON array in
     "priority": 0,
     "severity": "info",
     "resolved": false,
-    "kanbanColumn": "todo"
+    "kanbanColumn": "todo",
 }
 ```
 
@@ -82,21 +82,19 @@ library and exposes a uniform interface to every provider listed in
 generation. Provider switching is configuration-only: the adapter resolves the
 right backend at request time.
 
-### `ClaudeCodeProvider` + `ClaudeIntegration`
+### Active provider catalogue
 
-The Claude provider uses a dual-adapter strategy. See
-[ADR-002](./adr/002-claude-dual-adapter-sdk-rest.md) for the full rationale.
+`AIProviderCatalog` is the single active provider registry. Its 13 IDs match
+the installed multi-provider runtime; Anthropic models use `anthropic`, not a
+separate `claude` ID. The catalogue also defines whether a credential is
+required and supplies Azure endpoint/deployment/API-version or local Ollama/LM
+Studio base URLs to the engine.
 
-```
-ClaudeIntegration
-  ClaudeSDKAdapter    preferred; uses @anthropic-ai/claude-code SDK
-  ClaudeRESTAdapter   fallback; direct HTTP call (used when SDK fails to load)
-```
-
-Selection is governed by `annotation.claudeUseSDK`. When the SDK is enabled
-but fails to load (Node version, missing native module, polyfill issue),
-`ClaudeIntegration` transparently falls back to REST and notifies the user.
-`ClaudeSDKWrapper` adds the `AbortController` polyfill before importing the SDK.
+`ClaudeCodeProvider`, `ClaudeIntegration` and their wrapper remain legacy
+source files but are not instantiated by the active extension. The
+`annotation.claudeUseSDK` setting is therefore inactive and must not be treated
+as a supported runtime path. [ADR-002](./adr/002-claude-dual-adapter-sdk-rest.md)
+records the superseded proposal for historical context.
 
 ---
 
@@ -104,11 +102,11 @@ but fails to load (Node version, missing native module, polyfill issue),
 
 Three views render with VS Code WebviewPanel:
 
-| View | Content |
-|---|---|
-| Annotations Panel | List view, search, filter, severity, batch-edit |
+| View                  | Content                                         |
+| --------------------- | ----------------------------------------------- |
+| Annotations Panel     | List view, search, filter, severity, batch-edit |
 | Kanban (`KanbanView`) | Drag-and-drop board across configurable columns |
-| Links | Linked-annotation graph |
+| Links                 | Linked-annotation graph                         |
 
 > **Known debt:** HTML, CSS, and JavaScript for these webviews are currently
 > embedded as TypeScript template literals inside the producing class.

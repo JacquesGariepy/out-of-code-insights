@@ -14,6 +14,8 @@ import * as assert from 'assert';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { AnnotationStore, type AnnotationDraft } from '../../transactional/AnnotationStore';
+import { AnnotationNavigation } from '../../transactional/AnnotationNavigation';
+import type { AnnotationV2 } from '../../transactional/types';
 import { LinkedAnnotationManager } from '../../managers/LinkedAnnotationManager';
 import { ReviewModeManager } from '../../managers/ReviewModeManager';
 import { SnippetManager } from '../../managers/SnippetManager';
@@ -102,7 +104,7 @@ suite('Lot 5 R2 worktree B — LinkedAnnotationManager', () => {
         const store = new AnnotationStore();
         store.markInitialized();
         const source = store.add(makeDraft(uri, 'source'), { line: 0 }, document);
-        store.add(makeDraft(uri, 'target'), { line: 2 }, document);
+        const target = store.add(makeDraft(uri, 'target'), { line: 2 }, document);
 
         const linked = new LinkedAnnotationManager(makeFakeContext(), store);
         subscriptions.push(linked);
@@ -112,7 +114,13 @@ suite('Lot 5 R2 worktree B — LinkedAnnotationManager', () => {
         const refreshed = store.get(source.id);
         assert.ok(refreshed, 'source annotation must still exist');
         assert.deepStrictEqual(refreshed.linkedAnnotations, [
-            { targetFile: relPath(uri), targetLine: 2, relationship: 'related' },
+            {
+                targetId: target.id,
+                targetUri: target.fileUri,
+                targetFile: relPath(uri),
+                targetLine: 2,
+                relationship: 'related',
+            },
         ]);
 
         await linked.removeLink(source.id, relPath(uri), 2);
@@ -143,6 +151,54 @@ suite('Lot 5 R2 worktree B — LinkedAnnotationManager', () => {
         await assert.rejects(linked.createLink(b.id, relPath(uri), 0, 'related'));
     });
 
+    test('stable target ids preserve links and cycle detection after the target moves', async function () {
+        this.timeout(15000);
+        const uri = await ensureFixture('lot5-mgr-linked-stable-target.ts', 'a\nb\nc\nd\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const a = store.add(makeDraft(uri, 'A'), { line: 0 }, document);
+        const b = store.add(makeDraft(uri, 'B'), { line: 1 }, document);
+        const linked = new LinkedAnnotationManager(makeFakeContext(), store);
+        subscriptions.push(linked);
+
+        await linked.createLink(a.id, relPath(uri), 1, 'related', b.id);
+        store.setAnnotationLine(b.id, 3, document);
+
+        assert.deepStrictEqual(linked.findPaths(a.id, b.id), [[a.id, b.id]]);
+        assert.strictEqual(
+            linked.getIncomingLinks(relPath(uri), 1).length,
+            0,
+            'a stable link must not remain attached to its stale fallback line'
+        );
+        assert.strictEqual(
+            linked.getIncomingLinks(relPath(uri), 3).length,
+            1,
+            'location lookup must resolve a stable target id to its current line'
+        );
+        await assert.rejects(
+            linked.createLink(b.id, relPath(uri), 0, 'related', a.id),
+            /circular/i,
+            'cycle detection must follow targetId instead of the stale fallback line'
+        );
+
+        store.add(makeDraft(uri, 'C'), { line: 2 }, document);
+        const missingTargetId = '00000000-0000-4000-8000-000000000099';
+        await assert.rejects(
+            linked.createLink(a.id, relPath(uri), 2, 'related', missingTargetId),
+            /not found/i,
+            'an explicit stale id must not fall back to a different annotation at the same location'
+        );
+        assert.strictEqual(linked.getLinkCount(a.id), 1);
+
+        await assert.rejects(
+            linked.removeLink(a.id, relPath(uri), 1, missingTargetId),
+            /not found/i,
+            'an explicit target id must not remove a different link through its legacy location'
+        );
+        assert.strictEqual(linked.getLinkCount(a.id), 1);
+    });
+
     test('getIncomingLinks returns sources targeting a given (file, line)', async function () {
         this.timeout(15000);
         const uri = await ensureFixture('lot5-mgr-linked-incoming.ts', 'l0\nl1\nl2\nl3\n');
@@ -154,7 +210,7 @@ suite('Lot 5 R2 worktree B — LinkedAnnotationManager', () => {
         store.markInitialized();
         const a = store.add(makeDraft(uri, 'A → C'), { line: 0 }, document);
         const b = store.add(makeDraft(uri, 'B → C'), { line: 1 }, document);
-        store.add(makeDraft(uri, 'C'), { line: 2 }, document);
+        const c = store.add(makeDraft(uri, 'C'), { line: 2 }, document);
 
         const linked = new LinkedAnnotationManager(makeFakeContext(), store);
         subscriptions.push(linked);
@@ -166,6 +222,26 @@ suite('Lot 5 R2 worktree B — LinkedAnnotationManager', () => {
         assert.strictEqual(incoming.length, 2);
         const relationships = incoming.map((i) => i.relationship).sort();
         assert.deepStrictEqual(relationships, ['derived-from', 'related']);
+
+        const incomingById = linked.getIncomingLinks('stale/legacy-location.ts', 99, c.id);
+        assert.strictEqual(incomingById.length, 2, 'an explicit target id must ignore stale fallback locations');
+
+        const aLink = store.get(a.id)?.linkedAnnotations?.[0];
+        assert.ok(aLink);
+        store.update(a.id, {
+            linkedAnnotations: [
+                {
+                    targetFile: aLink.targetFile,
+                    targetLine: aLink.targetLine,
+                    relationship: aLink.relationship,
+                },
+            ],
+        });
+        assert.strictEqual(
+            linked.getIncomingLinks(relPath(uri), 2, c.id).length,
+            2,
+            'legacy links without targetId must remain discoverable by their file/line fallback'
+        );
     });
 });
 
@@ -183,8 +259,7 @@ suite('Lot 5 R2 worktree B — ReviewModeManager', () => {
         await closeAllEditors();
     });
 
-    // TODO(#36): duplicate command registration with extension-level ReviewModeManager — fix via test mock or shared instance
-    test.skip('markAsViewed routes through store.update with viewedBy from getUsername', async function () {
+    test('markAsViewed routes through store.update with viewedBy from getUsername', async function () {
         this.timeout(15000);
         const uri = await ensureFixture('lot5-mgr-review-mark.ts', 'r0\nr1\n');
         const document = await vscode.workspace.openTextDocument(uri);
@@ -195,7 +270,9 @@ suite('Lot 5 R2 worktree B — ReviewModeManager', () => {
         store.markInitialized();
         const ann = store.add(makeDraft(uri, 'review me'), { line: 0 }, document);
 
-        const review = new ReviewModeManager(makeFakeContext(), store, () => 'reviewer-bot');
+        const review = new ReviewModeManager(makeFakeContext(), store, () => 'reviewer-bot', undefined, {
+            registerCommands: false,
+        });
         subscriptions.push(review);
 
         await review.markAsViewed(ann.id);
@@ -208,8 +285,7 @@ suite('Lot 5 R2 worktree B — ReviewModeManager', () => {
         assert.ok(refreshed.reviewState.viewedAt, 'viewedAt must be populated');
     });
 
-    // TODO(#36): duplicate command registration with extension-level ReviewModeManager — fix via test mock or shared instance
-    test.skip('getReviewStatistics reflects current store contents', async function () {
+    test('getReviewStatistics reflects current store contents', async function () {
         this.timeout(15000);
         const uri = await ensureFixture('lot5-mgr-review-stats.ts', 's0\ns1\ns2\n');
         const document = await vscode.workspace.openTextDocument(uri);
@@ -222,7 +298,9 @@ suite('Lot 5 R2 worktree B — ReviewModeManager', () => {
         store.add({ ...makeDraft(uri, 'second'), severity: 'warning', author: 'alice' }, { line: 1 }, document);
         store.add({ ...makeDraft(uri, 'third'), severity: 'error', author: 'bob' }, { line: 2 }, document);
 
-        const review = new ReviewModeManager(makeFakeContext(), store, () => 'tester');
+        const review = new ReviewModeManager(makeFakeContext(), store, () => 'tester', undefined, {
+            registerCommands: false,
+        });
         subscriptions.push(review);
 
         const stats = review.getReviewStatistics();
@@ -232,6 +310,92 @@ suite('Lot 5 R2 worktree B — ReviewModeManager', () => {
         assert.strictEqual(stats.byAuthor.get('bob'), 1);
         assert.strictEqual(stats.bySeverity.get('warning'), 1);
         assert.strictEqual(stats.bySeverity.get('error'), 1);
+    });
+
+    test('store mutations preserve the current annotation and select a bounded replacement when it is removed', async function () {
+        this.timeout(15000);
+        const uri = await ensureFixture('lot5-mgr-review-refresh.ts', 'r0\nr1\nr2\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const first = store.add(makeDraft(uri, 'first'), { line: 0 }, document);
+        const second = store.add(makeDraft(uri, 'second'), { line: 1 }, document);
+        const third = store.add(makeDraft(uri, 'third'), { line: 2 }, document);
+        const navigatedIds: string[] = [];
+        const navigation = new AnnotationNavigation(
+            store,
+            { push: (id) => navigatedIds.push(id) },
+            { openTextDocumentAt: async () => undefined }
+        );
+        const review = new ReviewModeManager(makeFakeContext(), store, () => 'tester', navigation, {
+            registerCommands: false,
+            autoMarkDelayMs: 60_000,
+        });
+        subscriptions.push(review);
+        const state = review as unknown as {
+            currentIndex: number;
+            filteredAnnotations: ReadonlyArray<Readonly<AnnotationV2>>;
+        };
+
+        await review.startReview();
+        assert.deepStrictEqual(navigatedIds, [first.id]);
+
+        store.update(first.id, { message: 'first, updated' });
+        await delay(20);
+        assert.strictEqual(state.filteredAnnotations[state.currentIndex]?.id, first.id);
+        assert.deepStrictEqual(navigatedIds, [first.id], 'updating the current item must not navigate away');
+
+        store.remove(first.id);
+        await delay(20);
+        assert.strictEqual(state.filteredAnnotations[state.currentIndex]?.id, second.id);
+        assert.strictEqual(navigatedIds.at(-1), second.id, 'the next bounded item should become current');
+
+        store.remove(second.id);
+        await delay(20);
+        assert.strictEqual(state.filteredAnnotations[state.currentIndex]?.id, third.id);
+        assert.strictEqual(navigatedIds.at(-1), third.id);
+    });
+
+    test('auto-mark timer follows the current annotation after navigation', async function () {
+        this.timeout(15000);
+        const uri = await ensureFixture('lot5-mgr-review-timer-navigation.ts', 'r0\nr1\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const first = store.add(makeDraft(uri, 'first'), { line: 0 }, document);
+        const second = store.add(makeDraft(uri, 'second'), { line: 1 }, document);
+        const review = new ReviewModeManager(makeFakeContext(), store, () => 'timer-reviewer', undefined, {
+            registerCommands: false,
+            autoMarkDelayMs: 30,
+        });
+        subscriptions.push(review);
+
+        await review.startReview();
+        await review.navigateNext();
+        await delay(80);
+
+        assert.strictEqual(store.get(first.id)?.reviewState, undefined, 'the superseded timer must be cancelled');
+        assert.strictEqual(store.get(second.id)?.reviewState?.viewed, true, 'the current annotation should be marked');
+    });
+
+    test('stopping review cancels its pending auto-mark timer', async function () {
+        this.timeout(15000);
+        const uri = await ensureFixture('lot5-mgr-review-timer-stop.ts', 'r0\n');
+        const document = await vscode.workspace.openTextDocument(uri);
+        const store = new AnnotationStore();
+        store.markInitialized();
+        const annotation = store.add(makeDraft(uri, 'first'), { line: 0 }, document);
+        const review = new ReviewModeManager(makeFakeContext(), store, () => 'timer-reviewer', undefined, {
+            registerCommands: false,
+            autoMarkDelayMs: 30,
+        });
+        subscriptions.push(review);
+
+        await review.startReview();
+        review.stopReview();
+        await delay(80);
+
+        assert.strictEqual(store.get(annotation.id)?.reviewState, undefined, 'stopped reviews must not mark later');
     });
 });
 

@@ -212,6 +212,27 @@ suite('AnnotationStore — add (line XOR offset contract)', () => {
         const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
         assert.ok(Object.isFrozen(ann));
     });
+
+    test('nested business fields are detached from inputs and deeply frozen in snapshots', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('hello');
+        const tags = ['original'];
+        const links = [{ targetFile: 'target.ts', targetLine: 1, relationship: 'related' }];
+        const ann = store.add({ ...defaultDraft(), tags, linkedAnnotations: links }, { line: 0 }, asDoc(doc));
+
+        tags.push('input-mutation');
+        links[0].relationship = 'input-mutation';
+        assert.deepStrictEqual(store.get(ann.id)?.tags, ['original']);
+        assert.strictEqual(store.get(ann.id)?.linkedAnnotations?.[0].relationship, 'related');
+
+        const snapshot = store.get(ann.id);
+        assert.ok(snapshot?.tags && Object.isFrozen(snapshot.tags));
+        assert.ok(snapshot?.linkedAnnotations && Object.isFrozen(snapshot.linkedAnnotations));
+        assert.ok(snapshot?.linkedAnnotations?.[0] && Object.isFrozen(snapshot.linkedAnnotations[0]));
+        assert.throws(() => (snapshot?.tags as string[]).push('snapshot-mutation'), TypeError);
+        assert.deepStrictEqual(store.get(ann.id)?.tags, ['original']);
+        assert.deepStrictEqual(store.getJournal().entries[0].after?.tags, ['original']);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -261,6 +282,19 @@ suite('AnnotationStore — update', () => {
     test('throws Error on unknown id', () => {
         const store = new AnnotationStore();
         assert.throws(() => store.update('00000000-0000-4000-8000-000000000000', { message: 'x' }), /not found/);
+    });
+
+    test('detaches nested update values from the caller', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('hello');
+        const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        const tags = ['patched'];
+
+        store.update(ann.id, { tags });
+        tags.push('outside-mutation');
+
+        assert.deepStrictEqual(store.get(ann.id)?.tags, ['patched']);
+        assert.deepStrictEqual(store.getJournal().entries.at(-1)?.after?.tags, ['patched']);
     });
 });
 
@@ -329,13 +363,14 @@ suite('AnnotationStore — validate (I1-I3)', () => {
             message: 'corrupted',
             timestamp: '2026-05-06T12:00:00.000Z',
         };
-        store.deserialize({
-            schemaVersion: ANNOTATION_SCHEMA_VERSION,
-            annotations: [corrupted],
-        });
-        const result = store.validate();
-        assert.strictEqual(result.valid, false);
-        assert.ok(result.violations.some((v) => v.code === 'invalid-offset-range'));
+        assert.throws(
+            () =>
+                store.deserialize({
+                    schemaVersion: ANNOTATION_SCHEMA_VERSION,
+                    annotations: [corrupted],
+                }),
+            /invalid offset range/
+        );
     });
 });
 
@@ -436,6 +471,48 @@ suite('AnnotationStore — serialize / deserialize', () => {
             annotations: [bad],
         };
         assert.throws(() => store.deserialize(file), /schemaVersion/);
+    });
+
+    test('deep validation rejects malformed records before replacing healthy in-memory data', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('healthy');
+        const healthy = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        const malformed = {
+            ...store.serialize().annotations[0],
+            id: 'malformed',
+            linkedAnnotations: [{ targetFile: '../outside.ts', targetLine: -1, relationship: 42 }],
+        } as unknown as AnnotationV2;
+
+        assert.throws(
+            () =>
+                store.deserialize({
+                    schemaVersion: ANNOTATION_SCHEMA_VERSION,
+                    annotations: [malformed],
+                }),
+            /invalid linked annotation/
+        );
+        assert.ok(store.get(healthy.id), 'a rejected envelope must not clear the current store');
+    });
+
+    test('keeps valid records while ignoring terminal v2 records written by older versions', () => {
+        const source = new AnnotationStore();
+        const doc = makeDoc('active');
+        const active = source.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        const disposed = {
+            schemaVersion: ANNOTATION_SCHEMA_VERSION,
+            state: 'disposed',
+            // Historical loaders ignored all remaining fields on a terminal
+            // record, so intentionally retain a minimal legacy shape here.
+        } as unknown as AnnotationV2;
+
+        const restored = new AnnotationStore();
+        restored.deserialize({
+            schemaVersion: ANNOTATION_SCHEMA_VERSION,
+            annotations: [source.serialize().annotations[0], disposed],
+        });
+
+        assert.strictEqual(restored.getAll().length, 1);
+        assert.ok(restored.get(active.id));
     });
 });
 
@@ -557,6 +634,35 @@ suite('AnnotationStore — applyDocumentChange Cas C (edit strictly inside)', ()
         assert.ok(updated);
         assert.strictEqual(updated.startOffset, 5);
         assert.strictEqual(updated.endOffset, 8);
+    });
+
+    test('refreshes lineHash against the post-change document for a middle-of-line insert', () => {
+        const store = new AnnotationStore();
+        const before = makeDoc('heading\n## Context\ntail\n');
+        const ann = store.add(defaultDraft(), { line: 1 }, asDoc(before));
+        const insertionOffset = before.offsetAt({ line: 1, character: 4 });
+        const after = makeDoc('heading\n## C ontext\ntail\n', 'file:///test.ts', 2);
+
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: {
+                        start: { line: 1, character: 4 },
+                        end: { line: 1, character: 4 },
+                    },
+                    rangeOffset: insertionOffset,
+                    rangeLength: 0,
+                    text: ' ',
+                },
+            ])
+        );
+
+        const updated = store.get(ann.id);
+        assert.ok(updated);
+        assert.strictEqual(updated.state, 'active');
+        assert.strictEqual(updated.startOffset, before.offsetAt({ line: 1, character: 0 }));
+        assert.strictEqual(updated.endOffset, before.offsetAt({ line: 1, character: 0 }) + '## C ontext'.length);
+        assert.strictEqual(updated.lineHash, hashLine('## C ontext'));
     });
 });
 
@@ -705,6 +811,65 @@ suite('AnnotationStore — suspend / resume / getSuspendedByHash', () => {
 // ---------------------------------------------------------------------------
 
 suite('AnnotationStore — auto paste detection', () => {
+    test('same-file whole-line WorkspaceEdit cut/paste reactivates the same id at the destination', () => {
+        const store = new AnnotationStore();
+        const beforeText =
+            '# Document\n' +
+            '\n' +
+            'intro line\n' +
+            'TARGET_K_A\n' +
+            'middle one\n' +
+            'middle two\n' +
+            'middle three\n' +
+            '\n' +
+            'tail line\n';
+        const before = makeDoc(beforeText, 'file:///lot7-K-a.md');
+        const original = store.add(defaultDraft('file:///lot7-K-a.md', 'lot7-K-a.md'), { line: 3 }, asDoc(before));
+        const cutOffset = before.offsetAt({ line: 3, character: 0 });
+        const cutText = 'TARGET_K_A\n';
+        const afterCutText = beforeText.slice(0, cutOffset) + beforeText.slice(cutOffset + cutText.length);
+        const afterCut = makeDoc(afterCutText, 'file:///lot7-K-a.md', 2);
+
+        store.applyDocumentChange(
+            makeEvent(afterCut, [
+                {
+                    range: { start: { line: 3, character: 0 }, end: { line: 4, character: 0 } },
+                    rangeOffset: cutOffset,
+                    rangeLength: cutText.length,
+                    text: '',
+                },
+            ])
+        );
+        assert.strictEqual(store.get(original.id)?.state, 'suspended');
+
+        const pasteLine = 6;
+        const pasteOffset = afterCut.offsetAt({ line: pasteLine, character: 0 });
+        const afterPasteText = afterCutText.slice(0, pasteOffset) + cutText + afterCutText.slice(pasteOffset);
+        const afterPaste = makeDoc(afterPasteText, 'file:///lot7-K-a.md', 3);
+        store.applyDocumentChange(
+            makeEvent(afterPaste, [
+                {
+                    range: {
+                        start: { line: pasteLine, character: 0 },
+                        end: { line: pasteLine, character: 0 },
+                    },
+                    rangeOffset: pasteOffset,
+                    rangeLength: 0,
+                    text: cutText,
+                },
+            ]),
+            'lot7-K-a.md'
+        );
+
+        const resumed = store.get(original.id);
+        assert.ok(resumed);
+        assert.strictEqual(resumed.id, original.id);
+        assert.strictEqual(resumed.state, 'active');
+        assert.strictEqual(resumed.startOffset, pasteOffset);
+        assert.strictEqual(afterPaste.positionAt(resumed.startOffset).line, pasteLine);
+        assert.strictEqual(store.serialize().annotations.length, 1, 'move must preserve one canonical annotation');
+    });
+
     test('cut → paste auto-resumes the SAME annotation id at the new offset', () => {
         const store = new AnnotationStore();
         const docBefore = makeDoc('abc\nfg\nbbb\n');
@@ -737,6 +902,106 @@ suite('AnnotationStore — auto paste detection', () => {
         // 'fg' starts at offset 8 in 'bbb\nabc\nfg\n'.
         assert.strictEqual(restored.startOffset, 8);
         assert.strictEqual(restored.endOffset, 10);
+    });
+
+    test('a resumed annotation survives a later in-line formatter insert with refreshed anchoring', () => {
+        const store = new AnnotationStore();
+        const beforeCut = makeDoc('head\nTARGET\ntail\n');
+        const original = store.add(defaultDraft(), { line: 1 }, asDoc(beforeCut));
+
+        const afterCut = makeDoc('head\ntail\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(afterCut, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+                    rangeOffset: 5,
+                    rangeLength: 7,
+                    text: '',
+                },
+            ])
+        );
+
+        const afterPaste = makeDoc('head\ntail\nTARGET\n', 'file:///test.ts', 3);
+        store.applyDocumentChange(
+            makeEvent(afterPaste, [
+                {
+                    range: { start: { line: 2, character: 0 }, end: { line: 2, character: 0 } },
+                    rangeOffset: 10,
+                    rangeLength: 0,
+                    text: 'TARGET\n',
+                },
+            ])
+        );
+
+        const afterFormat = makeDoc('head\ntail\nTA/* fmt */ RGET\n', 'file:///test.ts', 4);
+        store.applyDocumentChange(
+            makeEvent(afterFormat, [
+                {
+                    range: { start: { line: 2, character: 2 }, end: { line: 2, character: 2 } },
+                    rangeOffset: 12,
+                    rangeLength: 0,
+                    text: '/* fmt */ ',
+                },
+            ])
+        );
+
+        const survived = store.get(original.id);
+        assert.ok(survived);
+        assert.strictEqual(survived.state, 'active');
+        assert.strictEqual(survived.startOffset, 10);
+        assert.strictEqual(survived.endOffset, 10 + 'TA/* fmt */ RGET'.length);
+        assert.strictEqual(survived.lineHash, hashLine('TA/* fmt */ RGET'));
+        assert.strictEqual(store.serialize().annotations.length, 1, 'post-paste edit must not clone or dispose');
+    });
+
+    test('a resumed annotation survives a formatter whole-line replacement with indentation drift', () => {
+        const store = new AnnotationStore();
+        const beforeCut = makeDoc('head\nTARGET\ntail\n');
+        const original = store.add(defaultDraft(), { line: 1 }, asDoc(beforeCut));
+
+        const afterCut = makeDoc('head\ntail\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(afterCut, [
+                {
+                    range: { start: { line: 1, character: 0 }, end: { line: 2, character: 0 } },
+                    rangeOffset: 5,
+                    rangeLength: 7,
+                    text: '',
+                },
+            ])
+        );
+
+        const afterPaste = makeDoc('head\ntail\nTARGET\n', 'file:///test.ts', 3);
+        store.applyDocumentChange(
+            makeEvent(afterPaste, [
+                {
+                    range: { start: { line: 2, character: 0 }, end: { line: 2, character: 0 } },
+                    rangeOffset: 10,
+                    rangeLength: 0,
+                    text: 'TARGET\n',
+                },
+            ])
+        );
+
+        const afterFormat = makeDoc('head\ntail\n  TARGET\n', 'file:///test.ts', 4);
+        store.applyDocumentChange(
+            makeEvent(afterFormat, [
+                {
+                    range: { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } },
+                    rangeOffset: 10,
+                    rangeLength: 7,
+                    text: '  TARGET\n',
+                },
+            ])
+        );
+
+        const survived = store.get(original.id);
+        assert.ok(survived);
+        assert.strictEqual(survived.state, 'active');
+        assert.strictEqual(survived.startOffset, 10);
+        assert.strictEqual(survived.endOffset, 16, 'logical annotation length remains stable across re-indentation');
+        assert.strictEqual(survived.lineHash, hashLine('  TARGET'));
+        assert.strictEqual(store.serialize().annotations.length, 1, 'formatter replace must not re-suspend or clone');
     });
 
     test('copy → paste creates a NEW annotation with origin.kind = paste', () => {
@@ -1072,6 +1337,24 @@ suite('AnnotationStore — mirrorUndo / mirrorRedo', () => {
         assert.strictEqual(restored.endOffset, ann.endOffset);
     });
 
+    test('removing and undoing a suspended annotation restores the suspended container and hash index', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('hello');
+        const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        store.suspend(ann.id, ann.lineHash);
+        store.remove(ann.id);
+
+        store.mirrorUndo(doc.version, doc.uri.toString());
+
+        assert.strictEqual(store.size(), 0, 'a suspended record must not leak into the active map');
+        assert.strictEqual(store.get(ann.id)?.state, 'suspended');
+        assert.deepStrictEqual(
+            store.getSuspendedByHash(ann.lineHash).map((entry) => entry.annotation.id),
+            [ann.id]
+        );
+        assert.strictEqual(store.validate().valid, true);
+    });
+
     test('update → mirrorUndo → previous payload restored', () => {
         const store = new AnnotationStore();
         const doc = makeDoc('hello');
@@ -1289,6 +1572,45 @@ suite('AnnotationStore — upsert', () => {
         assert.strictEqual(restored.pinned, undefined);
     });
 
+    test('upsert updates a suspended annotation without duplicating it in the active map', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('hello');
+        const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        store.suspend(ann.id, ann.lineHash);
+        const suspended = store.get(ann.id);
+        assert.ok(suspended);
+
+        store.upsert({ ...suspended, message: 'updated while suspended' });
+
+        assert.strictEqual(store.size(), 0);
+        assert.strictEqual(store.get(ann.id)?.message, 'updated while suspended');
+        assert.strictEqual(store.get(ann.id)?.state, 'suspended');
+        assert.strictEqual(store.validate().valid, true);
+
+        store.mirrorUndo(doc.version, doc.uri.toString());
+        assert.strictEqual(store.get(ann.id)?.message, ann.message);
+        assert.strictEqual(store.get(ann.id)?.state, 'suspended');
+        assert.strictEqual(store.validate().valid, true);
+    });
+
+    test('updating a suspended line hash reindexes it and mirrorUndo restores the previous index', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('hello');
+        const ann = store.add(defaultDraft(), { line: 0 }, asDoc(doc));
+        store.suspend(ann.id, ann.lineHash);
+        const replacementHash = 'replacement-hash';
+
+        store.update(ann.id, { lineHash: replacementHash });
+        assert.strictEqual(store.getSuspendedByHash(ann.lineHash).length, 0);
+        assert.strictEqual(store.getSuspendedByHash(replacementHash)[0]?.annotation.id, ann.id);
+        assert.strictEqual(store.validate().valid, true);
+
+        store.mirrorUndo(doc.version, doc.uri.toString());
+        assert.strictEqual(store.getSuspendedByHash(replacementHash).length, 0);
+        assert.strictEqual(store.getSuspendedByHash(ann.lineHash)[0]?.annotation.id, ann.id);
+        assert.strictEqual(store.validate().valid, true);
+    });
+
     test('rejects a draft with non-2 schemaVersion', () => {
         const store = new AnnotationStore();
         assert.throws(
@@ -1300,6 +1622,20 @@ suite('AnnotationStore — upsert', () => {
                 ),
             RangeError
         );
+    });
+
+    test('rejects explicit terminal state instead of inserting it into an active container', () => {
+        const store = new AnnotationStore();
+        assert.throws(
+            () =>
+                store.upsert({
+                    ...rawDraft('66666666-6666-4666-8666-666666666666'),
+                    state: 'disposed',
+                }),
+            /state must be active or suspended/
+        );
+        assert.strictEqual(store.getAll().length, 0);
+        assert.strictEqual(store.validate().valid, true);
     });
 });
 

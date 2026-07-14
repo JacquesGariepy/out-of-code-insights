@@ -127,6 +127,31 @@ interface SuspendedRecord {
     suspendOpId: string;
 }
 
+/**
+ * Freeze an annotation snapshot recursively. `Readonly<AnnotationV2>` only
+ * protects callers at compile time; without a deep defensive clone, arrays
+ * such as `tags`, `thread`, and `linkedAnnotations` would still alias the
+ * canonical store (and its journal snapshots) at runtime.
+ */
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): Readonly<T> {
+    if (typeof value !== 'object' || value === null) {
+        return value;
+    }
+    const objectValue = value as object;
+    if (seen.has(objectValue)) {
+        return value;
+    }
+    seen.add(objectValue);
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+        deepFreeze(nested, seen);
+    }
+    return Object.freeze(value);
+}
+
+function cloneAnnotation(annotation: Readonly<AnnotationV2>): AnnotationV2 {
+    return structuredClone(annotation) as AnnotationV2;
+}
+
 // ---------------------------------------------------------------------------
 // AnnotationStore
 // ---------------------------------------------------------------------------
@@ -259,7 +284,7 @@ export class AnnotationStore {
             walkBackward: 0,
         });
 
-        const annotation: AnnotationV2 = {
+        const annotation = structuredClone({
             ...draft,
             id: randomUUID(),
             schemaVersion: ANNOTATION_SCHEMA_VERSION,
@@ -269,7 +294,7 @@ export class AnnotationStore {
             contextBefore: captured.contextBefore,
             contextAfter: captured.contextAfter,
             state: 'active',
-        };
+        }) as AnnotationV2;
 
         this.map.set(annotation.id, annotation);
         const snapshot = this.freezeAnnotation(annotation);
@@ -296,12 +321,12 @@ export class AnnotationStore {
             throw new RangeError('AnnotationStore.add (raw): contextBefore and contextAfter must be arrays');
         }
 
-        const annotation: AnnotationV2 = {
+        const annotation = structuredClone({
             ...draft,
             id: randomUUID(),
             schemaVersion: ANNOTATION_SCHEMA_VERSION,
             state: 'active',
-        };
+        }) as AnnotationV2;
 
         this.map.set(annotation.id, annotation);
         const snapshot = this.freezeAnnotation(annotation);
@@ -376,7 +401,18 @@ export class AnnotationStore {
             throw new Error(`AnnotationStore.update: annotation ${id} not found`);
         }
         const before = this.freezeAnnotation(target);
-        Object.assign(target, patch);
+        // Clone before mutating so caller-owned arrays/objects cannot bypass
+        // journaling later, and a non-cloneable runtime payload fails without
+        // partially changing the canonical annotation.
+        const safePatch = structuredClone(patch) as AnnotationPatch;
+        Object.assign(target, safePatch);
+        const suspendedRecord = this.suspendedById.get(id);
+        if (suspendedRecord && suspendedRecord.blockHash !== target.lineHash) {
+            // `lineHash` is also the suspended-buffer index key. Keep the
+            // secondary index synchronized when a raw/programmatic update
+            // refreshes the anchor of a suspended annotation.
+            this.replaceAnnotation(id, target);
+        }
         const after = this.freezeAnnotation(target);
         this.commitOrQueue({
             opId: randomUUID(),
@@ -1050,10 +1086,10 @@ export class AnnotationStore {
     serialize(): AnnotationStoreFileV2 {
         const annotations: AnnotationV2[] = [];
         for (const a of this.map.values()) {
-            annotations.push({ ...a });
+            annotations.push(structuredClone(a));
         }
         for (const rec of this.suspendedById.values()) {
-            annotations.push({ ...rec.annotation });
+            annotations.push(structuredClone(rec.annotation));
         }
         return {
             schemaVersion: ANNOTATION_SCHEMA_VERSION,
@@ -1062,12 +1098,140 @@ export class AnnotationStore {
     }
 
     deserialize(file: AnnotationStoreFileV2): void {
-        if (file.schemaVersion !== ANNOTATION_SCHEMA_VERSION) {
+        const envelope = file as unknown as { schemaVersion?: unknown; annotations?: unknown };
+        if (envelope.schemaVersion !== ANNOTATION_SCHEMA_VERSION) {
             throw new Error(
-                `AnnotationStore.deserialize: unsupported schemaVersion ${String(file.schemaVersion)} ` +
+                `AnnotationStore.deserialize: unsupported schemaVersion ${String(envelope.schemaVersion)} ` +
                     `(expected ${ANNOTATION_SCHEMA_VERSION}, no migration path in v2)`
             );
         }
+        if (!Array.isArray(envelope.annotations)) {
+            throw new Error('AnnotationStore.deserialize: malformed envelope - annotations must be an array');
+        }
+
+        const isRecord = (value: unknown): value is Record<string, unknown> =>
+            typeof value === 'object' && value !== null && !Array.isArray(value);
+        const isStringArray = (value: unknown): value is string[] =>
+            Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+        const staged: AnnotationV2[] = [];
+        const ids = new Set<string>();
+        for (const [index, raw] of envelope.annotations.entries()) {
+            const fail = (detail: string): never => {
+                throw new Error(`AnnotationStore.deserialize: annotation[${String(index)}] ${detail}`);
+            };
+            if (!isRecord(raw)) fail('must be an object');
+            if (raw.schemaVersion !== ANNOTATION_SCHEMA_VERSION) fail('has an invalid schemaVersion');
+            // Older v2 writers could leave terminal records in the envelope.
+            // They were deliberately ignored by the previous loader. Keep
+            // that safe, data-preserving behaviour instead of rejecting the
+            // whole envelope (which would hide every otherwise-valid record).
+            if (raw.state === 'disposed') {
+                continue;
+            }
+            if (typeof raw.id !== 'string' || raw.id.trim().length === 0 || raw.id.length > 256) {
+                fail('has an invalid id');
+            }
+            if (ids.has(raw.id)) fail(`duplicates id ${raw.id}`);
+            ids.add(raw.id);
+            if (typeof raw.fileUri !== 'string' || raw.fileUri.length === 0) fail('has an invalid fileUri');
+            if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(raw.fileUri)) {
+                fail('has a fileUri without a URI scheme');
+            }
+            if (typeof raw.file !== 'string' || raw.file.length === 0 || raw.file.includes('\0')) {
+                fail('has an invalid display file path');
+            }
+            if (
+                !Number.isSafeInteger(raw.startOffset) ||
+                !Number.isSafeInteger(raw.endOffset) ||
+                (raw.startOffset as number) < 0 ||
+                (raw.endOffset as number) < (raw.startOffset as number)
+            ) {
+                fail('has an invalid offset range');
+            }
+            if (raw.state !== 'active' && raw.state !== 'suspended') fail('has an invalid persisted state');
+            if (!isRecord(raw.origin) || !['manual', 'paste', 'restore'].includes(String(raw.origin.kind))) {
+                fail('has an invalid origin');
+            }
+            if (raw.origin.sourceOpId !== undefined && typeof raw.origin.sourceOpId !== 'string') {
+                fail('has an invalid origin source operation');
+            }
+            if (typeof raw.message !== 'string' || typeof raw.timestamp !== 'string') {
+                fail('must contain string message and timestamp fields');
+            }
+            if (
+                typeof raw.lineHash !== 'string' ||
+                !isStringArray(raw.contextBefore) ||
+                !isStringArray(raw.contextAfter)
+            ) {
+                fail('has invalid anchor context');
+            }
+            if (raw.tags !== undefined && !isStringArray(raw.tags)) fail('has invalid tags');
+            if (raw.author !== undefined && typeof raw.author !== 'string') fail('has an invalid author');
+            if (raw.severity !== undefined && typeof raw.severity !== 'string') fail('has an invalid severity');
+            if (raw.resolved !== undefined && typeof raw.resolved !== 'boolean') fail('has an invalid resolved flag');
+            if (raw.pinned !== undefined && typeof raw.pinned !== 'boolean') fail('has an invalid pinned flag');
+            if (raw.priority !== undefined && (typeof raw.priority !== 'number' || !Number.isFinite(raw.priority))) {
+                fail('has an invalid priority');
+            }
+            if (raw.kanbanColumn !== undefined && typeof raw.kanbanColumn !== 'string') {
+                fail('has an invalid Kanban column');
+            }
+            if (raw.thread !== undefined) {
+                if (!Array.isArray(raw.thread)) fail('has an invalid discussion thread');
+                for (const comment of raw.thread) {
+                    if (
+                        !isRecord(comment) ||
+                        typeof comment.id !== 'string' ||
+                        typeof comment.message !== 'string' ||
+                        typeof comment.timestamp !== 'string' ||
+                        (comment.author !== undefined && typeof comment.author !== 'string')
+                    ) {
+                        fail('contains an invalid discussion comment');
+                    }
+                }
+            }
+            if (raw.reviewState !== undefined) {
+                if (
+                    !isRecord(raw.reviewState) ||
+                    typeof raw.reviewState.viewed !== 'boolean' ||
+                    typeof raw.reviewState.viewedBy !== 'string' ||
+                    typeof raw.reviewState.viewedAt !== 'string'
+                ) {
+                    fail('has an invalid review state');
+                }
+            }
+            if (raw.snippet !== undefined) {
+                if (
+                    !isRecord(raw.snippet) ||
+                    typeof raw.snippet.code !== 'string' ||
+                    typeof raw.snippet.language !== 'string'
+                ) {
+                    fail('has an invalid snippet');
+                }
+            }
+            if (raw.linkedAnnotations !== undefined) {
+                if (!Array.isArray(raw.linkedAnnotations)) fail('has invalid linkedAnnotations');
+                for (const link of raw.linkedAnnotations) {
+                    if (
+                        !isRecord(link) ||
+                        typeof link.targetFile !== 'string' ||
+                        link.targetFile.trim().length === 0 ||
+                        !Number.isSafeInteger(link.targetLine) ||
+                        (link.targetLine as number) < 0 ||
+                        typeof link.relationship !== 'string' ||
+                        link.relationship.trim().length === 0 ||
+                        (link.targetId !== undefined &&
+                            (typeof link.targetId !== 'string' || link.targetId.trim().length === 0)) ||
+                        (link.targetUri !== undefined &&
+                            (typeof link.targetUri !== 'string' || !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(link.targetUri)))
+                    ) {
+                        fail('contains an invalid linked annotation');
+                    }
+                }
+            }
+            staged.push(structuredClone(raw) as unknown as AnnotationV2);
+        }
+
         this.map.clear();
         this.journal.length = 0;
         this.redoStack.length = 0;
@@ -1077,14 +1241,7 @@ export class AnnotationStore {
         this.suspendedByLineHash.clear();
 
         const now = Date.now();
-        for (const ann of file.annotations) {
-            if (ann.schemaVersion !== ANNOTATION_SCHEMA_VERSION) {
-                throw new Error(
-                    `AnnotationStore.deserialize: per-annotation schemaVersion mismatch on ${ann.id} ` +
-                        `(got ${String(ann.schemaVersion)})`
-                );
-            }
-            const cloned: AnnotationV2 = { ...ann };
+        for (const cloned of staged) {
             if (cloned.state === 'suspended') {
                 const record: SuspendedRecord = {
                     annotation: cloned,
@@ -1097,8 +1254,6 @@ export class AnnotationStore {
             } else if (cloned.state === 'active') {
                 this.map.set(cloned.id, cloned);
             }
-            // 'disposed' entries are not persisted in well-formed envelopes;
-            // skip them silently if they appear (forward compat).
         }
 
         // Resolve `waitUntilInitialized()` exactly once.
@@ -1206,18 +1361,24 @@ export class AnnotationStore {
             );
         }
 
-        const normalized: AnnotationV2 = {
+        const normalized = structuredClone({
             ...annotation,
             schemaVersion: ANNOTATION_SCHEMA_VERSION,
             state: annotation.state ?? 'active',
-        };
+        }) as AnnotationV2;
 
-        const existing = this.map.get(normalized.id);
+        if (normalized.state !== 'active' && normalized.state !== 'suspended') {
+            throw new RangeError(
+                `AnnotationStore.upsert: state must be active or suspended (got ${String(normalized.state)})`
+            );
+        }
+
+        const existing = this.map.get(normalized.id) ?? this.suspendedById.get(normalized.id)?.annotation;
         const after = this.freezeAnnotation({ ...normalized });
 
         if (existing) {
             const before = this.freezeAnnotation(existing);
-            this.replaceAnnotation(normalized.id, normalized);
+            this.installAnnotation(normalized);
             this.commitOrQueue({
                 opId: randomUUID(),
                 timestamp: new Date().toISOString(),
@@ -1238,7 +1399,7 @@ export class AnnotationStore {
             return after;
         }
 
-        this.map.set(normalized.id, { ...normalized });
+        this.installAnnotation(normalized);
         this.commitOrQueue({
             opId: randomUUID(),
             timestamp: new Date().toISOString(),
@@ -1463,8 +1624,8 @@ export class AnnotationStore {
         }
     }
 
-    private freezeAnnotation(ann: AnnotationV2): Readonly<AnnotationV2> {
-        return Object.freeze({ ...ann });
+    private freezeAnnotation(ann: Readonly<AnnotationV2>): Readonly<AnnotationV2> {
+        return deepFreeze(cloneAnnotation(ann));
     }
 
     private applyInverseInPlace(op: OpEntry): void {
@@ -1478,9 +1639,9 @@ export class AnnotationStore {
                 }
                 break;
             case 'add':
-                // Inverse of remove: restore from the snapshot (active).
+                // Inverse of remove: restore to the snapshot's lifecycle container.
                 if (inv.next) {
-                    this.map.set(inv.next.id, { ...inv.next });
+                    this.installAnnotation(inv.next);
                 }
                 break;
             case 'update':
@@ -1497,7 +1658,7 @@ export class AnnotationStore {
                 if (!inv.previous) {
                     break;
                 }
-                const ann = { ...inv.previous };
+                const ann = cloneAnnotation(inv.previous);
                 this.map.delete(ann.id);
                 this.suspendedById.set(ann.id, {
                     annotation: ann,
@@ -1513,7 +1674,7 @@ export class AnnotationStore {
                 if (!inv.previous) {
                     break;
                 }
-                const ann = { ...inv.previous };
+                const ann = cloneAnnotation(inv.previous);
                 this.unindexSuspended(ann.id);
                 this.map.set(ann.id, ann);
                 break;
@@ -1531,13 +1692,7 @@ export class AnnotationStore {
             case 'add':
             case 'upsert':
                 if (op.after) {
-                    // Forward replay: insert (or overwrite) into the active
-                    // map. If the id was tracked in the suspended buffer we
-                    // also evict it so `state` invariants stay coherent.
-                    if (this.suspendedById.has(op.after.id)) {
-                        this.unindexSuspended(op.after.id);
-                    }
-                    this.map.set(op.after.id, { ...op.after });
+                    this.installAnnotation(op.after);
                 }
                 break;
             case 'remove':
@@ -1555,7 +1710,7 @@ export class AnnotationStore {
                 if (!op.after) {
                     break;
                 }
-                const ann = { ...op.after };
+                const ann = cloneAnnotation(op.after);
                 this.map.delete(ann.id);
                 this.suspendedById.set(ann.id, {
                     annotation: ann,
@@ -1570,7 +1725,7 @@ export class AnnotationStore {
                 if (!op.after) {
                     break;
                 }
-                const ann = { ...op.after };
+                const ann = cloneAnnotation(op.after);
                 this.unindexSuspended(ann.id);
                 this.map.set(ann.id, ann);
                 break;
@@ -1682,14 +1837,39 @@ export class AnnotationStore {
      * Object.assign would only overwrite fields present in the replacement).
      */
     private replaceAnnotation(id: string, replacement: Readonly<AnnotationV2>): void {
-        if (this.map.has(id)) {
-            this.map.set(id, { ...replacement });
+        if (this.map.has(id) || this.suspendedById.has(id)) {
+            this.installAnnotation(replacement);
+        }
+    }
+
+    /**
+     * Put a snapshot in the container dictated by its lifecycle state while
+     * keeping the suspended hash index coherent. Used by upsert and journal
+     * replay where an annotation may legitimately move between containers.
+     */
+    private installAnnotation(replacement: Readonly<AnnotationV2>): void {
+        const previousSuspension = this.suspendedById.get(replacement.id);
+        this.map.delete(replacement.id);
+        if (previousSuspension) {
+            this.unindexSuspended(replacement.id);
+        }
+
+        const annotation = cloneAnnotation(replacement);
+        if (annotation.state === 'active') {
+            this.map.set(annotation.id, annotation);
             return;
         }
-        const rec = this.suspendedById.get(id);
-        if (rec) {
-            rec.annotation = { ...replacement };
+        if (annotation.state === 'suspended') {
+            const record: SuspendedRecord = {
+                annotation,
+                blockHash: annotation.lineHash,
+                suspendedAt: previousSuspension?.suspendedAt ?? Date.now(),
+                suspendOpId: previousSuspension?.suspendOpId ?? '',
+            };
+            this.suspendedById.set(annotation.id, record);
+            this.indexSuspended(annotation.id, record.blockHash);
         }
+        // `disposed` snapshots are terminal and therefore remain absent.
     }
 
     private indexSuspended(id: string, blockHash: string): void {

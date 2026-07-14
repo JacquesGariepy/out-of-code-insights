@@ -3,9 +3,9 @@
 Validation manuelle de toutes les fonctionnalités livrées depuis la v1.0.21, organisée par version.
 Complément du [manual-test-checklist.md](manual-test-checklist.md) (14 cas d'ancrage §7.x, toujours valides).
 
-**Couverture automatisée** : chaque section référence la suite qui couvre déjà le scénario.
-`npm run test:unit` (457 tests purs, < 1 s) · `npm test` (375+ tests dans un vrai VS Code, ~3 min) ·
-`cd license-server && npm test` (51 tests) · CI GitHub Actions sur Ubuntu/Windows/macOS.
+**Couverture automatisée** : chaque section référence la suite qui couvre déjà
+le scénario. Exécuter `npm run test:unit`, `npm test` et les tests des paquets
+touchés; ne pas figer ici un total qui change à chaque itération.
 
 ## Préparation
 
@@ -40,6 +40,33 @@ Complément du [manual-test-checklist.md](manual-test-checklist.md) (14 cas d'an
 | 2.7 | Rename de fichier        | Renommer (explorer) un fichier annoté                                                                                                                                     | L'annotation suit le nouveau nom                                                                                                                                            | lot9 rename                 |
 | 2.8 | Gestes d'édition avancés | Multi-curseurs, Replace All, Format Document (re-indentation), Alt+↓                                                                                                      | L'annotation suit dans chaque cas                                                                                                                                           | lot9                        |
 | 2.9 | Fenêtre de récupération  | Setting `annotation.cutRecoveryWindowSeconds: 10` ; couper sans coller 10 s                                                                                               | Prompt après ~10 s (au lieu de 30)                                                                                                                                          | unit updateSuspendTtl       |
+
+## Candidate source 1.4.4 — menus et Documentation Studio
+
+> Cette candidate n'est pas publiée. Marketplace et Open VSX restent en
+> 1.4.3; aucun tag ni publication 1.4.4 ne doit être créé sans confirmation
+> explicite de l'utilisateur.
+
+| #    | Scénario                     | Étapes                                                                                                                                                    | Attendu                                                                                                                                               | Auto                                                               |
+| ---- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 2.10 | Découverte sans palette      | Clic droit dans l'éditeur → **Out-of-Code Insights**; ouvrir les 11 groupes                                                                               | Les 86 commandes utilisateur ont un menu natif; les groupes Documentation, Review, Kanban et Settings/Accounts sont visibles                          | `commandDiscoverability.unit.test.ts`, `packageMenus.unit.test.ts` |
+| 2.11 | Configuration depuis le code | **Documentation → Configure Documentation Studio**; choisir un preset, des documents et des formats                                                       | Les choix sont guidés et persistés; aucun identifiant ou tag interne à mémoriser                                                                      | `documentationStudio.unit.test.ts`                                 |
+| 2.12 | Configuration depuis l'arbre | Clic droit sur une annotation → **Documentation → Configure Documentation Studio**                                                                        | Le même flux de configuration s'ouvre                                                                                                                 | `commandDiscoverability.unit.test.ts`                              |
+| 2.13 | Documents techniques         | Ajouter les rôles README, changelog, architecture, ADR, onboarding, runbook et reference; générer                                                         | `README.md`, `CHANGELOG.md` et `technical/**` sont créés seulement à partir de contenu et métadonnées explicites                                      | `technicalDocumentGenerator.unit.test.ts`                          |
+| 2.14 | Sorties contraintes          | Générer Wiki, HTML et OpenAPI à partir du preset complet                                                                                                  | Markdown avec extensions GFM selon l'hôte, site HTML autonome et projection OpenAPI limitée au profil documenté; le rapport est consommable par la CI | suites Documentation Studio/HTML/OpenAPI                           |
+| 2.15 | Commentaires → annotations   | Sur un fichier supporté contenant un en-tête, un commentaire ligne, un bloc et un docblock, lancer **Convert Code Comments & Headers to Annotations...**  | Aperçu avec type/plage, multi-sélection, confirmation; les annotations sont créées sans modifier le code; relancer ne duplique rien                   | `sourceCommentCodec.unit.test.ts`, audits menus                    |
+| 2.16 | Annotations → commentaires   | Dans un fichier à contexte syntaxique unique, lancer **Write Annotations into Code Comments...**, choisir les éléments/le style, confirmer, puis **Undo** | Un `WorkspaceEdit` insère la syntaxe du langage et un marqueur `OOCI(...)`; une annulation restaure le fichier; une relance ne duplique rien          | `sourceCommentCodec.unit.test.ts`                                  |
+| 2.17 | Catalogue de langages        | Scanner TypeScript, Python, SQL, HTML, PowerShell, Haskell, CSS et un mode non supporté                                                                   | Les syntaxes représentatives fonctionnent; le mode inconnu ne mute rien. Catalogue scanner/encodeur: 42 IDs, dont 37 principaux testés + 5 extras     | `sourceCommentCodec.unit.test.ts`                                  |
+| 2.18 | Liens stables et multi-root  | Lier A → B, déplacer/ré-ancrer B, fermer son fichier, naviguer; répéter avec deux dossiers racines                                                        | Le lien suit l'ID de B; la ligne canonique s'ouvre; un ancien chemin relatif est résolu depuis le workspace source                                    | tests `LinkedAnnotationManager`, Extension Host liens              |
+| 2.19 | Ligne GitHub canonique       | Fermer le fichier annoté, déplacer son contenu, créer une issue (sans valider l'appel réel en test automatisé)                                            | L'aperçu/corps utilise la ligne dérivée de l'offset canonique; l'identité est relue avant de sauver la trace                                          | `githubRepository.unit.test.ts`                                    |
+| 2.20 | Kanban durci                 | Ouvrir/fermer plusieurs fois le board, modifier une annotation, choisir **Remove from Kanban**, envoyer valeurs limites via UI                            | Une seule mise à jour, vraie ligne, carte masquée sans suppression, colonnes/messages invalides rejetés, contenu hostile affiché comme texte          | `kanbanIntegrity.integration.test.ts`                              |
+| 2.21 | Persistance atomique         | Simuler échec d'écriture temporaire puis de rename; tenter chemin via lien/jonction                                                                       | Le dernier JSON valide reste intact, temporaires supprimés, évasion physique refusée                                                                  | `AnnotationPersistence.unit.test.ts`                               |
+| 2.22 | Activation sans workspace    | Ouvrir une fenêtre VS Code vide, activer l'extension, explorer menus/configuration/diagnostics, puis ouvrir un dossier                                    | Aucun échec d'activation; persistance/DnD indisponibles avant le dossier; services workspace attachés après ouverture                                 | smoke Extension Host                                               |
+| 2.23 | DnD annulé/hors workspace    | Tenter un drop sur un fichier externe; annuler un token juste après mutation simulée                                                                      | Le fichier externe est refusé et la mutation annulée est rollbackée                                                                                   | tests provider DnD                                                 |
+| 2.24 | Template multiligne          | **Manage Templates → Create/Edit**; choisir severity, éditer le contenu dans le document temporaire, sauver                                               | Contenu multiligne et severity persistés; annulation ne modifie pas le template                                                                       | `templateManager.integration.test.ts`                              |
+| 2.25 | Review avec panneau focus    | Démarrer Review, donner le focus au panneau, utiliser `F8`/`Shift+F8`, puis arrêter Review                                                                | Navigation Review active avec focus panneau; comportement VS Code natif restauré hors session                                                         | tests Review/navigation                                            |
+| 2.26 | Catalogue IA exact           | **Configure AI Provider & Credentials**; vérifier les 13 choix, Azure, Ollama et LM Studio                                                                | Aucun TogetherAI/alias `claude`; Azure demande endpoint/deployment/API version; les deux fournisseurs locaux n'exigent pas de clé                     | `aiProviderCatalog.unit.test.ts`                                   |
+| 2.27 | Contextes mixtes (limite)    | Importer un commentaire puis essayer l'écriture inverse dans les modes `typescriptreact`, `javascriptreact`, `vue` et `php`                               | L'import fonctionne; l'écriture inverse est refusée clairement et le fichier reste inchangé jusqu'à `SOURCE-CONVERT-004`                              | `SOURCE-CONVERT-004` reste `todo`                                  |
 
 ## Branche `feat/pro-saas-mcp` (non releasée)
 
@@ -78,14 +105,14 @@ $env:PORT='8787'; node dist/src/server.js
 
 Le contenu des messages est inséré tel quel (passthrough) : tout ce que le **renderer** cible supporte fonctionne.
 
-| Capacité                                                       | Support        | Notes                                                                        |
-| -------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------- |
-| GFM (tableaux, listes à cocher, barré, autolinks, emoji)       | ✅ passthrough | Rendu par GitHub, VS Code, DocFX                                             |
-| Blocs de code fencés + langage                                 | ✅             | Protégés de la démotion/wiki-links                                           |
-| Math display `$$…$$` (arXiv/GitHub/DocFX-math) et inline `$…$` | ✅             | Blocs `$$` protégés de toute réécriture                                      |
-| Diagrammes Mermaid                                             | ✅ passthrough | Fence ` ```mermaid ` protégé                                                 |
-| Alerts GFM `> [!NOTE]`                                         | ✅ passthrough |                                                                              |
-| TOC DocFX (`toc.yml`, imbriquée)                               | ✅ généré      | Pointer un projet DocFX sur le dossier                                       |
-| Front matter YAML (`title:`)                                   | ✅ opt-in      | `annotation.docs.frontMatter` (off par défaut : GitHub l'affiche en tableau) |
-| Démotion de titres, ancres stables, wiki-links, warnings       | ✅ généré      |                                                                              |
-| DFM avancé (`[!include]`, `<xref:…>`, `uid:`)                  | ❌             | Non généré — roadmap si publication DocFX multi-projets                      |
+| Capacité                                                 | Support        | Notes                                                                   |
+| -------------------------------------------------------- | -------------- | ----------------------------------------------------------------------- |
+| GFM (tableaux, listes à cocher, barré, autolinks, emoji) | ✅ passthrough | Selon les capacités du renderer sélectionné                             |
+| Blocs de code fencés + langage                           | ✅             | Protégés de la démotion/wiki-links                                      |
+| Math display `$$…$$` et inline `$…$`                     | ✅             | Blocs `$$` protégés de toute réécriture                                 |
+| Diagrammes Mermaid                                       | ✅ passthrough | Fence ` ```mermaid ` protégé                                            |
+| Alerts GFM `> [!NOTE]`                                   | ✅ passthrough |                                                                         |
+| TOC hiérarchique (`toc.yml`)                             | ✅ généré      | Consommé par l'adaptateur de projet statique                            |
+| Métadonnées de page YAML (`title:`)                      | ✅ opt-in      | `annotation.docs.pageMetadata`; dépend du moteur de rendu               |
+| Démotion de titres, ancres stables, wiki-links, warnings | ✅ généré      |                                                                         |
+| Extensions propres à un moteur (`include`, `xref`, etc.) | ❌ portable    | À traiter dans un adaptateur, jamais dans le graphe documentaire commun |

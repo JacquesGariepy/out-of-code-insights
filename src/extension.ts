@@ -9,14 +9,14 @@ import * as path from 'path';
 import { TextDecoder } from 'util';
 import * as vscode from 'vscode';
 import { AnnotationManager } from './managers/AnnotationManager';
-import type { Annotation } from './common/types';
+import type { Annotation, LinkedAnnotation } from './common/types';
 import {
     AnnotationsTreeDataProvider,
     AnnotationsDragAndDropController,
     AnnotationTreeItem,
 } from './tree/AnnotationsTree';
 import { NavigationStackDataProvider } from './tree/NavigationStackTree';
-import { KanbanView } from './views/KanbanView';
+import { KANBAN_HIDDEN_COLUMN_ID, KanbanView } from './views/KanbanView';
 import { localize } from './common/localize';
 import { LocalizationManager, loc } from './managers/LocalizationManager';
 import { UserProfileManager } from './managers/UserProfileManager';
@@ -29,7 +29,8 @@ import { initializeLogger, getLogger } from './utils/logger';
 import { AnnotationStore } from './transactional/AnnotationStore';
 import { AnnotationPersistence, DEFAULT_ANNOTATION_FILE_RELATIVE_PATH } from './transactional/AnnotationPersistence';
 import { AnnotationSaveCoordinator } from './transactional/AnnotationSaveCoordinator';
-import type { AnnotationStoreFileV2 } from './transactional/types';
+import { AnnotationWriteFingerprintTracker } from './transactional/AnnotationWriteFingerprint';
+import type { AnnotationStoreFileV2, AnnotationV2 } from './transactional/types';
 import { VisibilityFilter } from './transactional/VisibilityFilter';
 import { KanbanColumnStore } from './transactional/KanbanColumnStore';
 import { AnnotationCodeLensProvider } from './providers/AnnotationCodeLensProvider';
@@ -38,8 +39,38 @@ import {
     AnnotationDocumentDropEditProvider,
     annotationDocumentDropMetadata,
 } from './providers/AnnotationDocumentDropEditProvider';
-import { generateDocSet, type DocAnnotation } from './docs/AnnotationDocGenerator';
+import type { DocAnnotation } from './docs/AnnotationDocGenerator';
+import {
+    getBuiltInDocumentTemplate,
+    isSupportedDocumentationLanguage,
+    listBuiltInDocumentTemplates,
+    normalizeDocumentationFormat,
+    parseCustomDocumentTemplate,
+    SUPPORTED_DOCUMENTATION_FORMATS,
+    SUPPORTED_TECHNICAL_DOCUMENT_KINDS,
+    type DocumentTemplateDefinition,
+    type DocumentationFormat,
+    type TechnicalDocumentKind,
+} from './docs/DocumentTemplateCatalog';
+import { writeDocumentationBundle } from './docs/WorkspaceDocumentationWriter';
+import { generateDocumentationStudio } from './docs/DocumentationStudio';
+import {
+    parseOpenApiGenerationProfile,
+    type OpenApiDiagnostic,
+    type OpenApiGenerationProfile,
+} from './docs/OpenApiDocumentation';
 import { scanLineComments } from './comments/commentScanner';
+import {
+    encodeSourceComment,
+    scanSourceComments,
+    sourceCommentAnnotationIdFragment,
+    sourceCommentAnnotationMarker,
+    supportsSourceCommentEncoding,
+    supportsSourceCommentLanguage,
+    type SourceCommentEncodingStyle,
+    type SourceCommentKind,
+    type SourceCommentRecord,
+} from './comments/sourceCommentCodec';
 import { languageOfPath } from './comments/languageOfPath';
 import { captureAnchor } from './anchoring/anchor';
 import { TextBuffer } from './anchoring/textBuffer';
@@ -76,15 +107,13 @@ let annotationSyncService: AnnotationSyncService | undefined;
 let annotationMoveService: AnnotationMoveService | undefined;
 let annotationSaveCoordinator: AnnotationSaveCoordinator<AnnotationStoreFileV2> | undefined;
 let selectedTreeAnnotationIds: string[] = [];
+let selectedTreeAnnotationItems: AnnotationTreeItem[] = [];
 
-/** Reentrancy guard for {@link generateDocumentationNow}. */
-let docsGenerationInProgress = false;
+/** Serialized generation tail: watch/manual requests never overwrite each other. */
+let docsGenerationQueue: Promise<void> = Promise.resolve();
 
 /** Quiet period between the last annotation change and a watch-mode regeneration. */
 const DOCS_WATCH_DEBOUNCE_MS = 2000;
-
-/** Window after our own annotations.json save during which watcher events are treated as echoes. */
-const EXTERNAL_WATCH_SUPPRESSION_MS = 2000;
 
 /**
  * One-shot toast guard for the docs-watch Pro gate: the first denied
@@ -161,7 +190,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         // off so the two layers do not race for the same file during R2.
         await bootstrapTransactionalStack(context, logger);
 
-        annotationManager = new AnnotationManager(context, visibilityFilter);
+        if (!annotationStore || !visibilityFilter) {
+            throw new Error('Transactional stack not bootstrapped before manager and tree wiring');
+        }
+        const treeStore = annotationStore;
+
+        annotationManager = new AnnotationManager(context, visibilityFilter, treeStore);
         // Stub the legacy disk paths during R2: the v2 envelope on disk is
         // owned by AnnotationStore now. Without this, AnnotationManager
         // would crash on the v2 shape and pop a "failed to load" toast.
@@ -169,113 +203,144 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
         profileManager = new UserProfileManager(context);
         aiProfileManager = new AIProfileManager(context);
-        aiAdapter = new UnifiedAIAdapter(context, annotationManager, profileManager, aiProfileManager);
+        aiAdapter = new UnifiedAIAdapter(context, annotationManager, profileManager, aiProfileManager, treeStore);
 
-        // Lot 5 R2: Tree provider migrated by worker-A to consume store +
-        // visibility-filter directly. Drag-and-drop reorder writes through
-        // persistence on its own.
-        if (!annotationStore || !visibilityFilter || !annotationPersistence) {
-            throw new Error('Lot 5 R2: transactional stack not bootstrapped before tree wiring');
+        // Store-backed browsing and menus remain available without a workspace.
+        // Move/drop services require persistence and are attached only when a
+        // workspace-backed annotations file exists.
+        if (annotationPersistence) {
+            annotationMoveService = new AnnotationMoveService(treeStore, annotationPersistence);
+            context.subscriptions.push(
+                new AnnotationEditorMoveController(treeStore, annotationMoveService, {
+                    visibilityFilter,
+                    selectedIds: () => selectedTreeAnnotationIds,
+                })
+            );
+            context.subscriptions.push(
+                vscode.languages.registerDocumentDropEditProvider(
+                    { scheme: 'file' },
+                    new AnnotationDocumentDropEditProvider(annotationMoveService),
+                    annotationDocumentDropMetadata
+                )
+            );
         }
-        const treeStore = annotationStore;
-        annotationMoveService = new AnnotationMoveService(treeStore, annotationPersistence);
-        context.subscriptions.push(
-            new AnnotationEditorMoveController(treeStore, annotationMoveService, {
-                visibilityFilter,
-                selectedIds: () => selectedTreeAnnotationIds,
-            })
-        );
-        context.subscriptions.push(
-            vscode.languages.registerDocumentDropEditProvider(
-                { scheme: 'file' },
-                new AnnotationDocumentDropEditProvider(annotationMoveService),
-                annotationDocumentDropMetadata
-            )
-        );
         const treeDataProvider = new AnnotationsTreeDataProvider(treeStore, visibilityFilter);
-        const dragAndDropController = new AnnotationsDragAndDropController();
         const view = vscode.window.createTreeView('annotationsView', {
             treeDataProvider,
-            dragAndDropController,
+            dragAndDropController: annotationPersistence ? new AnnotationsDragAndDropController() : undefined,
             canSelectMany: true,
         });
+        const explorerView = vscode.window.createTreeView('annotationsExplorerView', {
+            treeDataProvider,
+            dragAndDropController: annotationPersistence ? new AnnotationsDragAndDropController() : undefined,
+            canSelectMany: true,
+        });
+        const annotationViews = [view, explorerView] as const;
         const updateTreeChrome = (): void => {
             const stats = treeDataProvider.getStats();
-            view.badge = stats.visible
-                ? {
-                      value: stats.visible,
-                      tooltip: loc(
-                          'treeBadgeTooltip',
-                          '{0} visible annotations across {1} files',
-                          stats.visible,
-                          stats.files
-                      ),
-                  }
-                : undefined;
-            view.description = stats.visible
-                ? loc('treeViewDescription', '{0} open · {1} resolved', stats.open, stats.resolved)
-                : undefined;
-            view.message =
-                stats.total === 0
-                    ? loc('treeEmptyMessage', 'No annotations yet. Press Ctrl+Alt+A in an editor to create one.')
-                    : stats.visible === 0
-                      ? loc(
-                            'treeFilteredEmptyMessage',
-                            'Annotations exist, but the current visibility filters hide them.'
-                        )
-                      : stats.attention > 0
-                        ? loc('treeAttentionMessage', '{0} annotations need attention.', stats.attention)
-                        : undefined;
+            for (const annotationView of annotationViews) {
+                annotationView.badge = stats.visible
+                    ? {
+                          value: stats.visible,
+                          tooltip: loc(
+                              'treeBadgeTooltip',
+                              '{0} visible annotations across {1} files',
+                              stats.visible,
+                              stats.files
+                          ),
+                      }
+                    : undefined;
+                annotationView.description = stats.visible
+                    ? loc('treeViewDescription', '{0} open · {1} resolved', stats.open, stats.resolved)
+                    : undefined;
+                annotationView.message =
+                    stats.total === 0
+                        ? loc('treeEmptyMessage', 'No annotations yet. Press Ctrl+Alt+A in an editor to create one.')
+                        : stats.visible === 0
+                          ? loc(
+                                'treeFilteredEmptyMessage',
+                                'Annotations exist, but the current visibility filters hide them.'
+                            )
+                          : stats.attention > 0
+                            ? loc('treeAttentionMessage', '{0} annotations need attention.', stats.attention)
+                            : undefined;
+            }
         };
         context.subscriptions.push(treeDataProvider.onDidChangeTreeData(updateTreeChrome));
-        context.subscriptions.push(
-            view.onDidChangeSelection((event) => {
-                selectedTreeAnnotationIds = event.selection
-                    .filter((item): item is AnnotationTreeItem => item instanceof AnnotationTreeItem)
-                    .map((item) => item.annotation.id);
-                void vscode.commands.executeCommand(
-                    'setContext',
-                    'outOfCodeInsights.treeSelectionCount',
-                    selectedTreeAnnotationIds.length
-                );
-            })
-        );
-        context.subscriptions.push(
-            view.onDidChangeCheckboxState((event) => {
-                const changes = event.items.filter(
-                    (entry): entry is [AnnotationTreeItem, vscode.TreeItemCheckboxState] =>
-                        entry[0] instanceof AnnotationTreeItem
-                );
-                if (changes.length === 0) {
-                    return;
-                }
-                treeStore.beginTransaction();
-                try {
-                    for (const [item, state] of changes) {
-                        treeStore.update(item.annotation.id, {
-                            resolved: state === vscode.TreeItemCheckboxState.Checked,
-                        });
+        const publishTreeSelection = (items: readonly vscode.TreeItem[]): void => {
+            selectedTreeAnnotationItems = items.filter(
+                (item): item is AnnotationTreeItem => item instanceof AnnotationTreeItem
+            );
+            selectedTreeAnnotationIds = selectedTreeAnnotationItems.map((item) => item.annotation.id);
+            void vscode.commands.executeCommand(
+                'setContext',
+                'outOfCodeInsights.treeSelectionCount',
+                selectedTreeAnnotationIds.length
+            );
+        };
+        for (const annotationView of annotationViews) {
+            context.subscriptions.push(
+                annotationView.onDidChangeSelection((event) => {
+                    publishTreeSelection(event.selection);
+                })
+            );
+            context.subscriptions.push(
+                annotationView.onDidChangeVisibility(({ visible }) => {
+                    if (visible) {
+                        publishTreeSelection(annotationView.selection);
                     }
-                    treeStore.commit();
-                } catch (error) {
-                    treeStore.rollback();
-                    getLogger().error('Unable to update annotation resolution from TreeView checkbox', error);
-                    vscode.window.showErrorMessage(
-                        loc('treeCheckboxUpdateFailed', 'Unable to update annotation state.')
+                })
+            );
+            context.subscriptions.push(
+                annotationView.onDidChangeCheckboxState((event) => {
+                    const changes = event.items.filter(
+                        (entry): entry is [AnnotationTreeItem, vscode.TreeItemCheckboxState] =>
+                            entry[0] instanceof AnnotationTreeItem
                     );
-                }
-            })
-        );
+                    if (changes.length === 0) {
+                        return;
+                    }
+                    treeStore.beginTransaction();
+                    try {
+                        for (const [item, state] of changes) {
+                            treeStore.update(item.annotation.id, {
+                                resolved: state === vscode.TreeItemCheckboxState.Checked,
+                            });
+                        }
+                        treeStore.commit();
+                    } catch (error) {
+                        treeStore.rollback();
+                        getLogger().error('Unable to update annotation resolution from TreeView checkbox', error);
+                        vscode.window.showErrorMessage(
+                            loc('treeCheckboxUpdateFailed', 'Unable to update annotation state.')
+                        );
+                    }
+                })
+            );
+        }
         updateTreeChrome();
         void vscode.commands.executeCommand('setContext', 'outOfCodeInsights.treeSelectionCount', 0);
         // Lot 5 R2: NavigationStackTree migrated to (store, navigationStack).
         const stackDataProvider = new NavigationStackDataProvider(annotationStore, annotationManager.navigationStack);
         const stackView = vscode.window.createTreeView('stackView', { treeDataProvider: stackDataProvider });
+        const updateNavigationContexts = (): void => {
+            void vscode.commands.executeCommand(
+                'setContext',
+                'outOfCodeInsights.navigationCanBack',
+                annotationManager?.navigationStack.canGoBack() ?? false
+            );
+            void vscode.commands.executeCommand(
+                'setContext',
+                'outOfCodeInsights.navigationCanForward',
+                annotationManager?.navigationStack.canGoForward() ?? false
+            );
+        };
+        context.subscriptions.push(annotationManager.navigationStack.onDidChange(updateNavigationContexts));
+        updateNavigationContexts();
 
-        vscode.window.registerTreeDataProvider('annotationsExplorerView', treeDataProvider);
-        vscode.window.registerTreeDataProvider('stackView', stackDataProvider);
         context.subscriptions.push(annotationManager);
         context.subscriptions.push(view);
+        context.subscriptions.push(explorerView);
         context.subscriptions.push(stackView);
         context.subscriptions.push(profileManager);
         context.subscriptions.push(aiProfileManager);
@@ -360,17 +425,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         const welcomed = context.globalState.get<boolean>('welcomeShown', false);
         if (!welcomed) {
             void context.globalState.update('welcomeShown', true);
+            const exploreActions = localize('exploreActions', 'Explore All Actions');
+            const openAnnotations = localize('openAnnotations', 'Open Annotations');
+            const configureAi = localize('configureAi', 'Configure AI');
             void vscode.window
                 .showInformationMessage(
                     localize(
                         'welcomeMessage',
-                        'Out-of-Code Insights is ready. To enable AI features, run "Update AI Provider API Key".'
+                        'Out-of-Code Insights is ready. Right-click in a code editor or on an annotation for task-grouped menus, or explore every action now.'
                     ),
-                    localize('configure', 'Configure')
+                    exploreActions,
+                    openAnnotations,
+                    configureAi
                 )
                 .then((selection) => {
-                    if (selection === localize('configure', 'Configure')) {
-                        vscode.commands.executeCommand('annotations.updateApiKey');
+                    if (selection === exploreActions) {
+                        void vscode.commands.executeCommand('workbench.action.quickOpen', '>Out-of-Code Insights: ');
+                    } else if (selection === openAnnotations) {
+                        void vscode.commands.executeCommand('annotations.show');
+                    } else if (selection === configureAi) {
+                        void vscode.commands.executeCommand('annotations.updateApiKey');
                     }
                 });
         }
@@ -391,95 +465,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 getLogger().info(`Opening Kanban board with ${annotationsArray.length} annotations`);
 
                 await KanbanView.createOrShow(context, annotationsArray, annotationStore, kanbanColumnStore);
-
-                // Listen for annotation changes to update Kanban
-                const updateKanban = () => {
-                    if (KanbanView.currentPanel && annotationStore) {
-                        const updatedAnnotations = annotationStore.list();
-                        KanbanView.currentPanel.webview.postMessage({
-                            command: 'updateAnnotations',
-                            annotations: updatedAnnotations.map((annotation) => ({
-                                id: annotation.id,
-                                message: annotation.message,
-                                severity: annotation.severity,
-                                file: annotation.file?.split('/').pop() || 'Unknown',
-                                filePath: annotation.file,
-                                // Display-only line number derived from offset.
-                                line: annotation.startOffset,
-                                tags: annotation.tags || [],
-                                kanbanColumn: kanbanColumnStore?.getColumn(annotation.id) ?? 'todo',
-                                timestamp: annotation.timestamp,
-                            })),
-                        });
-                    }
-                };
-
-                const kanbanAnnotationSubscription = annotationStore.onDidChange(updateKanban);
-                context.subscriptions.push(kanbanAnnotationSubscription);
-                if (annotationManager) {
-                    // Legacy column-changed channel kept until R3 retires the manager.
-                    annotationManager.on('annotationChanged', updateKanban);
-                }
-
-                // Listen for column changes
-                const updateColumns = async () => {
-                    if (KanbanView.currentPanel) {
-                        const columns = await vscode.commands.executeCommand<[string, string][]>(
-                            'annotations.kanban.getColumns'
-                        );
-                        if (columns) {
-                            KanbanView.currentPanel.webview.postMessage({
-                                command: 'updateColumns',
-                                columns: columns,
-                            });
-                        }
-                    }
-                };
-
-                annotationManager?.on('kanbanColumnsChanged', updateColumns);
-
-                // Clean up listeners when panel is disposed
-                if (KanbanView.currentPanel) {
-                    KanbanView.currentPanel.onDidDispose(() => {
-                        annotationManager?.removeListener('annotationChanged', updateKanban);
-                        annotationManager?.removeListener('kanbanColumnsChanged', updateColumns);
-                    });
-                }
             } catch (error) {
                 annotationManager?.handleError(localize('kanbanError', 'Failed to show Kanban board'), error);
             }
         });
 
-        const addKanbanColumnCommand = vscode.commands.registerCommand('annotations.addKanbanColumn', async () => {
-            try {
-                if (!annotationManager) {
-                    vscode.window.showErrorMessage(
-                        localize('kanbanColumnError', 'Failed to add Kanban column') +
-                            ': Annotation manager not initialized'
-                    );
-                    return;
-                }
-
-                const columnName = await vscode.window.showInputBox({
-                    prompt: localize('kanbanColumnPrompt', 'Enter new column name'),
-                    placeHolder: localize('kanbanColumnPlaceholder', 'e.g., Testing, Blocked'),
-                });
-
-                if (columnName) {
-                    // This command will be handled by the KanbanView instance if it exists
-                    vscode.window.showInformationMessage(
-                        localize(
-                            'kanbanColumnAdded',
-                            'Kanban column functionality will be available when the board is open'
-                        )
-                    );
-                }
-            } catch (error) {
-                annotationManager?.handleError(localize('kanbanColumnError', 'Failed to add Kanban column'), error);
-            }
-        });
-
-        context.subscriptions.push(showKanbanCommand, addKanbanColumnCommand);
+        context.subscriptions.push(showKanbanCommand);
     } catch (error) {
         logger.error('Extension activation failed', error);
         AnnotationManagerErrorHandling.setInitialized(false, error as Error);
@@ -897,20 +888,24 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     // Wire store.onDidChange → debounced persistence.save (100 ms).
     // The configured delay coalesces mutation bursts. The coordinator keeps
     // writes serialized and exposes a flush barrier used by deactivate().
-    let lastSelfWriteAt = 0;
+    const writeFingerprints = new AnnotationWriteFingerprintTracker();
     if (annotationPersistence) {
         const store = annotationStore;
         const persistence = annotationPersistence;
         const coordinator = new AnnotationSaveCoordinator<AnnotationStoreFileV2>(
             () => store.serialize(),
             async (payload) => {
-                lastSelfWriteAt = Date.now();
-                await persistence.save(payload);
+                const fingerprint = writeFingerprints.begin(payload);
+                try {
+                    await persistence.save(payload);
+                    writeFingerprints.commit(fingerprint);
+                } catch (error) {
+                    writeFingerprints.fail(fingerprint);
+                    throw error;
+                }
             },
             100,
-            () => {
-                lastSelfWriteAt = Date.now();
-            },
+            () => undefined,
             (error) => {
                 logger.error('AnnotationPersistence.save failed', error);
                 const retryLabel = loc('retryAnnotationSave', 'Retry save');
@@ -938,9 +933,10 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
 
     // Live external-change watcher: the MCP server (or any other tool)
     // writes the same annotations.json. Reload the store when the file
-    // changes on disk — unless the write was our own (suppression window
-    // after each save; our own watcher echo would otherwise reload and
-    // re-save in a loop). Reloading replaces the in-memory state wholesale
+    // changes on disk — unless its canonical content fingerprint matches an
+    // in-flight or the latest successful extension-owned save. This exact
+    // correlation handles delayed watcher echoes without hiding a distinct
+    // external edit. Reloading replaces the in-memory state wholesale
     // (journal/undo mirroring resets), which is the documented contract for
     // external edits.
     if (annotationPersistence && workspaceFolder) {
@@ -954,15 +950,16 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
             if (!annotationStore) {
                 return;
             }
-            if (Date.now() - lastSelfWriteAt < EXTERNAL_WATCH_SUPPRESSION_MS) {
-                return;
-            }
             if (!vscode.workspace.getConfiguration('annotation').get<boolean>('watchExternalChanges', true)) {
                 return;
             }
             try {
                 const payload = await persistence.load();
+                if (writeFingerprints.isInternalEcho(payload)) {
+                    return;
+                }
                 annotationStore.deserialize(payload);
+                writeFingerprints.observeExternal(payload);
                 annotationStore.notifyChanged();
                 logger.info(
                     `annotations.json changed externally — reloaded ${String(payload.annotations.length)} annotation(s)`
@@ -1010,21 +1007,25 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     // File lifecycle — owned by the store (legacy handlers are disabled via
     // lifecycleDelegatedToStore).
     context.subscriptions.push(
-        vscode.workspace.onDidRenameFiles((event) => {
+        vscode.workspace.onDidRenameFiles(async (event) => {
             if (!annotationStore) {
                 return;
             }
+            let renamed = 0;
             for (const file of event.files) {
-                annotationStore.applyFileRename(
+                renamed += annotationStore.applyFileRename(
                     file.oldUri.toString(),
                     file.newUri.toString(),
                     vscode.workspace.asRelativePath(file.newUri)
                 );
             }
+            if (renamed > 0) {
+                await awaitAnnotationSaveBarrier();
+            }
         })
     );
     context.subscriptions.push(
-        vscode.workspace.onDidDeleteFiles((event) => {
+        vscode.workspace.onDidDeleteFiles(async (event) => {
             if (!annotationStore) {
                 return;
             }
@@ -1042,33 +1043,31 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
                 }
                 const keepLabel = loc('keepAnnotations', 'Keep annotations');
                 const deleteLabel = loc('deleteAnnotations', 'Delete annotations');
-                void vscode.window
-                    .showWarningMessage(
-                        loc(
-                            'fileDeletedWithAnnotations',
-                            '{0} annotation(s) reference the deleted file "{1}". Keep them?',
-                            affected.length,
-                            vscode.workspace.asRelativePath(file)
-                        ),
-                        keepLabel,
-                        deleteLabel
-                    )
-                    .then((choice) => {
-                        if (choice === deleteLabel && annotationStore) {
-                            annotationStore.beginTransaction();
-                            try {
-                                for (const a of affected) {
-                                    annotationStore.remove(a.id);
-                                }
-                                annotationStore.commit();
-                            } catch (err) {
-                                annotationStore.rollback();
-                                getLogger().error('delete-file annotation cleanup failed', err);
-                            }
+                const choice = await vscode.window.showWarningMessage(
+                    loc(
+                        'fileDeletedWithAnnotations',
+                        '{0} annotation(s) reference the deleted file "{1}". Keep them?',
+                        affected.length,
+                        vscode.workspace.asRelativePath(file)
+                    ),
+                    keepLabel,
+                    deleteLabel
+                );
+                if (choice === deleteLabel && annotationStore) {
+                    annotationStore.beginTransaction();
+                    try {
+                        for (const a of affected) {
+                            annotationStore.remove(a.id);
                         }
-                        // Keep (or dismissed): annotations stay in the store and
-                        // the panel/tree; they render as orphaned references.
-                    });
+                        annotationStore.commit();
+                        await awaitAnnotationSaveBarrier();
+                    } catch (err) {
+                        annotationStore.rollback();
+                        getLogger().error('delete-file annotation cleanup failed', err);
+                    }
+                }
+                // Keep (or dismissed): annotations stay in the store and
+                // the panel/tree; they render as orphaned references.
             }
         })
     );
@@ -1148,7 +1147,7 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     // `annotation.commentsView`; the setting is read once at activation
     // (documented in its description — changes apply on the next reload).
     if (vscode.workspace.getConfiguration('annotation').get<boolean>('commentsView', true)) {
-        context.subscriptions.push(new AnnotationCommentsController(annotationStore));
+        context.subscriptions.push(new AnnotationCommentsController(annotationStore, awaitAnnotationSaveBarrier));
     }
 }
 
@@ -1223,7 +1222,29 @@ function installLegacySaveBridge(): void {
     }
     (annotationManager as unknown as Stubbable).saveAnnotations = async () => {
         reconcileLegacyToStore();
+        await awaitAnnotationSaveBarrier();
     };
+}
+
+/**
+ * Wait for the debounced persistence write scheduled by the current mutation.
+ *
+ * Public commands are awaitable contracts: once they resolve, a caller may
+ * immediately read, replace or remove the workspace envelope. Leaving the
+ * write queued created a real race where a later command (or an external
+ * tool) could delete the previous destination while its atomic rename was
+ * still being verified. The coordinator already reports failures and keeps
+ * the snapshot dirty for retry, so this barrier deliberately preserves the
+ * in-memory change when a write fails.
+ */
+async function awaitAnnotationSaveBarrier(): Promise<void> {
+    try {
+        await annotationSaveCoordinator?.flush();
+    } catch {
+        // AnnotationSaveCoordinator invokes the shared error handler and keeps
+        // the latest snapshot dirty. Do not misreport an accepted in-memory
+        // mutation as rejected merely because its durable retry is pending.
+    }
 }
 
 /**
@@ -1366,6 +1387,8 @@ function mirrorStoreToLegacyManager(): void {
  * skips these two ids so this function can claim them without conflict.
  */
 function registerStoreCommands(context: vscode.ExtensionContext): void {
+    registerStoreLinkCommands(context);
+
     context.subscriptions.push(
         vscode.commands.registerCommand(
             'annotations.add',
@@ -1437,6 +1460,7 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                         const line = args?.line ?? editor.selection.active.line;
                         created = annotationStore.add(draft, { line }, document);
                     }
+                    await awaitAnnotationSaveBarrier();
                     return created.id;
                 } catch (err) {
                     const msg = err instanceof Error ? err.message : String(err);
@@ -1472,34 +1496,122 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             for (const ann of annotationStore.serialize().annotations) {
                 annotationStore.remove(ann.id);
             }
+            await awaitAnnotationSaveBarrier();
         })
     );
 
     context.subscriptions.push(
-        vscode.commands.registerCommand('annotations.resolve', (commandArg?: unknown) => {
+        vscode.commands.registerCommand('annotations.resolve', async (commandArg?: unknown) => {
             const store = annotationStore;
             if (!store) {
                 return 0;
             }
-            let annotationId = annotationIdFromCommandArg(commandArg);
+            const annotationId = await pickStoreAnnotationId(
+                commandArg,
+                loc('selectAnnotationToResolve', 'Select an annotation to resolve')
+            );
             if (!annotationId) {
-                const editor = vscode.window.activeTextEditor;
-                if (editor) {
-                    const line = editor.selection.active.line;
-                    annotationId = store
-                        .listForFile(editor.document.uri.toString())
-                        .find((annotation) => editor.document.positionAt(annotation.startOffset).line === line)?.id;
-                }
-            }
-            if (!annotationId || !store.get(annotationId)) {
-                vscode.window.showInformationMessage(
-                    loc('noAnnotationResolve', 'No annotation found to resolve at the current location.')
-                );
                 return 0;
             }
             store.update(annotationId, { resolved: true, timestamp: new Date().toISOString() });
             vscode.window.setStatusBarMessage(loc('annotationResolved', 'Annotation resolved.'), 3000);
             return 1;
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.editTags', async (commandArg?: unknown) => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+            const annotationId = await pickStoreAnnotationId(
+                commandArg,
+                loc('selectAnnotationToTag', 'Select an annotation whose tags you want to edit')
+            );
+            const annotation = annotationId ? store.get(annotationId) : undefined;
+            if (!annotation) {
+                return 0;
+            }
+            const input = await vscode.window.showInputBox({
+                title: loc('editAnnotationTags', 'Edit annotation tags'),
+                prompt: loc('enterTags', 'Enter tags separated by commas'),
+                value: (annotation.tags ?? []).join(', '),
+                validateInput: (value) =>
+                    value.length > 500
+                        ? loc('tagsTooLong', 'Tags must contain at most 500 characters in total.')
+                        : undefined,
+            });
+            if (input === undefined) {
+                return 0;
+            }
+            const tags = [
+                ...new Set(
+                    input
+                        .split(',')
+                        .map((tag) => tag.trim())
+                        .filter(Boolean)
+                ),
+            ];
+            store.update(annotation.id, { tags, timestamp: new Date().toISOString() });
+            vscode.window.setStatusBarMessage(loc('tagsUpdated', 'Annotation tags updated.'), 3000);
+            return 1;
+        }),
+
+        vscode.commands.registerCommand('annotations.autoResolveStale', async () => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+            const value = await vscode.window.showInputBox({
+                title: loc('resolveStaleTitle', 'Resolve old annotations'),
+                prompt: loc('resolveStalePrompt', 'Resolve open annotations older than how many days?'),
+                value: '7',
+                validateInput: (input) => {
+                    const days = Number(input);
+                    return Number.isInteger(days) && days >= 1 && days <= 3650
+                        ? undefined
+                        : loc('resolveStaleInvalidDays', 'Enter a whole number from 1 to 3650.');
+                },
+            });
+            if (!value) {
+                return 0;
+            }
+            const days = Number(value);
+            const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+            const stale = store
+                .list()
+                .filter((annotation) => !annotation.resolved && Date.parse(annotation.timestamp) < cutoff);
+            if (stale.length === 0) {
+                vscode.window.showInformationMessage(
+                    loc('noStale', 'No open annotations are older than {0} day(s).', days)
+                );
+                return 0;
+            }
+            const resolveLabel = loc('resolveCount', 'Resolve {0}', stale.length);
+            const confirmation = await vscode.window.showWarningMessage(
+                loc('confirmResolveStale', 'Resolve {0} annotation(s) older than {1} day(s)?', stale.length, days),
+                { modal: true },
+                resolveLabel
+            );
+            if (confirmation !== resolveLabel) {
+                return 0;
+            }
+            store.beginTransaction();
+            try {
+                const timestamp = new Date().toISOString();
+                for (const annotation of stale) {
+                    store.update(annotation.id, { resolved: true, timestamp });
+                }
+                store.commit();
+            } catch (error) {
+                store.rollback();
+                throw error;
+            }
+            vscode.window.showInformationMessage(loc('staleResolved', '{0} old annotation(s) resolved.', stale.length));
+            return stale.length;
         })
     );
 
@@ -1527,10 +1639,23 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             }
             ids = [...new Set(ids)].filter((id) => store.get(id) !== undefined);
             if (ids.length === 0) {
-                vscode.window.showInformationMessage(
-                    loc('bulkSelectionEmpty', 'Select one or more annotations before running a bulk action.')
+                const picked = await vscode.window.showQuickPick(
+                    store.list().map((annotation) => ({
+                        label: firstMessageLine(annotation.message) || annotation.id,
+                        description: annotation.file,
+                        id: annotation.id,
+                    })),
+                    {
+                        canPickMany: true,
+                        title: loc('bulkSelectTitle', 'Select annotations for a bulk action'),
+                        placeHolder: loc('bulkSelectPlaceholder', 'Select one or more annotations'),
+                        matchOnDescription: true,
+                    }
                 );
-                return 0;
+                ids = picked?.map((item) => item.id) ?? [];
+                if (ids.length === 0) {
+                    return 0;
+                }
             }
 
             const suppliedAction = argument?.action;
@@ -1614,6 +1739,9 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             }
 
             selectedTreeAnnotationIds = selectedTreeAnnotationIds.filter((id) => store.get(id) !== undefined);
+            selectedTreeAnnotationItems = selectedTreeAnnotationItems.filter(
+                (item) => store.get(item.annotation.id) !== undefined
+            );
             void vscode.commands.executeCommand(
                 'setContext',
                 'outOfCodeInsights.treeSelectionCount',
@@ -1681,8 +1809,31 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('annotations.moveByDragAndDrop', async (commandArg?: unknown) => {
             const store = annotationStore;
             const moveService = annotationMoveService;
-            if (!store || !moveService) {
+            if (!store) {
                 vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+            if (!moveService) {
+                if (!vscode.workspace.workspaceFolders?.length) {
+                    const openFolder = loc('openFolder', 'Open Folder...');
+                    const action = await vscode.window.showInformationMessage(
+                        loc(
+                            'workspaceRequiredForAnnotationMove',
+                            'Open a workspace folder before moving annotations between files.'
+                        ),
+                        openFolder
+                    );
+                    if (action === openFolder) {
+                        await vscode.commands.executeCommand('workbench.action.files.openFolder');
+                    }
+                } else {
+                    vscode.window.showErrorMessage(
+                        loc(
+                            'annotationMoveServiceNotReady',
+                            'Annotation moving is not ready. Run "Show Initialization Report" for details.'
+                        )
+                    );
+                }
                 return 0;
             }
 
@@ -1904,6 +2055,41 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     description: loc('docRoleGuide', 'Free-standing guide content assembled into guide.md'),
                     tag: 'doc:guide',
                 },
+                {
+                    label: '$(repo) README section',
+                    description: 'Purpose, quick start, usage or project-level guidance',
+                    tag: 'doc:readme',
+                },
+                {
+                    label: '$(history) Changelog entry',
+                    description: 'Curated release change; combine with version:* and change-category tags',
+                    tag: 'doc:changelog',
+                },
+                {
+                    label: '$(type-hierarchy) Architecture',
+                    description: 'System context, component, constraint or technical view',
+                    tag: 'doc:architecture',
+                },
+                {
+                    label: '$(law) Architecture decision',
+                    description: 'Decision context, options, outcome and consequences',
+                    tag: 'doc:adr',
+                },
+                {
+                    label: '$(rocket) Developer onboarding',
+                    description: 'Prerequisites, setup, development loop or first contribution',
+                    tag: 'doc:onboarding',
+                },
+                {
+                    label: '$(tools) Operational runbook',
+                    description: 'Trigger, safeguards, steps, verification, rollback or escalation',
+                    tag: 'doc:runbook',
+                },
+                {
+                    label: '$(references) Technical reference',
+                    description: 'Configuration, concept, schema, CLI or API-oriented reference',
+                    tag: 'doc:reference',
+                },
             ];
             const picked = await vscode.window.showQuickPick(roles, {
                 placeHolder: loc('docRolePlaceholder', 'Documentation role for this annotation'),
@@ -1911,13 +2097,101 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             if (!picked) {
                 return;
             }
-            await vscode.commands.executeCommand('annotations.add', { tags: [picked.tag] });
+            const tags = [picked.tag];
+            if (picked.tag === 'doc:changelog') {
+                const version = await vscode.window.showInputBox({
+                    prompt: 'Release version for this changelog entry',
+                    placeHolder: 'For example: 1.4.4 or Unreleased',
+                    validateInput: (value) =>
+                        /^(?:unreleased|[0-9A-Za-z][0-9A-Za-z._+-]{0,63})$/i.test(value.trim())
+                            ? undefined
+                            : 'Use a non-empty portable version (maximum 64 characters).',
+                });
+                if (!version) {
+                    return;
+                }
+                const category = await vscode.window.showQuickPick(
+                    [
+                        { label: '$(add) Added', tag: 'added' },
+                        { label: '$(edit) Changed', tag: 'changed' },
+                        { label: '$(warning) Deprecated', tag: 'deprecated' },
+                        { label: '$(remove) Removed', tag: 'removed' },
+                        { label: '$(wrench) Fixed', tag: 'fixed' },
+                        { label: '$(shield) Security', tag: 'security' },
+                    ],
+                    { placeHolder: 'Changelog category' }
+                );
+                if (!category) {
+                    return;
+                }
+                tags.push(`version:${version.trim()}`, category.tag);
+
+                const dateChoice = await vscode.window.showQuickPick(
+                    [
+                        { label: '$(circle-slash) No release date', enter: false },
+                        { label: '$(calendar) Enter an explicit release date', enter: true },
+                    ],
+                    { placeHolder: 'Release date (optional; never inferred)' }
+                );
+                if (!dateChoice) {
+                    return;
+                }
+                if (dateChoice.enter) {
+                    const releaseDate = await vscode.window.showInputBox({
+                        prompt: 'Release date',
+                        placeHolder: 'YYYY-MM-DD',
+                        validateInput: (value) => {
+                            const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+                            if (!match) {
+                                return 'Use YYYY-MM-DD.';
+                            }
+                            const year = Number(match[1]);
+                            const month = Number(match[2]);
+                            const day = Number(match[3]);
+                            const date = new Date(Date.UTC(year, month - 1, day));
+                            return date.getUTCFullYear() === year &&
+                                date.getUTCMonth() === month - 1 &&
+                                date.getUTCDate() === day
+                                ? undefined
+                                : 'Enter a real calendar date.';
+                        },
+                    });
+                    if (!releaseDate) {
+                        return;
+                    }
+                    tags.push(`release-date:${releaseDate.trim()}`);
+                }
+            } else if (picked.tag === 'doc:adr') {
+                const status = await vscode.window.showQuickPick(
+                    [
+                        { label: '$(circle-outline) Proposed', tag: 'proposed' },
+                        { label: '$(pass) Accepted', tag: 'accepted' },
+                        { label: '$(error) Rejected', tag: 'rejected' },
+                        { label: '$(archive) Superseded', tag: 'superseded' },
+                        { label: '$(circle-slash) No status yet', tag: undefined },
+                    ],
+                    { placeHolder: 'Architecture decision status (optional)' }
+                );
+                if (!status) {
+                    return;
+                }
+                if (status.tag) {
+                    tags.push(`adr:status:${status.tag}`);
+                }
+            }
+            await vscode.commands.executeCommand('annotations.add', { tags });
         })
     );
 
     context.subscriptions.push(
         vscode.commands.registerCommand('annotations.generateDocs', async () => {
             await generateDocumentationNow(false);
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.configureDocs', async () => {
+            await configureDocumentationStudio();
         })
     );
 
@@ -2054,6 +2328,438 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
                     scanned
                 )
             );
+        })
+    );
+
+    // Guided, language-aware conversion of standalone comments, file headers
+    // and documentation blocks. The existing marker import remains the fast
+    // TODO/FIXME workflow; this command previews every detected comment.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.convertCodeComments', async (argument?: unknown) => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+            const document = await sourceConversionDocument(argument);
+            if (!document) {
+                return 0;
+            }
+            if (!supportsSourceCommentLanguage(document.languageId)) {
+                vscode.window.showInformationMessage(
+                    loc(
+                        'sourceCommentLanguageUnsupported',
+                        'Comment conversion is not available for language mode "{0}" yet.',
+                        document.languageId
+                    )
+                );
+                return 0;
+            }
+            const records = scanSourceComments(document.getText(), document.languageId);
+            const existing = store.getByFile(document.uri.toString()).map((annotation) => ({
+                idFragment: sourceCommentAnnotationIdFragment(annotation.id),
+                line: document.positionAt(annotation.startOffset).line,
+                message: normalizedConversionText(annotation.message),
+            }));
+            const candidates = records.filter((record) => {
+                if (record.text.trim().length === 0) {
+                    return false;
+                }
+                if (record.annotationIdFragment) {
+                    const idMatches = existing.filter(
+                        (annotation) => annotation.idFragment === record.annotationIdFragment
+                    );
+                    if (
+                        idMatches.length === 1 ||
+                        idMatches.some((annotation) => annotation.message === normalizedConversionText(record.text))
+                    ) {
+                        return false;
+                    }
+                }
+                return !existing.some(
+                    (annotation) =>
+                        annotation.line >= record.startLine &&
+                        annotation.line <= record.endLine &&
+                        annotation.message === normalizedConversionText(record.text)
+                );
+            });
+            if (candidates.length === 0) {
+                vscode.window.showInformationMessage(
+                    records.length === 0
+                        ? loc('noSourceCommentsFound', 'No standalone comments or file headers were found.')
+                        : loc('sourceCommentsAlreadyImported', 'All detected comments already have annotations.')
+                );
+                return 0;
+            }
+
+            const selected = await vscode.window.showQuickPick(
+                candidates.map((record) => ({
+                    label: `$(comment) ${record.text.split(/\r?\n/, 1)[0].slice(0, 100)}`,
+                    description: loc(
+                        'sourceCommentLocation',
+                        'Line {0} · {1}',
+                        record.startLine + 1,
+                        localizedSourceCommentKind(record.kind)
+                    ),
+                    detail:
+                        record.endLine > record.startLine
+                            ? loc(
+                                  'sourceCommentRange',
+                                  'Lines {0}-{1}; the complete comment becomes one annotation.',
+                                  record.startLine + 1,
+                                  record.endLine + 1
+                              )
+                            : loc('sourceCommentSingleLine', 'One source comment becomes one annotation.'),
+                    picked: true,
+                    record,
+                })),
+                {
+                    title: loc('convertCommentsTitle', 'Convert Code Comments & Headers to Annotations'),
+                    placeHolder: loc('selectCommentsToConvert', 'Select the comments to convert'),
+                    canPickMany: true,
+                    matchOnDescription: true,
+                    matchOnDetail: true,
+                }
+            );
+            if (!selected || selected.length === 0) {
+                return 0;
+            }
+
+            const createLabel = loc('createAnnotations', 'Create Annotations');
+            const confirmation = await vscode.window.showWarningMessage(
+                loc(
+                    'confirmSourceCommentConversion',
+                    'Create {0} annotation(s) from selected comments in {1}? The source code will not be changed.',
+                    selected.length,
+                    vscode.workspace.asRelativePath(document.uri)
+                ),
+                { modal: true },
+                createLabel
+            );
+            if (confirmation !== createLabel) {
+                return 0;
+            }
+
+            const configuration = vscode.workspace.getConfiguration('annotation');
+            const maxPerFile = configuration.get<number>('maxAnnotationsPerFile', 1000);
+            if (maxPerFile > 0 && store.listForFile(document.uri.toString()).length + selected.length > maxPerFile) {
+                vscode.window.showWarningMessage(
+                    loc('maxAnnotationsReached', 'This file has reached its limit of {0} annotations.', maxPerFile)
+                );
+                return 0;
+            }
+
+            let conversionTransactionStarted = false;
+            try {
+                store.beginTransaction();
+                conversionTransactionStarted = true;
+                for (const { record } of selected) {
+                    store.add(
+                        {
+                            fileUri: document.uri.toString(),
+                            file: vscode.workspace.asRelativePath(document.uri),
+                            origin: { kind: 'manual' },
+                            message: record.text,
+                            author: configuration.get<string>('username', 'Anonymous').trim() || 'Anonymous',
+                            timestamp: new Date().toISOString(),
+                            languageId: document.languageId,
+                            tags: ['imported-source-comment', `source-comment:${record.kind}`],
+                            severity: sourceCommentSeverity(record),
+                        },
+                        { line: record.startLine },
+                        document
+                    );
+                }
+                store.commit();
+                conversionTransactionStarted = false;
+            } catch (error) {
+                if (conversionTransactionStarted) {
+                    store.rollback();
+                }
+                const message = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(
+                    loc('sourceCommentConversionFailed', 'Could not convert the selected comments: {0}', message)
+                );
+                return 0;
+            }
+            vscode.window.showInformationMessage(
+                loc('sourceCommentsConverted', '{0} code comment(s) converted to annotations.', selected.length)
+            );
+            return selected.length;
+        })
+    );
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.writeAnnotationsToCodeComments', async (argument?: unknown) => {
+            const store = annotationStore;
+            if (!store) {
+                vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+                return 0;
+            }
+            const document = await sourceConversionDocument(argument);
+            if (!document) {
+                return 0;
+            }
+            if (!supportsSourceCommentLanguage(document.languageId)) {
+                vscode.window.showInformationMessage(
+                    loc(
+                        'sourceCommentLanguageUnsupported',
+                        'Comment conversion is not available for language mode "{0}" yet.',
+                        document.languageId
+                    )
+                );
+                return 0;
+            }
+            if (!supportsSourceCommentEncoding(document.languageId)) {
+                vscode.window.showInformationMessage(
+                    loc(
+                        'sourceCommentWritingMixedLanguageUnsupported',
+                        'Comments can be converted to annotations in language mode "{0}", but writing annotations is disabled because this mixed template/code mode requires syntax-aware placement.',
+                        document.languageId
+                    )
+                );
+                return 0;
+            }
+
+            const sourceComments = scanSourceComments(document.getText(), document.languageId);
+            const clickedAnnotationId = annotationIdFromCommandArg(argument);
+            const candidates = store
+                .getByFile(document.uri.toString())
+                .map((annotation) => ({
+                    annotation,
+                    line: document.positionAt(annotation.startOffset).line,
+                }))
+                .filter(
+                    ({ annotation, line }) =>
+                        !sourceComments.some(
+                            (comment) =>
+                                comment.annotationIdFragment === sourceCommentAnnotationIdFragment(annotation.id)
+                        ) &&
+                        !sourceComments.some(
+                            (comment) =>
+                                line >= comment.startLine &&
+                                line <= comment.endLine &&
+                                normalizedConversionText(comment.text) === normalizedConversionText(annotation.message)
+                        )
+                );
+            if (candidates.length === 0) {
+                vscode.window.showInformationMessage(
+                    loc('noAnnotationsToMaterialize', 'No annotations need to be written into comments in this file.')
+                );
+                return 0;
+            }
+
+            const selected = await vscode.window.showQuickPick(
+                candidates.map(({ annotation, line }) => ({
+                    label: `$(note) ${annotation.message.split(/\r?\n/, 1)[0].slice(0, 100)}`,
+                    description: loc('annotationAtLine', 'Annotation at line {0}', line + 1),
+                    detail: loc(
+                        'annotationCommentPreview',
+                        'Will include marker {0} so reruns never duplicate it.',
+                        sourceCommentAnnotationMarker(annotation.id)
+                    ),
+                    picked: !clickedAnnotationId || annotation.id === clickedAnnotationId,
+                    annotation,
+                    line,
+                })),
+                {
+                    title: loc('writeAnnotationsTitle', 'Write Annotations into Code Comments'),
+                    placeHolder: loc('selectAnnotationsToWrite', 'Select annotations to write into the source file'),
+                    canPickMany: true,
+                    matchOnDescription: true,
+                    matchOnDetail: true,
+                }
+            );
+            if (!selected || selected.length === 0) {
+                return 0;
+            }
+
+            let docblockAvailable = true;
+            try {
+                encodeSourceComment('Preview', document.languageId, {
+                    annotationId: 'preview',
+                    style: 'docblock',
+                });
+            } catch {
+                docblockAvailable = false;
+            }
+            const style = await vscode.window.showQuickPick(
+                [
+                    {
+                        label: loc('standardSourceComment', 'Standard language comment (Recommended)'),
+                        description: loc('standardSourceCommentDescription', 'Uses line comments when available'),
+                        value: 'auto' as SourceCommentEncodingStyle,
+                    },
+                    ...(docblockAvailable
+                        ? [
+                              {
+                                  label: loc('documentationSourceComment', 'Documentation block'),
+                                  description: loc(
+                                      'documentationSourceCommentDescription',
+                                      'Uses the language documentation-comment syntax'
+                                  ),
+                                  value: 'docblock' as SourceCommentEncodingStyle,
+                              },
+                          ]
+                        : []),
+                ],
+                {
+                    title: loc('chooseCommentStyle', 'Choose Source Comment Style'),
+                    placeHolder: loc('chooseCommentStyleDescription', 'Choose how annotations appear in code'),
+                }
+            );
+            if (!style) {
+                return 0;
+            }
+
+            const writeLabel = loc('writeCodeComments', 'Write Code Comments');
+            const confirmation = await vscode.window.showWarningMessage(
+                loc(
+                    'confirmWriteAnnotations',
+                    'Insert {0} comment(s) into {1}? This changes the source file and can be undone once with Undo.',
+                    selected.length,
+                    vscode.workspace.asRelativePath(document.uri)
+                ),
+                { modal: true },
+                writeLabel
+            );
+            if (confirmation !== writeLabel) {
+                return 0;
+            }
+
+            const endOfLine = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+            const commentsByPosition = new Map<
+                string,
+                { position: vscode.Position; comments: string[]; appendAfterPreamble: boolean }
+            >();
+            try {
+                for (const { annotation, line } of selected) {
+                    const appendAfterPreamble =
+                        line === 0 && sourcePreambleMustStayFirst(document) && document.lineCount === 1;
+                    const insertionLine = line === 0 && sourcePreambleMustStayFirst(document) ? 1 : line;
+                    const insertionPosition = appendAfterPreamble
+                        ? document.lineAt(0).range.end
+                        : new vscode.Position(insertionLine, 0);
+                    const indentation = appendAfterPreamble
+                        ? ''
+                        : (document.lineAt(insertionLine).text.match(/^\s*/)?.[0] ?? '');
+                    const encoded = encodeSourceComment(annotation.message, document.languageId, {
+                        annotationId: annotation.id,
+                        indentation,
+                        style: style.value,
+                    }).replace(/\n/g, endOfLine);
+                    const positionKey = `${insertionPosition.line}:${insertionPosition.character}`;
+                    const bucket = commentsByPosition.get(positionKey);
+                    if (bucket) {
+                        bucket.comments.push(encoded);
+                    } else {
+                        commentsByPosition.set(positionKey, {
+                            position: insertionPosition,
+                            comments: [encoded],
+                            appendAfterPreamble,
+                        });
+                    }
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                vscode.window.showErrorMessage(
+                    loc('annotationCommentEncodingFailed', 'Could not create source comments: {0}', message)
+                );
+                return 0;
+            }
+
+            const edit = new vscode.WorkspaceEdit();
+            for (const { position, comments, appendAfterPreamble } of commentsByPosition.values()) {
+                const joined = comments.join(endOfLine);
+                edit.insert(
+                    document.uri,
+                    position,
+                    appendAfterPreamble ? `${endOfLine}${joined}` : `${joined}${endOfLine}`
+                );
+            }
+            await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
+            if (!(await vscode.workspace.applyEdit(edit))) {
+                vscode.window.showErrorMessage(
+                    loc('annotationCommentEditRejected', 'VS Code could not apply the source comment edit.')
+                );
+                return 0;
+            }
+            const documentVersionAfterEdit = document.version;
+            const previousTagsById = new Map<string, readonly string[]>();
+            let metadataTransactionStarted = false;
+            try {
+                store.beginTransaction();
+                metadataTransactionStarted = true;
+                for (const { annotation } of selected) {
+                    const current = store.get(annotation.id);
+                    if (current) {
+                        previousTagsById.set(annotation.id, [...(current.tags ?? [])]);
+                        store.update(annotation.id, {
+                            tags: [...new Set([...(current.tags ?? []), 'materialized-source-comment'])],
+                        });
+                    }
+                }
+                store.commit();
+                metadataTransactionStarted = false;
+            } catch (error) {
+                if (metadataTransactionStarted) {
+                    store.rollback();
+                }
+                previousTagsById.clear();
+                const message = error instanceof Error ? error.message : String(error);
+                vscode.window.showWarningMessage(
+                    loc(
+                        'sourceCommentMetadataUpdateFailed',
+                        'The comments were written, but annotation metadata could not be updated: {0}',
+                        message
+                    )
+                );
+            }
+            const undoLabel = loc('undo', 'Undo');
+            const action = await vscode.window.showInformationMessage(
+                loc('annotationsWrittenToComments', '{0} annotation(s) written into code comments.', selected.length),
+                undoLabel
+            );
+            if (action === undoLabel) {
+                if (document.version !== documentVersionAfterEdit) {
+                    vscode.window.showWarningMessage(
+                        loc(
+                            'sourceCommentsUndoUnsafe',
+                            'The source file changed after insertion, so automatic Undo was not run. Use source control or remove the generated OOCI comments manually.'
+                        )
+                    );
+                } else {
+                    await vscode.window.showTextDocument(document, { preserveFocus: false, preview: false });
+                    await vscode.commands.executeCommand('undo');
+                    if (previousTagsById.size > 0) {
+                        let undoMetadataTransactionStarted = false;
+                        try {
+                            store.beginTransaction();
+                            undoMetadataTransactionStarted = true;
+                            for (const [annotationId, previousTags] of previousTagsById) {
+                                if (store.get(annotationId)) {
+                                    store.update(annotationId, { tags: [...previousTags] });
+                                }
+                            }
+                            store.commit();
+                            undoMetadataTransactionStarted = false;
+                        } catch (error) {
+                            if (undoMetadataTransactionStarted) {
+                                store.rollback();
+                            }
+                            const message = error instanceof Error ? error.message : String(error);
+                            vscode.window.showWarningMessage(
+                                loc(
+                                    'sourceCommentUndoMetadataFailed',
+                                    'The source edit was undone, but annotation metadata could not be restored: {0}',
+                                    message
+                                )
+                            );
+                        }
+                    }
+                }
+            }
+            return selected.length;
         })
     );
 
@@ -2237,12 +2943,113 @@ function annotationIdFromCommandArg(value: unknown): string | undefined {
     return typeof candidate.id === 'string' ? candidate.id : undefined;
 }
 
+async function sourceConversionDocument(argument: unknown): Promise<vscode.TextDocument | undefined> {
+    const asUri = (value: unknown): vscode.Uri | undefined => {
+        return value instanceof vscode.Uri ? value : undefined;
+    };
+    const annotationFileUri = (value: unknown): vscode.Uri | undefined => {
+        if (typeof value !== 'object' || value === null) {
+            return undefined;
+        }
+        const candidate = value as { fileUri?: unknown; annotation?: { fileUri?: unknown } };
+        const serialized = candidate.annotation?.fileUri ?? candidate.fileUri;
+        if (typeof serialized !== 'string') {
+            return undefined;
+        }
+        try {
+            return vscode.Uri.parse(serialized, true);
+        } catch {
+            return undefined;
+        }
+    };
+    const directUri = asUri(argument);
+    const resourceUri =
+        directUri ??
+        annotationFileUri(argument) ??
+        (typeof argument === 'object' && argument !== null && 'resourceUri' in argument
+            ? asUri((argument as { resourceUri?: unknown }).resourceUri)
+            : undefined) ??
+        vscode.window.activeTextEditor?.document.uri;
+    if (!resourceUri) {
+        vscode.window.showInformationMessage(
+            loc(
+                'openCodeFileForCommentConversion',
+                'Open or right-click a code file to convert comments and annotations.'
+            )
+        );
+        return undefined;
+    }
+    if (resourceUri.scheme !== 'file' || vscode.workspace.getWorkspaceFolder(resourceUri) === undefined) {
+        vscode.window.showWarningMessage(
+            loc('workspaceCodeFileRequired', 'Select a saved code file inside the current workspace.')
+        );
+        return undefined;
+    }
+    try {
+        const stat = await vscode.workspace.fs.stat(resourceUri);
+        if ((stat.type & vscode.FileType.File) === 0) {
+            vscode.window.showInformationMessage(
+                loc('selectCodeFileNotFolder', 'Select a code file, not a folder, for this conversion.')
+            );
+            return undefined;
+        }
+        return await vscode.workspace.openTextDocument(resourceUri);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(
+            loc('codeFileOpenFailed', 'Could not open the selected code file: {0}', message)
+        );
+        return undefined;
+    }
+}
+
+function normalizedConversionText(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().toLocaleLowerCase('en-US');
+}
+
+function localizedSourceCommentKind(kind: SourceCommentKind): string {
+    switch (kind) {
+        case 'header':
+            return loc('sourceCommentKindHeader', 'file header');
+        case 'line':
+            return loc('sourceCommentKindLine', 'line comment');
+        case 'block':
+            return loc('sourceCommentKindBlock', 'block comment');
+        case 'docblock':
+            return loc('sourceCommentKindDocblock', 'documentation block');
+    }
+}
+
+function sourceCommentSeverity(record: SourceCommentRecord): string {
+    return /\b(?:security|critical|danger)\b|^!\s*/i.test(record.text)
+        ? 'error'
+        : /\b(?:fixme|bug|hack|xxx|warning)\b/i.test(record.text)
+          ? 'warning'
+          : 'info';
+}
+
+function sourcePreambleMustStayFirst(document: vscode.TextDocument): boolean {
+    if (document.lineCount === 0) {
+        return false;
+    }
+    const first = document.lineAt(0).text.trimStart().toLocaleLowerCase();
+    return (
+        first.startsWith('#!') ||
+        first.startsWith('<?xml') ||
+        first.startsWith('<?php') ||
+        first.startsWith('<!doctype') ||
+        (document.languageId === 'css' && first.startsWith('@charset '))
+    );
+}
+
 function treeSelectionIds(value: unknown): string[] {
     const clickedId = annotationIdFromCommandArg(value);
     if (!clickedId) {
         return [...selectedTreeAnnotationIds];
     }
-    return selectedTreeAnnotationIds.includes(clickedId) ? [...selectedTreeAnnotationIds] : [clickedId];
+    return value instanceof AnnotationTreeItem && selectedTreeAnnotationItems.includes(value)
+        ? [...selectedTreeAnnotationIds]
+        : [clickedId];
 }
 
 /**
@@ -2325,17 +3132,376 @@ function importCommentsFromContent(store: AnnotationStore, uri: vscode.Uri, cont
     return created;
 }
 
+function safeWorkspaceRelativePath(value: string): string | undefined {
+    const normalized = value.trim().replace(/\\/g, '/');
+    const segments = normalized.split('/');
+    if (
+        normalized.length === 0 ||
+        path.isAbsolute(normalized) ||
+        /^[A-Za-z]:/.test(normalized) ||
+        segments.some((segment) => segment.length === 0 || segment === '.' || segment === '..')
+    ) {
+        return undefined;
+    }
+    return normalized;
+}
+
+function explicitConfigurationValue<T>(configuration: vscode.WorkspaceConfiguration, key: string): T | undefined {
+    const inspected = configuration.inspect<T>(key);
+    return inspected?.workspaceFolderValue ?? inspected?.workspaceValue ?? inspected?.globalValue;
+}
+
+async function loadDocumentTemplate(
+    workspaceFolder: vscode.WorkspaceFolder,
+    configuration: vscode.WorkspaceConfiguration
+): Promise<DocumentTemplateDefinition> {
+    const selected = configuration.get<string>('docs.template', 'complete');
+    if (selected !== 'custom') {
+        return (
+            getBuiltInDocumentTemplate(selected) ??
+            (getBuiltInDocumentTemplate('complete') as DocumentTemplateDefinition)
+        );
+    }
+    const rawPath = configuration.get<string>(
+        'docs.customTemplatePath',
+        '.out-of-code-insights/document-template.json'
+    );
+    const relativePath = safeWorkspaceRelativePath(rawPath);
+    if (!relativePath || !relativePath.toLowerCase().endsWith('.json')) {
+        throw new Error('annotation.docs.customTemplatePath must be a relative JSON path inside the workspace.');
+    }
+    const bytes = await vscode.workspace.fs.readFile(
+        vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split('/'))
+    );
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(Buffer.from(bytes).toString('utf8'));
+    } catch (error) {
+        throw new Error(
+            `Custom document template is not valid JSON: ${error instanceof Error ? error.message : String(error)}`
+        );
+    }
+    return parseCustomDocumentTemplate(parsed);
+}
+
+function resolveDocumentationFormats(
+    configuration: vscode.WorkspaceConfiguration,
+    template: DocumentTemplateDefinition
+): DocumentationFormat[] {
+    const configured = configuration.get<unknown[]>('docs.formats', []);
+    if (configured.length === 0) {
+        return [...template.formats];
+    }
+    const formats: DocumentationFormat[] = [];
+    for (const value of configured) {
+        const normalized = normalizeDocumentationFormat(value);
+        if (!normalized) {
+            throw new Error('annotation.docs.formats contains an unsupported documentation format.');
+        }
+        if (!formats.includes(normalized)) {
+            formats.push(normalized);
+        }
+    }
+    return formats;
+}
+
+function resolveTechnicalDocumentKinds(
+    configuration: vscode.WorkspaceConfiguration,
+    template: DocumentTemplateDefinition
+): TechnicalDocumentKind[] {
+    const configured = configuration.get<unknown[]>('docs.documents', []);
+    if (configured.length === 0) {
+        return [...template.documents];
+    }
+    const supported = new Set<string>(SUPPORTED_TECHNICAL_DOCUMENT_KINDS);
+    const documents: TechnicalDocumentKind[] = [];
+    for (const value of configured) {
+        if (typeof value !== 'string' || !supported.has(value)) {
+            throw new Error('annotation.docs.documents contains an unsupported technical document kind.');
+        }
+        if (!documents.includes(value as TechnicalDocumentKind)) {
+            documents.push(value as TechnicalDocumentKind);
+        }
+    }
+    return documents;
+}
+
+async function loadOpenApiGenerationProfile(
+    workspaceFolder: vscode.WorkspaceFolder,
+    configuration: vscode.WorkspaceConfiguration
+): Promise<{ profile?: OpenApiGenerationProfile; diagnostics: readonly OpenApiDiagnostic[] }> {
+    const rawPath = configuration
+        .get<string>('docs.openapiProfilePath', '.out-of-code-insights/openapi-profile.json')
+        .trim();
+    if (rawPath.length === 0) {
+        return { diagnostics: [] };
+    }
+    const relativePath = safeWorkspaceRelativePath(rawPath);
+    if (!relativePath || !relativePath.toLowerCase().endsWith('.json')) {
+        return {
+            diagnostics: [
+                {
+                    severity: 'error',
+                    code: 'invalid-profile-path',
+                    message: 'annotation.docs.openapiProfilePath must be a relative JSON path inside the workspace.',
+                    location: '#',
+                },
+            ],
+        };
+    }
+    try {
+        const bytes = await vscode.workspace.fs.readFile(
+            vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split('/'))
+        );
+        let input: unknown;
+        try {
+            input = JSON.parse(Buffer.from(bytes).toString('utf8'));
+        } catch (error) {
+            return {
+                diagnostics: [
+                    {
+                        severity: 'error',
+                        code: 'invalid-profile-json',
+                        message: `OpenAPI profile is not valid JSON: ${
+                            error instanceof Error ? error.message : String(error)
+                        }`,
+                        location: '#',
+                    },
+                ],
+            };
+        }
+        const parsed = parseOpenApiGenerationProfile(input);
+        return { profile: parsed.profile, diagnostics: parsed.diagnostics };
+    } catch (error) {
+        if (error instanceof vscode.FileSystemError && error.code === 'FileNotFound') {
+            // Missing is an intentional catalogue-only mode, not an error.
+            return { diagnostics: [] };
+        }
+        return {
+            diagnostics: [
+                {
+                    severity: 'error',
+                    code: 'profile-read-failed',
+                    message: `Unable to read the OpenAPI profile: ${error instanceof Error ? error.message : String(error)}`,
+                    location: '#',
+                },
+            ],
+        };
+    }
+}
+
+async function configureDocumentationStudio(): Promise<void> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+        vscode.window.showErrorMessage(localize('noWorkspaceDocs', 'Open a workspace to configure documentation.'));
+        return;
+    }
+    const configuration = vscode.workspace.getConfiguration('annotation', workspaceFolder.uri);
+    const templateItems = listBuiltInDocumentTemplates().map((template) => ({
+        label: template.label,
+        description: template.id,
+        detail: template.description,
+        template,
+    }));
+    const selectedTemplate = configuration.get<string>('docs.template', 'complete');
+    const picked = await vscode.window.showQuickPick(
+        [
+            ...templateItems,
+            {
+                label: 'Workspace JSON template',
+                description: 'custom',
+                detail: 'Versioned document structure stored with the project.',
+                template: undefined,
+            },
+        ],
+        {
+            placeHolder: 'Choose a documentation structure template',
+            title: 'Out-of-Code Insights Documentation Studio',
+            matchOnDescription: true,
+            matchOnDetail: true,
+        }
+    );
+    if (!picked) {
+        return;
+    }
+
+    let template = picked.template;
+    if (!template) {
+        const rawPath = configuration.get<string>(
+            'docs.customTemplatePath',
+            '.out-of-code-insights/document-template.json'
+        );
+        const relativePath = safeWorkspaceRelativePath(rawPath);
+        if (!relativePath || !relativePath.toLowerCase().endsWith('.json')) {
+            vscode.window.showErrorMessage(
+                'annotation.docs.customTemplatePath must be a relative JSON path inside the workspace.'
+            );
+            return;
+        }
+        const templateUri = vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split('/'));
+        try {
+            const bytes = await vscode.workspace.fs.readFile(templateUri);
+            template = parseCustomDocumentTemplate(JSON.parse(Buffer.from(bytes).toString('utf8')));
+        } catch (error) {
+            const isMissing = error instanceof vscode.FileSystemError && error.code === 'FileNotFound';
+            if (!isMissing) {
+                vscode.window.showErrorMessage(
+                    `Unable to load the custom document template: ${error instanceof Error ? error.message : String(error)}`
+                );
+                return;
+            }
+            template = {
+                ...(getBuiltInDocumentTemplate('complete') as DocumentTemplateDefinition),
+                id: 'workspace-docs',
+                label: `${workspaceFolder.name} documentation`,
+                description: 'Workspace-owned documentation structure.',
+            };
+            const parentParts = relativePath.split('/');
+            parentParts.pop();
+            if (parentParts.length > 0) {
+                await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(workspaceFolder.uri, ...parentParts));
+            }
+            await vscode.workspace.fs.writeFile(
+                templateUri,
+                Buffer.from(
+                    JSON.stringify(
+                        {
+                            $schema:
+                                'https://raw.githubusercontent.com/JacquesGariepy/out-of-code-insights/main/schemas/document-template.schema.json',
+                            ...template,
+                        },
+                        null,
+                        2
+                    ) + '\n',
+                    'utf8'
+                )
+            );
+        }
+    }
+
+    const currentOverride = configuration.get<string[]>('docs.formats', []);
+    const activeFormats = new Set(
+        currentOverride.length > 0
+            ? currentOverride.map(normalizeDocumentationFormat).filter((value): value is DocumentationFormat => !!value)
+            : template.formats
+    );
+    const formatLabels: Readonly<Record<DocumentationFormat, { label: string; detail: string }>> = {
+        markdown: { label: 'Source documents', detail: 'Portable Markdown pages and inventories.' },
+        'static-site': { label: 'Publishable static project', detail: 'Navigation, metadata and build configuration.' },
+        wiki: { label: 'Portable wiki', detail: 'Host-neutral knowledge-base pages.' },
+        'hosted-wiki': { label: 'Hosted wiki package', detail: 'Flattened pages with sidebar and footer.' },
+        'ordered-wiki': { label: 'Ordered wiki package', detail: 'Hierarchical pages with explicit ordering files.' },
+        html: { label: 'Standalone web documentation', detail: 'Accessible autonomous HTML with local assets.' },
+        openapi: {
+            label: 'API contract and catalogue',
+            detail: 'Current OpenAPI revision with explicit operation bindings only.',
+        },
+    };
+    const formatItems = SUPPORTED_DOCUMENTATION_FORMATS.map((format) => ({
+        label: formatLabels[format].label,
+        description: format,
+        detail: formatLabels[format].detail,
+        picked: activeFormats.has(format),
+        format,
+    }));
+    const pickedFormats = await vscode.window.showQuickPick(formatItems, {
+        canPickMany: true,
+        placeHolder: 'Choose one or more generated formats',
+        title: `${template.label} — output profiles`,
+    });
+    if (!pickedFormats || pickedFormats.length === 0) {
+        return;
+    }
+
+    const currentDocuments = configuration.get<string[]>('docs.documents', []);
+    const activeDocuments = new Set(currentDocuments.length > 0 ? currentDocuments : template.documents);
+    const documentLabels: Readonly<Record<TechnicalDocumentKind, { label: string; detail: string }>> = {
+        readme: { label: 'README', detail: 'Purpose, audience, quick start, usage and project links.' },
+        changelog: { label: 'Changelog', detail: 'Curated releases, changes, fixes and security notes.' },
+        architecture: { label: 'Architecture', detail: 'Context, components, constraints and technical views.' },
+        adr: { label: 'Architecture decisions', detail: 'One stable, traceable record per decision.' },
+        onboarding: {
+            label: 'Developer onboarding',
+            detail: 'Prerequisites, setup, development loop and first change.',
+        },
+        runbook: { label: 'Operational runbook', detail: 'Triggers, safeguards, steps, verification and rollback.' },
+        reference: {
+            label: 'Technical reference',
+            detail: 'Structured concepts, configuration and API-oriented notes.',
+        },
+    };
+    const documentItems = SUPPORTED_TECHNICAL_DOCUMENT_KINDS.map((kind) => ({
+        label: documentLabels[kind].label,
+        description: kind,
+        detail: documentLabels[kind].detail,
+        picked: activeDocuments.has(kind),
+        documentKind: kind,
+    }));
+    const pickedDocuments = await vscode.window.showQuickPick(documentItems, {
+        canPickMany: true,
+        placeHolder: 'Choose one or more technical documents',
+        title: `${template.label} — document catalogue`,
+    });
+    if (!pickedDocuments || pickedDocuments.length === 0) {
+        return;
+    }
+
+    const templateId = picked.description === 'custom' ? 'custom' : template.id;
+    await configuration.update('docs.template', templateId, vscode.ConfigurationTarget.Workspace);
+    const selectedFormats = pickedFormats.map((item) => item.format);
+    const followsTemplate =
+        selectedFormats.length === template.formats.length &&
+        template.formats.every((format) => selectedFormats.includes(format));
+    await configuration.update(
+        'docs.formats',
+        followsTemplate ? [] : selectedFormats,
+        vscode.ConfigurationTarget.Workspace
+    );
+    const selectedDocuments = pickedDocuments.map((item) => item.documentKind);
+    const followsDocumentTemplate =
+        selectedDocuments.length === template.documents.length &&
+        template.documents.every((kind) => selectedDocuments.includes(kind));
+    await configuration.update(
+        'docs.documents',
+        followsDocumentTemplate ? [] : selectedDocuments,
+        vscode.ConfigurationTarget.Workspace
+    );
+
+    const generateLabel = 'Generate now';
+    const choice = await vscode.window.showInformationMessage(
+        `Documentation Studio configured: ${template.label}; ${selectedFormats.length} output(s), ${selectedDocuments.length} technical document(s).`,
+        generateLabel
+    );
+    if (choice === generateLabel) {
+        await generateDocumentationNow(false);
+    } else if (selectedTemplate !== templateId) {
+        getLogger().info(`Documentation template changed from ${selectedTemplate} to ${templateId}`);
+    }
+}
+
+/**
+ * Queue documentation requests so a watch update that lands during a manual
+ * generation is applied afterwards instead of being silently discarded.
+ */
+function generateDocumentationNow(silent: boolean): Promise<void> {
+    const run = docsGenerationQueue.then(() => generateDocumentationPass(silent));
+    docsGenerationQueue = run.catch((error) => {
+        getLogger().error('generateDocumentationNow: queued generation failed', error);
+    });
+    return run;
+}
+
 /**
  * Generate the annotation documentation site. Single implementation shared
  * by the `annotations.generateDocs` command (`silent === false`, surfaces
  * toasts and the Open prompt) and the docs watch mode (`silent === true`,
  * logs only — no UI noise on auto-regeneration).
  *
- * Reentrancy-guarded: a call made while a generation is already running is
- * skipped (logged). Watch-mode calls additionally skip when the store holds
- * no annotation at all.
+ * Requests are serialized by {@link generateDocumentationNow}; an empty
+ * store still produces a valid empty portal so watch mode removes stale
+ * pages after the last annotation is deleted.
  */
-async function generateDocumentationNow(silent: boolean): Promise<void> {
+async function generateDocumentationPass(silent: boolean): Promise<void> {
     const store = annotationStore;
     if (!store) {
         if (silent) {
@@ -2354,27 +3520,14 @@ async function generateDocumentationNow(silent: boolean): Promise<void> {
         }
         return;
     }
-    if (docsGenerationInProgress) {
-        getLogger().info('generateDocumentationNow: a generation is already running, skipping');
-        return;
-    }
-
     const all = store.serialize().annotations;
-    if (silent && all.length === 0) {
-        getLogger().info('generateDocumentationNow: store is empty, skipping watch regeneration');
-        return;
-    }
-
-    docsGenerationInProgress = true;
     try {
-        const docsConfig = vscode.workspace.getConfiguration('annotation');
-        const outDirSetting = docsConfig.get<string>('docs.outputPath', 'docs/annotations').trim();
-        // Same traversal contract as the annotations file path: the
-        // docs always land inside the workspace.
-        if (path.isAbsolute(outDirSetting) || outDirSetting.split(/[\\/]/).includes('..')) {
+        const docsConfig = vscode.workspace.getConfiguration('annotation', workspaceFolder.uri);
+        const outDirSetting = safeWorkspaceRelativePath(docsConfig.get<string>('docs.outputPath', 'docs/annotations'));
+        if (!outDirSetting) {
             const invalidPathMessage = localize(
                 'docsPathInvalid',
-                'annotation.docs.outputPath must be a relative path inside the workspace.'
+                'annotation.docs.outputPath must be a non-empty relative path inside the workspace.'
             );
             if (silent) {
                 getLogger().warn(`generateDocumentationNow: ${invalidPathMessage}`);
@@ -2383,14 +3536,31 @@ async function generateDocumentationNow(silent: boolean): Promise<void> {
             }
             return;
         }
+        const template = await loadDocumentTemplate(workspaceFolder, docsConfig);
+        const formats = resolveDocumentationFormats(docsConfig, template);
+        const documentKinds = resolveTechnicalDocumentKinds(docsConfig, template);
         const sanitizeSegment = (value: string, fallback: string): string => {
             const v = value.trim();
             return v.length === 0 || v.includes('..') || /[\\/]/.test(v) || path.isAbsolute(v) ? fallback : v;
         };
-        const apiFolder = sanitizeSegment(docsConfig.get<string>('docs.apiFolder', 'api'), 'api');
-        const guideFile = sanitizeSegment(docsConfig.get<string>('docs.guideFile', 'guide.md'), 'guide.md');
+        const apiFolder = sanitizeSegment(
+            explicitConfigurationValue<string>(docsConfig, 'docs.apiFolder') ?? template.apiFolder,
+            template.apiFolder
+        );
+        const guideFile = sanitizeSegment(
+            explicitConfigurationValue<string>(docsConfig, 'docs.guideFile') ?? template.guideFile,
+            template.guideFile
+        );
+        const includeInventory =
+            explicitConfigurationValue<boolean>(docsConfig, 'docs.includeInventory') ?? template.includeInventory;
+        const includeAuthored =
+            explicitConfigurationValue<boolean>(docsConfig, 'docs.includeAuthored') ?? template.includeAuthored;
         const includeTimestamp = docsConfig.get<boolean>('docs.includeTimestamp', true);
+        const pageMetadata =
+            explicitConfigurationValue<boolean>(docsConfig, 'docs.pageMetadata') ??
+            docsConfig.get<boolean>('docs.frontMatter', false);
         const siteTitle = docsConfig.get<string>('docs.siteTitle', '').trim();
+        const generatedAt = includeTimestamp ? new Date().toISOString() : undefined;
 
         // Resolve display lines per file. openTextDocument loads the
         // file into memory without showing it — cheap and works for
@@ -2443,44 +3613,104 @@ async function generateDocumentationNow(silent: boolean): Promise<void> {
         }));
 
         const depth = outDirSetting.split(/[\\/]/).filter((s) => s.length > 0).length;
-        const files = generateDocSet(docAnnotations, {
-            title: siteTitle.length > 0 ? siteTitle : localize('docsTitle', 'Annotations — {0}', workspaceFolder.name),
-            sourceLinkPrefix: '../'.repeat(depth),
-            generatedAt: includeTimestamp ? new Date().toISOString() : undefined,
-            tagPrefix: docsConfig.get<string>('docs.tagPrefix', 'doc:'),
-            apiFolder,
-            guideFile,
-            includeInventory: docsConfig.get<boolean>('docs.includeInventory', true),
-            includeAuthored: docsConfig.get<boolean>('docs.includeAuthored', true),
-            untaggedLabel: docsConfig.get<string>('docs.untaggedLabel', 'untagged'),
-            frontMatter: docsConfig.get<boolean>('docs.frontMatter', false),
+        const title =
+            siteTitle.length > 0 ? siteTitle : localize('docsTitle', 'Annotations — {0}', workspaceFolder.name);
+        const configuredLanguage = docsConfig.get<string>('docs.language', '').trim();
+        if (configuredLanguage && !isSupportedDocumentationLanguage(configuredLanguage)) {
+            throw new Error(
+                localize(
+                    'docsLanguageInvalid',
+                    'annotation.docs.language must use the canonical language[-Script][-REGION] subset, for example en, fr-CA or zh-Hant-TW.'
+                )
+            );
+        }
+        const openApi = formats.includes('openapi')
+            ? await loadOpenApiGenerationProfile(workspaceFolder, docsConfig)
+            : { diagnostics: [] as readonly OpenApiDiagnostic[] };
+        const studio = generateDocumentationStudio(docAnnotations, {
+            title,
+            language: configuredLanguage || template.language,
+            formats,
+            technicalDocuments: documentKinds,
+            sourceRootDepth: depth,
+            openApiProfile: openApi.profile,
+            openApiProfileDiagnostics: openApi.diagnostics,
+            base: {
+                generatedAt,
+                tagPrefix: docsConfig.get<string>('docs.tagPrefix', 'doc:'),
+                apiFolder,
+                guideFile,
+                includeInventory,
+                includeAuthored,
+                untaggedLabel: docsConfig.get<string>('docs.untaggedLabel', 'untagged'),
+                pageMetadata,
+            },
         });
+        const files = studio.files;
+        const diagnosticCounts = studio.diagnostics.reduce(
+            (counts, diagnostic) => {
+                counts[diagnostic.severity] += 1;
+                return counts;
+            },
+            { error: 0, warning: 0, info: 0 }
+        );
+        for (const diagnostic of studio.diagnostics) {
+            const detail = `${diagnostic.profile}/${diagnostic.code}: ${diagnostic.message}`;
+            if (diagnostic.severity === 'error') {
+                getLogger().error(`documentation studio: ${detail}`);
+            } else if (diagnostic.severity === 'warning') {
+                getLogger().warn(`documentation studio: ${detail}`);
+            } else {
+                getLogger().info(`documentation studio: ${detail}`);
+            }
+        }
 
         const outDir = vscode.Uri.joinPath(workspaceFolder.uri, ...outDirSetting.split(/[\\/]/));
-        await vscode.workspace.fs.createDirectory(outDir);
-        for (const [name, content] of files) {
-            await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(outDir, name), Buffer.from(content, 'utf8'));
+        const extensionVersion =
+            vscode.extensions.getExtension('jacquesgariepy.out-of-code-insights')?.packageJSON.version ?? 'development';
+        const writeResult = await writeDocumentationBundle(workspaceFolder.uri, outDir, files, {
+            generatorVersion: String(extensionVersion),
+            template: template.id,
+            formats,
+            generatedAt,
+        });
+        for (const warning of writeResult.warnings) {
+            getLogger().warn(`documentation writer: ${warning}`);
         }
 
         if (silent) {
             const count = String(docAnnotations.length);
-            getLogger().info(`docs watch: regenerated docs for ${count} annotation(s) in ${outDirSetting}`);
+            getLogger().info(
+                `docs watch: regenerated ${writeResult.written} file(s) for ${count} annotation(s) in ${outDirSetting}; ` +
+                    `${diagnosticCounts.error} error(s), ${diagnosticCounts.warning} warning(s)`
+            );
             return;
         }
 
-        const openLabel = localize('openDocs', 'Open');
-        const choice = await vscode.window.showInformationMessage(
-            localize(
-                'docsGenerated',
-                'Annotation documentation generated ({0} annotation(s)) in {1}.',
-                docAnnotations.length,
-                outDirSetting
-            ),
-            openLabel
+        const openDocumentationLabel = localize('openDocs', 'Open documentation');
+        const openReportLabel = localize('openDocsReport', 'Open report');
+        const summary = localize(
+            'docsGeneratedWithDiagnostics',
+            'Documentation generated from {0} annotation(s) in {1}: {2} error(s), {3} warning(s).',
+            docAnnotations.length,
+            outDirSetting,
+            diagnosticCounts.error,
+            diagnosticCounts.warning
         );
-        if (choice === openLabel) {
-            const indexDoc = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(outDir, 'index.md'));
-            await vscode.window.showTextDocument(indexDoc);
+        const actions = [openDocumentationLabel, openReportLabel] as const;
+        const choice =
+            diagnosticCounts.error > 0 || diagnosticCounts.warning > 0 || writeResult.warnings.length > 0
+                ? await vscode.window.showWarningMessage(summary, ...actions)
+                : await vscode.window.showInformationMessage(summary, ...actions);
+        const target =
+            choice === openDocumentationLabel
+                ? studio.entryPoint
+                : choice === openReportLabel
+                  ? 'documentation-report.json'
+                  : undefined;
+        if (target) {
+            const document = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(outDir, ...target.split('/')));
+            await vscode.window.showTextDocument(document);
         }
     } catch (err) {
         if (silent) {
@@ -2489,8 +3719,6 @@ async function generateDocumentationNow(silent: boolean): Promise<void> {
             const msg = err instanceof Error ? err.message : String(err);
             vscode.window.showErrorMessage(localize('docsFailed', 'Failed to generate documentation') + `: ${msg}`);
         }
-    } finally {
-        docsGenerationInProgress = false;
     }
 }
 
@@ -2504,9 +3732,8 @@ async function generateDocumentationNow(silent: boolean): Promise<void> {
 // live in a separate Memento entry to keep the column store API focused on a
 // single concern.
 //
-// Mutation flow: `kanban.moveToColumn` → `KanbanColumnStore.setColumn` →
-// `annotationStore.notifyChanged()` → existing onDidChange listener installed
-// by the `annotations.showKanban` command refreshes the webview.
+// Mutation flow: `kanban.moveToColumn` → `KanbanColumnStore.setColumn` → the
+// single panel-scoped listener owned by KanbanView refreshes the webview.
 
 const KANBAN_COLUMN_DEFINITIONS_KEY = 'outOfCodeInsights.kanban.columnDefinitions';
 const KANBAN_DEFAULT_COLUMNS: ReadonlyArray<readonly [string, string]> = [
@@ -2515,111 +3742,974 @@ const KANBAN_DEFAULT_COLUMNS: ReadonlyArray<readonly [string, string]> = [
     ['review', 'Review'],
     ['done', 'Done'],
 ];
+const KANBAN_MAX_COLUMNS = 50;
+const KANBAN_MAX_COLUMN_ID_LENGTH = 64;
+const KANBAN_MAX_COLUMN_NAME_LENGTH = 80;
+
+function hasControlCharacters(value: string): boolean {
+    return Array.from(value).some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint < 0x20 || codePoint === 0x7f;
+    });
+}
+
+export function isValidKanbanColumnId(value: unknown): value is string {
+    return (
+        typeof value === 'string' &&
+        value.length > 0 &&
+        value.length <= KANBAN_MAX_COLUMN_ID_LENGTH &&
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)
+    );
+}
+
+export function isValidKanbanColumnName(value: unknown): value is string {
+    return (
+        typeof value === 'string' &&
+        value.length > 0 &&
+        value.length <= KANBAN_MAX_COLUMN_NAME_LENGTH &&
+        value.trim() === value &&
+        !hasControlCharacters(value)
+    );
+}
+
+/** Strictly validate persisted and API-facing Kanban column definitions. */
+export function validateKanbanColumnDefinitions(value: unknown): [string, string][] | undefined {
+    if (!Array.isArray(value) || value.length === 0 || value.length > KANBAN_MAX_COLUMNS) {
+        return undefined;
+    }
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    const columns: [string, string][] = [];
+    for (const entry of value) {
+        if (!Array.isArray(entry) || entry.length !== 2) {
+            return undefined;
+        }
+        const [id, name] = entry as [unknown, unknown];
+        if (!isValidKanbanColumnId(id) || !isValidKanbanColumnName(name)) {
+            return undefined;
+        }
+        const comparableName = name.toLocaleLowerCase();
+        if (ids.has(id) || names.has(comparableName)) {
+            return undefined;
+        }
+        ids.add(id);
+        names.add(comparableName);
+        columns.push([id, name]);
+    }
+    // Unassigned annotations use `todo`; retaining it guarantees every visible
+    // card always has a real destination column.
+    return ids.has('todo') ? columns : undefined;
+}
+
+export function getKanbanColumnAssignmentIds(assignments: ReadonlyMap<string, string>, columnId: string): string[] {
+    return Array.from(assignments)
+        .filter(([, assignedColumn]) => assignedColumn === columnId)
+        .map(([annotationId]) => annotationId);
+}
+
+interface StoreLinkCommandOptions {
+    targetId?: string;
+    targetIndex?: number;
+    relationship?: string;
+    targetFileUri?: string;
+    targetLine?: number;
+    message?: string;
+    confirmed?: boolean;
+}
+
+function storeLinkCommandOptions(commandArg: unknown): StoreLinkCommandOptions {
+    if (!commandArg || typeof commandArg !== 'object') {
+        return {};
+    }
+    const raw = commandArg as Record<string, unknown>;
+    return {
+        ...(typeof raw.targetId === 'string' ? { targetId: raw.targetId } : {}),
+        ...(typeof raw.targetIndex === 'number' ? { targetIndex: raw.targetIndex } : {}),
+        ...(typeof raw.relationship === 'string' ? { relationship: raw.relationship } : {}),
+        ...(typeof raw.targetFileUri === 'string' ? { targetFileUri: raw.targetFileUri } : {}),
+        ...(typeof raw.targetLine === 'number' ? { targetLine: raw.targetLine } : {}),
+        ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
+        ...(raw.confirmed === true ? { confirmed: true } : {}),
+    };
+}
+
+function requireStoreLinkServices(): { store: AnnotationStore; manager: AnnotationManager } | undefined {
+    if (!annotationStore || !annotationManager) {
+        vscode.window.showErrorMessage(
+            loc(
+                'linkServicesNotReady',
+                'Annotation links are not ready yet. Try again after the workspace finishes loading.'
+            )
+        );
+        return undefined;
+    }
+    return { store: annotationStore, manager: annotationManager };
+}
+
+function reportStoreLinkError(operation: string, error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    getLogger().error(`Annotation link command failed: ${operation}`, error);
+    vscode.window.showErrorMessage(loc('annotationLinkCommandFailed', 'Unable to {0}: {1}', operation, message));
+}
+
+function normalizedRelationship(value: string): string {
+    const relationship = value.trim();
+    if (relationship.length === 0 || relationship.length > 80) {
+        throw new Error(loc('invalidLinkRelationship', 'A relationship must contain from 1 to 80 characters.'));
+    }
+    return relationship;
+}
+
+async function pickLinkRelationship(supplied: string | undefined, programmatic: boolean): Promise<string | undefined> {
+    if (supplied !== undefined) {
+        return normalizedRelationship(supplied);
+    }
+    if (programmatic) {
+        return 'related';
+    }
+
+    const customValue = '__custom__';
+    const picked = await vscode.window.showQuickPick(
+        [
+            { label: '$(link) ' + loc('relationshipRelated', 'Related'), value: 'related' },
+            { label: '$(references) ' + loc('relationshipReferences', 'References'), value: 'references' },
+            { label: '$(symbol-interface) ' + loc('relationshipImplements', 'Implements'), value: 'implements' },
+            { label: '$(circle-slash) ' + loc('relationshipBlocks', 'Blocks'), value: 'blocks' },
+            { label: '$(copy) ' + loc('relationshipDuplicates', 'Duplicates'), value: 'duplicates' },
+            { label: '$(beaker) ' + loc('relationshipTests', 'Tests'), value: 'tests' },
+            { label: '$(edit) ' + loc('relationshipCustom', 'Custom relationship…'), value: customValue },
+        ],
+        {
+            title: loc('linkRelationshipTitle', 'Link relationship'),
+            placeHolder: loc('linkRelationshipPlaceholder', 'Describe how the two annotations are related'),
+        }
+    );
+    if (!picked) {
+        return undefined;
+    }
+    if (picked.value !== customValue) {
+        return picked.value;
+    }
+    const custom = await vscode.window.showInputBox({
+        title: loc('customRelationshipTitle', 'Custom link relationship'),
+        prompt: loc('customRelationshipPrompt', 'Enter a short relationship name'),
+        validateInput: (value) => {
+            const trimmed = value.trim();
+            return trimmed.length >= 1 && trimmed.length <= 80
+                ? undefined
+                : loc('invalidLinkRelationship', 'A relationship must contain from 1 to 80 characters.');
+        },
+    });
+    return custom === undefined ? undefined : normalizedRelationship(custom);
+}
+
+async function pickOutgoingStoreLink(
+    annotation: Readonly<AnnotationV2>,
+    suppliedIndex: number | undefined,
+    placeHolder: string
+): Promise<{ link: LinkedAnnotation; index: number } | undefined> {
+    const links = annotation.linkedAnnotations ?? [];
+    if (links.length === 0) {
+        vscode.window.showInformationMessage(
+            loc('annotationHasNoOutgoingLinks', 'This annotation has no outgoing links.')
+        );
+        return undefined;
+    }
+    if (suppliedIndex !== undefined) {
+        if (!Number.isInteger(suppliedIndex) || suppliedIndex < 0 || suppliedIndex >= links.length) {
+            throw new Error(loc('invalidLinkIndex', 'The selected link no longer exists.'));
+        }
+        return { link: links[suppliedIndex], index: suppliedIndex };
+    }
+    if (links.length === 1) {
+        return { link: links[0], index: 0 };
+    }
+    return await vscode.window.showQuickPick(
+        links.map((link, index) => {
+            const target = link.targetId ? annotationStore?.get(link.targetId) : undefined;
+            const targetLine = target
+                ? annotationStore?.getLineForAnnotation(target.id, vscode.workspace.textDocuments)
+                : link.targetLine;
+            return {
+                label: `$(arrow-right) ${link.relationship || 'related'}`,
+                description: formatAnnotationLocation(target?.file ?? link.targetFile, targetLine ?? null),
+                detail: loc('outgoingLinkDetail', 'Outgoing link'),
+                link,
+                index,
+            };
+        }),
+        { placeHolder, matchOnDescription: true, matchOnDetail: true }
+    );
+}
+
+function linkFileTargetsAnnotation(linkFile: string, annotation: Readonly<AnnotationV2>): boolean {
+    if (linkFile === annotation.file || linkFile === annotation.fileUri) {
+        return true;
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(linkFile)) {
+        try {
+            if (vscode.Uri.parse(linkFile).toString() === vscode.Uri.parse(annotation.fileUri).toString()) {
+                return true;
+            }
+        } catch {
+            // Fall through to the display-path comparison below.
+        }
+    }
+    const normalizePath = (value: string): string => {
+        const normalized = value.replace(/\\/g, '/');
+        return process.platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
+    };
+    return normalizePath(linkFile) === normalizePath(annotation.file);
+}
+
+async function pickNewLinkedAnnotationTarget(options: StoreLinkCommandOptions): Promise<
+    | {
+          document: vscode.TextDocument;
+          line: number;
+          message: string;
+      }
+    | undefined
+> {
+    let targetUri: vscode.Uri | undefined;
+    if (options.targetFileUri) {
+        try {
+            targetUri = vscode.Uri.parse(options.targetFileUri, true);
+        } catch {
+            throw new Error(loc('invalidTargetFileUri', 'The target file URI is invalid.'));
+        }
+    } else {
+        [targetUri] =
+            (await vscode.window.showOpenDialog({
+                title: loc('selectLinkedAnnotationFile', 'Select a file for the linked annotation'),
+                defaultUri: vscode.workspace.workspaceFolders?.[0]?.uri,
+                canSelectFiles: true,
+                canSelectFolders: false,
+                canSelectMany: false,
+                openLabel: loc('selectFile', 'Select file'),
+            })) ?? [];
+    }
+    if (!targetUri) {
+        return undefined;
+    }
+    if (targetUri.scheme !== 'file' || vscode.workspace.getWorkspaceFolder(targetUri) === undefined) {
+        vscode.window.showWarningMessage(
+            loc('linkedAnnotationWorkspaceFileRequired', 'Select a saved file inside the current workspace.')
+        );
+        return undefined;
+    }
+
+    const document = await vscode.workspace.openTextDocument(targetUri);
+    let line = options.targetLine;
+    if (line !== undefined && (!Number.isInteger(line) || line < 0 || line >= document.lineCount)) {
+        throw new Error(
+            loc('invalidLinkedAnnotationLine', 'The target line must be between 1 and {0}.', document.lineCount)
+        );
+    }
+    if (line === undefined) {
+        const activeEditor = vscode.window.activeTextEditor;
+        const suggestedLine =
+            activeEditor?.document.uri.toString() === targetUri.toString() ? activeEditor.selection.active.line + 1 : 1;
+        const lineInput = await vscode.window.showInputBox({
+            title: loc('linkedAnnotationLineTitle', 'Linked annotation location'),
+            prompt: loc('linkedAnnotationLinePrompt', 'Enter a line number from 1 to {0}', document.lineCount),
+            value: String(suggestedLine),
+            validateInput: (value) => {
+                const oneBased = Number(value);
+                return Number.isInteger(oneBased) && oneBased >= 1 && oneBased <= document.lineCount
+                    ? undefined
+                    : loc(
+                          'invalidLinkedAnnotationLine',
+                          'The target line must be between 1 and {0}.',
+                          document.lineCount
+                      );
+            },
+        });
+        if (lineInput === undefined) {
+            return undefined;
+        }
+        line = Number(lineInput) - 1;
+    }
+
+    let message = options.message;
+    if (message === undefined) {
+        message = await vscode.window.showInputBox({
+            title: loc('newLinkedAnnotationTitle', 'New linked annotation'),
+            prompt: loc('newLinkedAnnotationPrompt', 'Describe the annotation to create at the target location'),
+            validateInput: (value) =>
+                value.trim().length > 0 ? undefined : loc('emptyMessageError', 'Message cannot be empty'),
+        });
+    }
+    if (message === undefined) {
+        return undefined;
+    }
+    if (message.trim().length === 0) {
+        throw new Error(loc('emptyMessageError', 'Message cannot be empty'));
+    }
+    return { document, line, message };
+}
+
+function registerStoreLinkCommands(context: vscode.ExtensionContext): void {
+    context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.createLink', async (commandArg?: unknown): Promise<number> => {
+            const services = requireStoreLinkServices();
+            if (!services) {
+                return 0;
+            }
+            const { store, manager } = services;
+            const options = storeLinkCommandOptions(commandArg);
+            const sourceId = await pickStoreAnnotationId(
+                commandArg,
+                loc('selectSourceAnnotationForLink', 'Select the annotation that will own the link')
+            );
+            const source = sourceId ? store.get(sourceId) : undefined;
+            if (!source) {
+                return 0;
+            }
+
+            try {
+                const existingTargets = store.list().filter((annotation) => annotation.id !== source.id);
+                let targetId = options.targetId;
+                let createNew = options.targetFileUri !== undefined;
+
+                if (!targetId && !createNew) {
+                    const actions = [
+                        ...(existingTargets.length > 0
+                            ? [
+                                  {
+                                      label: '$(link) ' + loc('linkExistingAnnotation', 'Link an existing annotation'),
+                                      value: 'existing' as const,
+                                      description: loc(
+                                          'linkExistingAnnotationDescription',
+                                          'Choose from {0} other annotation(s)',
+                                          existingTargets.length
+                                      ),
+                                  },
+                              ]
+                            : []),
+                        {
+                            label: '$(add) ' + loc('createLinkedAnnotation', 'Create a linked annotation'),
+                            value: 'new' as const,
+                            description: loc(
+                                'createLinkedAnnotationDescription',
+                                'Choose a workspace file, line and message'
+                            ),
+                        },
+                    ];
+                    const action = await vscode.window.showQuickPick(actions, {
+                        title: loc('createAnnotationLinkTitle', 'Create annotation link'),
+                        placeHolder: loc('createAnnotationLinkPlaceholder', 'Choose how to create the link'),
+                        matchOnDescription: true,
+                    });
+                    if (!action) {
+                        return 0;
+                    }
+                    createNew = action.value === 'new';
+                }
+
+                if (!createNew) {
+                    if (targetId === source.id) {
+                        throw new Error(loc('cannotLinkAnnotationToItself', 'An annotation cannot link to itself.'));
+                    }
+                    if (targetId && !store.get(targetId)) {
+                        throw new Error(loc('targetAnnotationNotFound', 'The target annotation was not found.'));
+                    }
+                    if (!targetId) {
+                        const target = await vscode.window.showQuickPick(
+                            existingTargets.map((annotation) => ({
+                                label: firstMessageLine(annotation.message) || annotation.id,
+                                description: formatAnnotationLocation(
+                                    annotation.file,
+                                    store.getLineForAnnotation(annotation.id, vscode.workspace.textDocuments)
+                                ),
+                                detail: annotation.resolved
+                                    ? loc('resolvedAnnotation', 'Resolved annotation')
+                                    : loc('openAnnotation', 'Open annotation'),
+                                id: annotation.id,
+                            })),
+                            {
+                                title: loc('selectLinkTargetTitle', 'Select link target'),
+                                placeHolder: loc('selectLinkTargetPlaceholder', 'Select the annotation to link to'),
+                                matchOnDescription: true,
+                                matchOnDetail: true,
+                            }
+                        );
+                        targetId = target?.id;
+                    }
+                    if (!targetId) {
+                        return 0;
+                    }
+                    const relationship = await pickLinkRelationship(
+                        options.relationship,
+                        options.targetId !== undefined
+                    );
+                    if (!relationship) {
+                        return 0;
+                    }
+                    const target = await resolveStoreAnnotationLocation(targetId);
+                    await manager.createLinkedAnnotation(
+                        source.id,
+                        target.annotation.file,
+                        target.line,
+                        relationship,
+                        target.annotation.id
+                    );
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'annotationLinkCreated',
+                            'Linked annotation to {0} ({1}).',
+                            formatAnnotationLocation(target.annotation.file, target.line),
+                            relationship
+                        )
+                    );
+                    return 1;
+                }
+
+                const target = await pickNewLinkedAnnotationTarget(options);
+                if (!target) {
+                    return 0;
+                }
+                const relationship = await pickLinkRelationship(
+                    options.relationship,
+                    options.targetFileUri !== undefined
+                );
+                if (!relationship) {
+                    return 0;
+                }
+                const annotationConfig = vscode.workspace.getConfiguration('annotation');
+                const fileUri = target.document.uri.toString();
+                const maxPerFile = annotationConfig.get<number>('maxAnnotationsPerFile', 1000);
+                if (maxPerFile > 0 && store.listForFile(fileUri).length >= maxPerFile) {
+                    vscode.window.showWarningMessage(
+                        loc('maxAnnotationsReached', 'This file has reached its limit of {0} annotations.', maxPerFile)
+                    );
+                    return 0;
+                }
+
+                store.beginTransaction();
+                try {
+                    const created = store.add(
+                        {
+                            fileUri,
+                            file: vscode.workspace.asRelativePath(target.document.uri),
+                            origin: { kind: 'manual' },
+                            message: target.message,
+                            author: annotationConfig.get<string>('username', 'Anonymous').trim() || 'Anonymous',
+                            timestamp: new Date().toISOString(),
+                            severity: annotationConfig.get<string>('defaultSeverity', 'info'),
+                            languageId: target.document.languageId,
+                        },
+                        { line: target.line },
+                        target.document
+                    );
+                    await manager.createLinkedAnnotation(
+                        source.id,
+                        created.file,
+                        target.line,
+                        relationship,
+                        created.id
+                    );
+                    store.commit();
+                    vscode.window.showInformationMessage(
+                        loc(
+                            'linkedAnnotationCreated',
+                            'Created and linked annotation at {0}.',
+                            formatAnnotationLocation(created.file, target.line)
+                        )
+                    );
+                    return 1;
+                } catch (error) {
+                    store.rollback();
+                    throw error;
+                }
+            } catch (error) {
+                reportStoreLinkError(loc('createAnnotationLinkOperation', 'create the annotation link'), error);
+                return 0;
+            }
+        }),
+
+        vscode.commands.registerCommand(
+            'annotations.navigateToLinked',
+            async (commandArg?: unknown): Promise<number> => {
+                const services = requireStoreLinkServices();
+                if (!services) {
+                    return 0;
+                }
+                const options = storeLinkCommandOptions(commandArg);
+                const sourceId = await pickStoreAnnotationId(
+                    commandArg,
+                    loc('selectAnnotationWithLinks', 'Select an annotation with outgoing links')
+                );
+                const source = sourceId ? services.store.get(sourceId) : undefined;
+                if (!source) {
+                    return 0;
+                }
+                try {
+                    const selected = await pickOutgoingStoreLink(
+                        source,
+                        options.targetIndex,
+                        loc('selectLinkedAnnotationToOpen', 'Select a linked annotation to open')
+                    );
+                    if (!selected) {
+                        return 0;
+                    }
+                    await services.manager.navigateToLinked(source.id, selected.index);
+                    return 1;
+                } catch (error) {
+                    reportStoreLinkError(loc('navigateAnnotationLinkOperation', 'open the linked annotation'), error);
+                    return 0;
+                }
+            }
+        ),
+
+        vscode.commands.registerCommand('annotations.showLinks', async (commandArg?: unknown): Promise<number> => {
+            const services = requireStoreLinkServices();
+            if (!services) {
+                return 0;
+            }
+            const sourceId = await pickStoreAnnotationId(
+                commandArg,
+                loc('selectAnnotationToShowLinks', 'Select an annotation whose links you want to inspect')
+            );
+            const source = sourceId ? services.store.get(sourceId) : undefined;
+            if (!source) {
+                return 0;
+            }
+            try {
+                const { line: sourceLine } = await resolveStoreAnnotationLocation(source.id);
+                type LinkListItem = vscode.QuickPickItem &
+                    ({ direction: 'outgoing'; index: number } | { direction: 'incoming'; sourceId: string });
+                const items: LinkListItem[] = (source.linkedAnnotations ?? []).map((link, index) => ({
+                    label: `$(arrow-right) ${link.relationship || 'related'}: ${formatAnnotationLocation(link.targetFile, link.targetLine)}`,
+                    detail: loc('outgoingLinkDetail', 'Outgoing link'),
+                    direction: 'outgoing',
+                    index,
+                }));
+                for (const candidate of services.store.list()) {
+                    for (const link of candidate.linkedAnnotations ?? []) {
+                        if (
+                            link.targetId === source.id ||
+                            (!link.targetId &&
+                                link.targetLine === sourceLine &&
+                                linkFileTargetsAnnotation(link.targetFile, source))
+                        ) {
+                            items.push({
+                                label: `$(arrow-left) ${link.relationship || 'related'} ← ${firstMessageLine(candidate.message) || candidate.id}`,
+                                description: candidate.file,
+                                detail: loc('incomingLinkDetail', 'Incoming link'),
+                                direction: 'incoming',
+                                sourceId: candidate.id,
+                            });
+                        }
+                    }
+                }
+                if (items.length === 0) {
+                    vscode.window.showInformationMessage(
+                        loc('annotationHasNoLinks', 'This annotation has no incoming or outgoing links.')
+                    );
+                    return 0;
+                }
+                const selected = await vscode.window.showQuickPick(items, {
+                    title: loc('annotationLinksTitle', 'Annotation links'),
+                    placeHolder: loc('annotationLinksPlaceholder', 'Select a link to navigate to its other endpoint'),
+                    matchOnDescription: true,
+                    matchOnDetail: true,
+                });
+                if (!selected) {
+                    return 0;
+                }
+                if (selected.direction === 'outgoing') {
+                    await services.manager.navigateToLinked(source.id, selected.index);
+                } else {
+                    await openStoreAnnotation(selected.sourceId);
+                }
+                return 1;
+            } catch (error) {
+                reportStoreLinkError(loc('showAnnotationLinksOperation', 'show annotation links'), error);
+                return 0;
+            }
+        }),
+
+        vscode.commands.registerCommand('annotations.removeLink', async (commandArg?: unknown): Promise<number> => {
+            const services = requireStoreLinkServices();
+            if (!services) {
+                return 0;
+            }
+            const options = storeLinkCommandOptions(commandArg);
+            const sourceId = await pickStoreAnnotationId(
+                commandArg,
+                loc('selectAnnotationToRemoveLink', 'Select the annotation whose link you want to remove')
+            );
+            const source = sourceId ? services.store.get(sourceId) : undefined;
+            if (!source) {
+                return 0;
+            }
+            try {
+                const selected = await pickOutgoingStoreLink(
+                    source,
+                    options.targetIndex,
+                    loc('selectLinkToRemove', 'Select the outgoing link to remove')
+                );
+                if (!selected) {
+                    return 0;
+                }
+                if (!options.confirmed) {
+                    const removeLabel = loc('removeAnnotationLink', 'Remove link');
+                    const confirmation = await vscode.window.showWarningMessage(
+                        loc(
+                            'confirmRemoveAnnotationLink',
+                            'Remove the {0} link to {1}?',
+                            selected.link.relationship || 'related',
+                            formatAnnotationLocation(selected.link.targetFile, selected.link.targetLine)
+                        ),
+                        { modal: true },
+                        removeLabel
+                    );
+                    if (confirmation !== removeLabel) {
+                        return 0;
+                    }
+                }
+                await services.manager.removeLinkedAnnotation(
+                    source.id,
+                    selected.link.targetFile,
+                    selected.link.targetLine,
+                    selected.link.targetId
+                );
+                vscode.window.showInformationMessage(loc('annotationLinkRemoved', 'Annotation link removed.'));
+                return 1;
+            } catch (error) {
+                reportStoreLinkError(loc('removeAnnotationLinkOperation', 'remove the annotation link'), error);
+                return 0;
+            }
+        })
+    );
+}
+
+async function pickStoreAnnotationId(commandArg: unknown, placeHolder: string): Promise<string | undefined> {
+    const store = annotationStore;
+    if (!store) {
+        vscode.window.showErrorMessage(loc('storeNotReady', 'Annotation store is not ready yet.'));
+        return undefined;
+    }
+    const suppliedId = annotationIdFromCommandArg(commandArg);
+    if (suppliedId && store.get(suppliedId)) {
+        return suppliedId;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    const cursorMatches = editor
+        ? store
+              .getByFile(editor.document.uri.toString())
+              .filter(
+                  (annotation) =>
+                      editor.document.positionAt(annotation.startOffset).line === editor.selection.active.line
+              )
+        : [];
+    const candidates = cursorMatches.length > 0 ? cursorMatches : store.list();
+    if (candidates.length === 0) {
+        vscode.window.showInformationMessage(loc('noAnnotations', 'No annotations found.'));
+        return undefined;
+    }
+    if (candidates.length === 1) {
+        return candidates[0].id;
+    }
+    return (
+        await vscode.window.showQuickPick(
+            candidates.map((annotation) => ({
+                label: firstMessageLine(annotation.message) || annotation.id,
+                description: annotation.file,
+                detail: annotation.resolved
+                    ? loc('resolvedAnnotation', 'Resolved annotation')
+                    : loc('openAnnotation', 'Open annotation'),
+                id: annotation.id,
+            })),
+            { placeHolder, matchOnDescription: true, matchOnDetail: true }
+        )
+    )?.id;
+}
+
+async function resolveStoreAnnotationLocation(annotationId: string): Promise<{
+    annotation: Readonly<AnnotationV2>;
+    document: vscode.TextDocument;
+    line: number;
+}> {
+    const annotation = annotationStore?.get(annotationId);
+    if (!annotation) {
+        throw new Error(loc('annotationNotFound', 'Annotation not found.'));
+    }
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(annotation.fileUri));
+    return { annotation, document, line: document.positionAt(annotation.startOffset).line };
+}
+
+async function openStoreAnnotation(annotationId: string): Promise<void> {
+    const { document, annotation } = await resolveStoreAnnotationLocation(annotationId);
+    const editor = await vscode.window.showTextDocument(document);
+    const position = document.positionAt(annotation.startOffset);
+    editor.selection = new vscode.Selection(position, position);
+    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    annotationManager?.navigationStack.push(annotationId);
+}
 
 function loadKanbanColumns(context: vscode.ExtensionContext): [string, string][] {
-    const stored = context.workspaceState.get<[string, string][]>(KANBAN_COLUMN_DEFINITIONS_KEY);
-    if (Array.isArray(stored) && stored.length > 0) {
+    const stored = validateKanbanColumnDefinitions(context.workspaceState.get<unknown>(KANBAN_COLUMN_DEFINITIONS_KEY));
+    if (stored) {
         return stored;
     }
     return KANBAN_DEFAULT_COLUMNS.map(([id, name]) => [id, name] as [string, string]);
 }
 
 async function saveKanbanColumns(context: vscode.ExtensionContext, columns: [string, string][]): Promise<void> {
-    await context.workspaceState.update(KANBAN_COLUMN_DEFINITIONS_KEY, columns);
-    if (KanbanView.currentPanel) {
-        KanbanView.currentPanel.webview.postMessage({
-            command: 'updateColumns',
-            columns,
-        });
+    const validated = validateKanbanColumnDefinitions(columns);
+    if (!validated) {
+        throw new TypeError('Invalid Kanban column definitions');
     }
+    await context.workspaceState.update(KANBAN_COLUMN_DEFINITIONS_KEY, validated);
+    KanbanView.updateCurrentColumns(validated);
+}
+
+function rejectKanbanCommand(message: string): false {
+    void vscode.window.showErrorMessage(message);
+    return false;
+}
+
+function isKnownKanbanAnnotationId(value: unknown, store: AnnotationStore): value is string {
+    return typeof value === 'string' && value.length > 0 && store.get(value) !== undefined;
+}
+
+function sameKanbanColumnIds(left: readonly [string, string][], right: readonly [string, string][]): boolean {
+    if (left.length !== right.length) {
+        return false;
+    }
+    const rightIds = new Set(right.map(([id]) => id));
+    return left.every(([id]) => rightIds.has(id));
 }
 
 function registerKanbanCommands(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
+        vscode.commands.registerCommand('annotations.addKanbanColumn', async () => {
+            const existing = loadKanbanColumns(context);
+            if (existing.length >= KANBAN_MAX_COLUMNS) {
+                rejectKanbanCommand(
+                    loc('kanbanTooManyColumns', 'The Kanban board already has the maximum number of columns.')
+                );
+                return false;
+            }
+            const name = await vscode.window.showInputBox({
+                title: loc('kanbanAddColumnTitle', 'Add Kanban column'),
+                prompt: loc('kanbanColumnPrompt', 'Enter a name for the new column'),
+                placeHolder: loc('kanbanColumnPlaceholder', 'For example: Testing or Blocked'),
+                validateInput: (value) => {
+                    const trimmed = value.trim();
+                    if (!isValidKanbanColumnName(trimmed)) {
+                        return loc('kanbanColumnRequired', 'Column name is required.');
+                    }
+                    return existing.some(
+                        ([, current]) => current.localeCompare(trimmed, undefined, { sensitivity: 'accent' }) === 0
+                    )
+                        ? loc('kanbanColumnDuplicate', 'A Kanban column already uses this name.')
+                        : undefined;
+                },
+            });
+            if (!name) {
+                return false;
+            }
+            const trimmed = name.trim();
+            const rawBaseId =
+                trimmed
+                    .normalize('NFKD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .toLowerCase()
+                    .replace(/[^a-z0-9]+/g, '-')
+                    .replace(/^-+|-+$/g, '') || 'column';
+            const baseId = rawBaseId.slice(0, KANBAN_MAX_COLUMN_ID_LENGTH).replace(/-+$/g, '') || 'column';
+            const ids = new Set(existing.map(([id]) => id));
+            let id = baseId;
+            for (let suffix = 2; ids.has(id); suffix += 1) {
+                const suffixText = `-${suffix}`;
+                id = `${baseId.slice(0, KANBAN_MAX_COLUMN_ID_LENGTH - suffixText.length).replace(/-+$/g, '')}${suffixText}`;
+            }
+            existing.push([id, trimmed]);
+            await saveKanbanColumns(context, existing);
+            void vscode.window.showInformationMessage(loc('kanbanColumnAdded', 'Kanban column "{0}" added.', trimmed));
+            return true;
+        }),
+
+        vscode.commands.registerCommand('annotations.moveToColumn', async (commandArg?: unknown) => {
+            const annotationId = await pickStoreAnnotationId(
+                commandArg,
+                loc('selectAnnotationForKanban', 'Select an annotation to move')
+            );
+            if (!annotationId || !kanbanColumnStore || !annotationStore) {
+                return false;
+            }
+            const currentColumn = kanbanColumnStore.getColumn(annotationId) ?? 'todo';
+            const column = await vscode.window.showQuickPick(
+                loadKanbanColumns(context).map(([id, name]) => ({
+                    label: name,
+                    description: id === currentColumn ? loc('currentKanbanColumn', 'Current column') : undefined,
+                    id,
+                })),
+                { placeHolder: loc('selectKanbanColumn', 'Select the destination Kanban column') }
+            );
+            if (!column) {
+                return false;
+            }
+            await kanbanColumnStore.setColumn(annotationId, column.id);
+            void vscode.window.showInformationMessage(
+                loc('annotationMovedTo', 'Annotation moved to {0}.', column.label)
+            );
+            return true;
+        }),
+
         // Returns the current column definitions to the webview. Webview
         // expects `[string, string][]` (id → name pairs); falls back on a
         // default set when the workspace has no override.
         vscode.commands.registerCommand('annotations.kanban.getColumns', () => loadKanbanColumns(context)),
 
-        // Move an annotation to a different column. Routes through
-        // KanbanColumnStore (per the R1 service contract) and signals the
-        // store so the existing showKanban-installed onDidChange listener
-        // refreshes the webview without a round-trip through the user.
+        // Move an annotation to a different real column. KanbanView owns the
+        // one panel-scoped KanbanColumnStore listener that refreshes the card.
         vscode.commands.registerCommand(
             'annotations.kanban.moveToColumn',
-            async (annotationId: string, columnId: string) => {
+            async (annotationId: unknown, columnId: unknown): Promise<boolean> => {
                 if (!kanbanColumnStore || !annotationStore) {
-                    return;
+                    return rejectKanbanCommand(loc('kanbanNotReady', 'The Kanban board is not ready yet.'));
+                }
+                if (!isKnownKanbanAnnotationId(annotationId, annotationStore)) {
+                    return rejectKanbanCommand(loc('kanbanInvalidAnnotation', 'Select an existing annotation.'));
+                }
+                if (
+                    !isValidKanbanColumnId(columnId) ||
+                    !loadKanbanColumns(context).some(([existingId]) => existingId === columnId)
+                ) {
+                    return rejectKanbanCommand(loc('kanbanInvalidDestination', 'Select an existing Kanban column.'));
                 }
                 await kanbanColumnStore.setColumn(annotationId, columnId);
-                annotationStore.notifyChanged();
+                return true;
             }
         ),
 
         // Remove an annotation from the Kanban without deleting it from
         // the store (annotation stays attached to its source code).
-        vscode.commands.registerCommand('annotations.kanban.removeFromKanban', async (annotationId: string) => {
+        vscode.commands.registerCommand('annotations.kanban.removeFromKanban', async (annotationId: unknown) => {
             if (!kanbanColumnStore || !annotationStore) {
-                return;
+                return rejectKanbanCommand(loc('kanbanNotReady', 'The Kanban board is not ready yet.'));
             }
-            await kanbanColumnStore.clearColumn(annotationId);
-            annotationStore.notifyChanged();
+            if (!isKnownKanbanAnnotationId(annotationId, annotationStore)) {
+                return rejectKanbanCommand(loc('kanbanInvalidAnnotation', 'Select an existing annotation.'));
+            }
+            await kanbanColumnStore.setColumn(annotationId, KANBAN_HIDDEN_COLUMN_ID);
+            return true;
         }),
 
         // Permanently delete an annotation from the store AND clear its
         // Kanban column entry. Triggered from the Kanban "delete" path.
-        vscode.commands.registerCommand('annotations.kanban.delete', async (annotationId: string) => {
-            if (!annotationStore) {
-                return;
+        vscode.commands.registerCommand('annotations.kanban.delete', async (annotationId: unknown) => {
+            if (!annotationStore || !kanbanColumnStore) {
+                return rejectKanbanCommand(loc('kanbanNotReady', 'The Kanban board is not ready yet.'));
+            }
+            if (!isKnownKanbanAnnotationId(annotationId, annotationStore)) {
+                return rejectKanbanCommand(loc('kanbanInvalidAnnotation', 'Select an existing annotation.'));
             }
             annotationStore.remove(annotationId);
-            if (kanbanColumnStore) {
-                await kanbanColumnStore.clearColumn(annotationId);
-            }
+            await kanbanColumnStore.clearColumn(annotationId);
+            return true;
         }),
 
         // Append a new column definition to the workspace's Kanban layout.
-        vscode.commands.registerCommand('annotations.kanban.addColumn', async (id: string, name: string) => {
+        vscode.commands.registerCommand('annotations.kanban.addColumn', async (id: unknown, name: unknown) => {
             const columns = loadKanbanColumns(context);
-            if (columns.some(([cid]) => cid === id)) {
-                return; // duplicate id, no-op
+            if (!isValidKanbanColumnId(id) || !isValidKanbanColumnName(name)) {
+                return rejectKanbanCommand(
+                    loc('kanbanInvalidColumnArguments', 'Enter a valid, non-empty Kanban column name.')
+                );
+            }
+            if (columns.length >= KANBAN_MAX_COLUMNS) {
+                return rejectKanbanCommand(
+                    loc('kanbanTooManyColumns', 'The Kanban board already has the maximum number of columns.')
+                );
+            }
+            if (
+                columns.some(
+                    ([columnId, columnName]) =>
+                        columnId === id || columnName.localeCompare(name, undefined, { sensitivity: 'accent' }) === 0
+                )
+            ) {
+                return rejectKanbanCommand(
+                    loc('kanbanColumnDuplicate', 'A Kanban column already uses this name or identifier.')
+                );
             }
             columns.push([id, name]);
             await saveKanbanColumns(context, columns);
+            return true;
         }),
 
         // Replace the entire column-definition layout. Used by rename flows.
-        vscode.commands.registerCommand('annotations.kanban.updateColumns', async (columns: [string, string][]) => {
-            if (!Array.isArray(columns)) {
-                return;
+        vscode.commands.registerCommand('annotations.kanban.updateColumns', async (value: unknown) => {
+            const columns = validateKanbanColumnDefinitions(value);
+            const existing = loadKanbanColumns(context);
+            if (!columns || !sameKanbanColumnIds(columns, existing)) {
+                return rejectKanbanCommand(
+                    loc('kanbanInvalidColumnLayout', 'The Kanban column layout is invalid or removes existing columns.')
+                );
             }
             await saveKanbanColumns(context, columns);
+            return true;
         }),
 
-        // Delete a column definition. Annotations previously assigned to
-        // that column are reset to the default ('todo') so they remain
-        // reachable in the Kanban UI.
-        vscode.commands.registerCommand('annotations.kanban.deleteColumn', async (id: string) => {
-            const columns = loadKanbanColumns(context).filter(([cid]) => cid !== id);
-            await saveKanbanColumns(context, columns);
-            if (kanbanColumnStore) {
-                for (const [annId, col] of kanbanColumnStore.getAllColumns()) {
-                    if (col === id) {
-                        await kanbanColumnStore.setColumn(annId, 'todo');
-                    }
-                }
-                if (annotationStore) {
-                    annotationStore.notifyChanged();
-                }
+        // A used column cannot be deleted implicitly: moving its cards is an
+        // explicit operation, preventing silent workflow-state changes.
+        vscode.commands.registerCommand('annotations.kanban.deleteColumn', async (id: unknown) => {
+            if (!kanbanColumnStore || !annotationStore) {
+                return rejectKanbanCommand(loc('kanbanNotReady', 'The Kanban board is not ready yet.'));
             }
+            const existing = loadKanbanColumns(context);
+            if (!isValidKanbanColumnId(id) || !existing.some(([columnId]) => columnId === id)) {
+                return rejectKanbanCommand(loc('kanbanUnknownColumn', 'Select an existing Kanban column.'));
+            }
+            if (id === 'todo') {
+                return rejectKanbanCommand(
+                    loc('kanbanDefaultColumnRequired', 'The default “To Do” column cannot be deleted.')
+                );
+            }
+            const allAssignedIds = getKanbanColumnAssignmentIds(kanbanColumnStore.getAllColumns(), id);
+            const assignedIds = allAssignedIds.filter((annotationId) => annotationStore?.get(annotationId));
+            if (assignedIds.length > 0) {
+                void vscode.window.showWarningMessage(
+                    loc(
+                        'kanbanColumnInUse',
+                        'This column still contains {0} annotation(s). Move or remove those cards before deleting it.',
+                        assignedIds.length
+                    )
+                );
+                return false;
+            }
+            const deleteLabel = loc('delete', 'Delete');
+            const result = await vscode.window.showWarningMessage(
+                loc('kanbanDeleteEmptyColumnConfirm', 'Delete this empty Kanban column?'),
+                { modal: true },
+                deleteLabel
+            );
+            if (result !== deleteLabel) {
+                return false;
+            }
+            await saveKanbanColumns(
+                context,
+                existing.filter(([columnId]) => columnId !== id)
+            );
+            // Remove stale mappings left by annotations deleted outside the
+            // Kanban command surface once the now-empty column is gone.
+            for (const annotationId of allAssignedIds) {
+                await kanbanColumnStore.clearColumn(annotationId);
+            }
+            return true;
         }),
 
         // Manual refresh: re-emit annotations + columns to the webview.
         vscode.commands.registerCommand('annotations.kanban.refresh', () => {
             if (!annotationStore) {
-                return;
+                return rejectKanbanCommand(loc('kanbanNotReady', 'The Kanban board is not ready yet.'));
             }
-            annotationStore.notifyChanged();
+            KanbanView.refreshCurrentAnnotations(annotationStore.list());
+            return true;
         })
     );
 }

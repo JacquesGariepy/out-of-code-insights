@@ -16,6 +16,7 @@ interface ExtensionManifest {
         commands: Array<{ command: string }>;
         submenus: Array<{ id: string; label: string }>;
         menus: Record<string, MenuItem[]>;
+        viewsWelcome?: Array<{ view: string; contents: string; when?: string }>;
     };
 }
 
@@ -64,11 +65,19 @@ suite('package.json native annotation menus', () => {
             'outOfCodeInsightsEditOrganizeSubMenu',
             'outOfCodeInsightsMoveReanchorSubMenu',
             'outOfCodeInsightsLinksCollaborationSubMenu',
+            'outOfCodeInsightsReviewSubMenu',
             'outOfCodeInsightsTemplatesSnippetsSubMenu',
+            'outOfCodeInsightsDocumentationSubMenu',
+            'outOfCodeInsightsKanbanSubMenu',
             'aiAnalysisSubMenu',
             'outOfCodeInsightsToolsSubMenu',
+            'outOfCodeInsightsSettingsSubMenu',
         ]);
-        assert.strictEqual(items.length, 10, 'the first-level context menu must remain compact');
+        assert.strictEqual(
+            items.length,
+            14,
+            'the first-level context menu contains only primary actions and task groups'
+        );
         assert.strictEqual(items.find((item) => item.command === 'annotations.delete')?.group, '9_danger@1');
         assert.ok(items.every((item) => /^(1_primary|2_workflows|9_danger)@\d+$/.test(item.group ?? '')));
     });
@@ -79,9 +88,13 @@ suite('package.json native annotation menus', () => {
             ['outOfCodeInsightsEditOrganizeSubMenu', 'Edit & Organize'],
             ['outOfCodeInsightsMoveReanchorSubMenu', 'Move & Re-anchor'],
             ['outOfCodeInsightsLinksCollaborationSubMenu', 'Links & Collaboration'],
+            ['outOfCodeInsightsReviewSubMenu', 'Review Workflow'],
             ['outOfCodeInsightsTemplatesSnippetsSubMenu', 'Templates & Snippets'],
+            ['outOfCodeInsightsDocumentationSubMenu', 'Documentation'],
+            ['outOfCodeInsightsKanbanSubMenu', 'Kanban'],
             ['aiAnalysisSubMenu', 'AI Analysis'],
             ['outOfCodeInsightsToolsSubMenu', 'Import/Export & Tools'],
+            ['outOfCodeInsightsSettingsSubMenu', 'Settings & Accounts'],
         ]);
         const definitions = new Map(manifest.contributes.submenus.map(({ id, label }) => [id, label]));
         const rootItems = menus.outOfCodeInsightsSubMenu;
@@ -101,6 +114,10 @@ suite('package.json native annotation menus', () => {
         );
         assert.strictEqual(allHubCommands.filter((command) => command === 'annotations.createLink').length, 1);
         assert.strictEqual(
+            allHubCommands.filter((command) => command === 'annotations.createDevelopmentIssue').length,
+            1
+        );
+        assert.strictEqual(
             menus.outOfCodeInsightsToolsSubMenu.find((item) => item.command === 'annotations.clearAll')?.group,
             '9_danger@1'
         );
@@ -118,23 +135,53 @@ suite('package.json native annotation menus', () => {
 
     test('TreeView exposes only handlers that understand native TreeItem arguments', () => {
         const items = menus['view/item/context'];
-        const supported = new Set([
-            'annotations.treeEdit',
-            'annotations.treeDelete',
-            'annotations.treeTogglePin',
-            'annotations.treeSetSeverity',
-            'annotations.pickUpForMove',
-            'annotations.reanchorToCursor',
-            'annotations.moveByDragAndDrop',
-            'annotations.showLinks',
-            'annotations.bulkActions',
-        ]);
+        const supported = new Set(['annotations.treeEdit', 'annotations.treeDelete', 'annotations.pickUpForMove']);
 
-        assert.deepStrictEqual(new Set(items.map((item) => item.command)), supported);
+        assert.deepStrictEqual(new Set(items.flatMap((item) => (item.command ? [item.command] : []))), supported);
+        assert.deepStrictEqual(
+            items.flatMap((item) => (item.submenu ? [item.submenu] : [])),
+            [
+                'outOfCodeInsightsTreeMoveSubMenu',
+                'outOfCodeInsightsTreeCollaborationSubMenu',
+                'outOfCodeInsightsTreeStateSubMenu',
+                'outOfCodeInsightsTreeCodeSubMenu',
+                'outOfCodeInsightsTreeDocumentationSubMenu',
+            ]
+        );
         assert.ok(items.every((item) => item.when?.includes('view == annotationsView')));
+        assert.ok(items.every((item) => item.when?.includes('view == annotationsExplorerView')));
         assert.ok(!items.some((item) => item.command === 'annotations.delete'), 'cursor-based delete is unsafe here');
         assert.ok(!items.some((item) => item.command === 'annotations.edit'), 'cursor-based edit is unsafe here');
         assert.strictEqual(items.find((item) => item.command === 'annotations.treeDelete')?.group, '9_danger@1');
+    });
+
+    test('TreeView code conversion routes both directions through annotation-aware handlers', () => {
+        const items = menus.outOfCodeInsightsTreeCodeSubMenu;
+        assert.deepStrictEqual(
+            items.map((item) => item.command),
+            ['annotations.writeAnnotationsToCodeComments', 'annotations.convertCodeComments']
+        );
+        assert.ok(items.every((item) => item.group?.match(/^\d+_(?:export|import)@\d+$/)));
+    });
+
+    test('TreeView collaboration groups the complete link workflow next to annotations', () => {
+        const items = menus.outOfCodeInsightsTreeCollaborationSubMenu;
+        assert.deepStrictEqual(
+            items.map((item) => item.command),
+            [
+                'annotations.createLink',
+                'annotations.navigateToLinked',
+                'annotations.showLinks',
+                'annotations.removeLink',
+                'annotations.createDevelopmentIssue',
+            ]
+        );
+        assert.strictEqual(items[0].when, undefined, 'creating a link must work from every annotation item');
+        assert.ok(
+            items.slice(1, 4).every((item) => item.when === 'viewItem == annotation-linked'),
+            'link inspection and removal only apply to annotations that already expose links'
+        );
+        assert.strictEqual(items[4].when, undefined, 'issue creation must accept every annotation item');
     });
 
     test('comment deletion is a thread-level danger action, never a per-reply shortcut', () => {
@@ -151,16 +198,85 @@ suite('package.json native annotation menus', () => {
         const items = menus['view/title'];
         const visible = items.filter((item) => item.group?.startsWith('navigation@'));
         assert.deepStrictEqual(
-            visible.map((item) => item.command),
+            visible.map((item) => item.command ?? `submenu:${String(item.submenu)}`),
             [
                 'annotations.bulkActions',
                 'annotations.keywordSearch',
                 'annotations.show',
-                'annotations.showKanban',
-                'annotations.toggleDisplay',
+                'submenu:outOfCodeInsightsTreeMoreSubMenu',
             ]
         );
-        assert.ok(items.some((item) => item.command === 'annotations.syncNow' && item.group === '6_collaboration@1'));
-        assert.ok(items.some((item) => item.command === 'annotations.generateDocs' && item.group === '5_tools@2'));
+        const more = menus.outOfCodeInsightsTreeMoreSubMenu;
+        assert.ok(more.some((item) => item.command === 'annotations.syncNow' && item.group === '7_collaboration@1'));
+        assert.ok(
+            more.some(
+                (item) => item.command === 'annotations.createDevelopmentIssue' && item.group === '7_collaboration@3'
+            )
+        );
+        assert.ok(
+            more.some((item) => item.command === 'annotations.configureDocs' && item.group === '6_documentation@1')
+        );
+        assert.ok(
+            more.some((item) => item.command === 'annotations.generateDocs' && item.group === '6_documentation@2')
+        );
+        assert.ok(items.every((item) => item.when?.includes('view == annotationsExplorerView')));
+    });
+
+    test('Explorer resources expose a guided workspace hub and stateful shortcuts preserve native navigation', () => {
+        const explorer = menus['explorer/context'];
+        assert.deepStrictEqual(
+            explorer.map((item) => item.submenu),
+            ['outOfCodeInsightsExplorerSubMenu']
+        );
+        assert.ok(menus.outOfCodeInsightsExplorerSubMenu.some((item) => item.command === 'annotations.configureDocs'));
+        assert.ok(
+            menus.outOfCodeInsightsExplorerSubMenu
+                .filter((item) =>
+                    ['annotations.convertCodeComments', 'annotations.writeAnnotationsToCodeComments'].includes(
+                        item.command ?? ''
+                    )
+                )
+                .every((item) => item.when === '!explorerResourceIsFolder'),
+            'file conversion actions must not be offered on folders'
+        );
+
+        const manifestWithKeys = loadManifest() as ExtensionManifest & {
+            contributes: { keybindings: Array<{ command: string; when?: string }> };
+        };
+        const keybindings = manifestWithKeys.contributes.keybindings;
+        assert.ok(
+            keybindings
+                .find((item) => item.command === 'annotations.nextAnnotation')
+                ?.when?.includes('outOfCodeInsights.reviewModeActive')
+        );
+        assert.ok(
+            keybindings
+                .find((item) => item.command === 'stack.back')
+                ?.when?.includes('outOfCodeInsights.navigationCanBack')
+        );
+    });
+
+    test('empty annotation trees teach the first workflows without prior product knowledge', () => {
+        const welcomeByView = new Map(
+            (manifest.contributes.viewsWelcome ?? []).map(({ view, contents }) => [view, contents])
+        );
+        assert.deepStrictEqual(new Set(welcomeByView.keys()), new Set(['annotationsView', 'annotationsExplorerView']));
+
+        const expectedCommands = [
+            'annotations.add',
+            'annotations.importCommentsWorkspace',
+            'annotations.show',
+            'annotations.configureDocs',
+            'annotations.openSettings',
+        ];
+        for (const [view, contents] of welcomeByView) {
+            const linkedCommands = [...contents.matchAll(/\(command:([^)]+)\)/g)].map((match) => match[1]);
+            assert.deepStrictEqual(
+                linkedCommands,
+                expectedCommands,
+                `${view} needs the complete guided start sequence`
+            );
+            assert.match(contents, /right-click/i, `${view} must explain how to discover its context menus`);
+        }
     });
 });

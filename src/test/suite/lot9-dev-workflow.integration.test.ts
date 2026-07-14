@@ -74,11 +74,24 @@ function readPersistedFor(fileUri: string): PersistedV2Annotation[] {
     return readPersisted().filter((a) => a.fileUri === fileUri);
 }
 
-function clearAnnotationsFile(): void {
-    const file = annotationsFilePath();
-    if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
+async function waitForPersistedCount(fileUri: string, expected: number, timeoutMs = 10000): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    let count = readPersistedFor(fileUri).length;
+    while (count !== expected && Date.now() < deadline) {
+        await delay(100);
+        count = readPersistedFor(fileUri).length;
     }
+    return count;
+}
+
+async function waitForPersistedTotalCount(expected: number, timeoutMs = 15000): Promise<number> {
+    const deadline = Date.now() + timeoutMs;
+    let count = readPersisted().length;
+    while (count !== expected && Date.now() < deadline) {
+        await delay(100);
+        count = readPersisted().length;
+    }
+    return count;
 }
 
 async function closeAllEditors(): Promise<void> {
@@ -149,7 +162,7 @@ function viewFor(document: vscode.TextDocument, fileUri: string): View {
     return { count: 1, state: a.state ?? 'active', line, attached };
 }
 
-async function waitForAttachedView(document: vscode.TextDocument, fileUri: string, timeoutMs = 5000): Promise<View> {
+async function waitForAttachedView(document: vscode.TextDocument, fileUri: string, timeoutMs = 10000): Promise<View> {
     const deadline = Date.now() + timeoutMs;
     let latest = viewFor(document, fileUri);
     while ((latest.count !== 1 || !latest.attached) && Date.now() < deadline) {
@@ -171,16 +184,27 @@ async function openFixture(
 }
 
 async function annotateContextLine(): Promise<void> {
-    await vscode.commands.executeCommand('annotations.add', {
+    const editor = vscode.window.activeTextEditor;
+    assert.ok(editor, 'annotation setup requires an active fixture editor');
+    const fileUri = editor.document.uri.toString();
+    const createdId = await vscode.commands.executeCommand<string>('annotations.add', {
         line: CONTEXT_LINE,
         message: 'lot9-context',
     });
-    await delay(600);
+    assert.ok(createdId, 'annotation setup command must return the created id');
+
+    const deadline = Date.now() + 15000;
+    let created = readPersistedFor(fileUri).find((annotation) => annotation.id === createdId);
+    while (!created && Date.now() < deadline) {
+        await delay(100);
+        created = readPersistedFor(fileUri).find((annotation) => annotation.id === createdId);
+    }
+    assert.ok(created, `annotation ${createdId} must be durable before the workflow gesture starts`);
 }
 
 suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
     suiteSetup(async function () {
-        this.timeout(30000);
+        this.timeout(60000);
         const ext = findExtension();
         if (!ext) {
             this.skip();
@@ -190,18 +214,23 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
     });
 
     setup(async function () {
-        this.timeout(30000);
+        // A timed-out async hook keeps running in Mocha and contaminates the
+        // following suites. Allow the serialized atomic-save queue to drain,
+        // then prove the cleanup reached disk before opening the next fixture.
+        this.timeout(60000);
         await clearAllAnnotationsViaCommand();
-        clearAnnotationsFile();
+        const remaining = await waitForPersistedTotalCount(0);
+        assert.strictEqual(remaining, 0, 'setup cleanup must be durable before the next workflow starts');
         await closeAllEditors();
     });
 
-    teardown(async () => {
+    teardown(async function () {
+        this.timeout(45000);
         await closeAllEditors();
     });
 
     test('two successive keystrokes at the end of the annotated line', async function () {
-        this.timeout(30000);
+        this.timeout(45000);
         const { uri, document, editor } = await openFixture('lot9-keys.md');
         await annotateContextLine();
 
@@ -210,7 +239,6 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         await vscode.commands.executeCommand('type', { text: 'a' });
         await delay(250);
         await vscode.commands.executeCommand('type', { text: 'b' });
-        await delay(800);
 
         const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
@@ -220,7 +248,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
     });
 
     test('multi-cursor edit: simultaneous inserts on the annotated line and above', async function () {
-        this.timeout(30000);
+        this.timeout(45000);
         const { uri, document, editor } = await openFixture('lot9-multicursor.md');
         await annotateContextLine();
 
@@ -228,7 +256,6 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
             eb.insert(new vscode.Position(CONTEXT_LINE, 0), 'X');
             eb.insert(new vscode.Position(0, 0), 'Q\n');
         });
-        await delay(800);
 
         const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
@@ -238,7 +265,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
     });
 
     test('find-and-replace-all shaped WorkspaceEdit touching the annotated line', async function () {
-        this.timeout(30000);
+        this.timeout(45000);
         const { uri, document } = await openFixture('lot9-replaceall.md');
         await annotateContextLine();
 
@@ -248,7 +275,6 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         edit.replace(uri, new vscode.Range(CONTEXT_LINE, 3, CONTEXT_LINE, 10), 'Background');
         edit.replace(uri, new vscode.Range(8, 4, 8, 13), 'plugin');
         await vscode.workspace.applyEdit(edit);
-        await delay(800);
 
         const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
@@ -258,7 +284,7 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
     });
 
     test('formatter-style full-document replace (re-indent) keeps the annotation on its line', async function () {
-        this.timeout(30000);
+        this.timeout(45000);
         const { uri, document } = await openFixture('lot9-format.md');
         await annotateContextLine();
 
@@ -268,7 +294,6 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
         const edit = new vscode.WorkspaceEdit();
         edit.replace(uri, new vscode.Range(0, 0, document.lineCount, 0), reindented);
         await vscode.workspace.applyEdit(edit);
-        await delay(800);
 
         const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
@@ -278,13 +303,20 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
     });
 
     test('Alt+Down (editor.action.moveLinesDownAction) — annotation follows its line', async function () {
-        this.timeout(30000);
+        this.timeout(45000);
         const { uri, document, editor } = await openFixture('lot9-movedown.md');
         await annotateContextLine();
 
         editor.selection = new vscode.Selection(CONTEXT_LINE, 0, CONTEXT_LINE, 0);
+        await vscode.window.showTextDocument(document, { preview: false, preserveFocus: false });
+        await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+        await delay(50);
+        assert.strictEqual(
+            vscode.window.activeTextEditor?.document.uri.toString(),
+            uri.toString(),
+            'Alt+Down: the fixture editor must be active before dispatch'
+        );
         await vscode.commands.executeCommand('editor.action.moveLinesDownAction');
-        await delay(800);
 
         const v = await waitForAttachedView(document, uri.toString());
         assert.strictEqual(v.count, 1);
@@ -360,11 +392,11 @@ suite('Lot 9 — developer workflow gestures keep annotations attached', () => {
             const we = new vscode.WorkspaceEdit();
             we.deleteFile(uri);
             await vscode.workspace.applyEdit(we);
-            await delay(1000);
+            const remaining = await waitForPersistedCount(uri.toString(), 0);
+            assert.strictEqual(remaining, 0, 'annotations must be durably removed on request');
         } finally {
             restore();
         }
-        assert.strictEqual(readPersistedFor(uri.toString()).length, 0, 'annotations must be removed on request');
     });
 
     test('file delete — "Keep annotations" choice preserves them as orphans', async function () {

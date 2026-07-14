@@ -30,6 +30,7 @@ suite('Extension activation', () => {
             'annotations.exportJSON',
             'annotations.importJSON',
             'annotations.toggleDisplay',
+            'annotations.createDevelopmentIssue',
         ];
         for (const cmd of expected) {
             assert.ok(commands.includes(cmd), `Command "${cmd}" should be registered`);

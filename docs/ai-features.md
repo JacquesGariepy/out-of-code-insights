@@ -12,38 +12,39 @@ the integration, see [architecture.md](./architecture.md).
 
 ## 1. Prerequisites
 
-1. An API key for a supported LLM provider (free tiers exist for
-   Groq, Google, Mistral; OpenAI and Anthropic require a paid
-   account).
+1. Credentials for a supported hosted provider, or a running Ollama/LM Studio
+   endpoint for a local provider. Ollama and LM Studio do not require a key.
 2. The `annotation.enableAiSuggest` setting set to `true` (off by
    default - the extension never calls a remote API silently).
 
-Open VS Code Settings (`Ctrl+,`) and configure:
+Run **Out-of-Code Insights: Configure AI Provider & Credentials** from a
+right-click **Settings & Accounts** menu, the tree `...` menu or the Command
+Palette. It guides provider selection, Azure or local connection settings,
+and Secret Storage (recommended) versus visible user settings.
+
+The resulting non-secret model settings can also be edited directly:
 
 ```jsonc
 {
     "annotation.enableAiSuggest": true,
     "annotation.provider": "anthropic",
-    "annotation.model": "claude-3-5-sonnet-20241022",
-    "llm.apiKeys": {
-        "anthropic": "sk-ant-..."
-    }
+    "annotation.model": "your-model",
 }
 ```
 
-Alternatively, run `Out-of-Code Insights: Update AI Provider API
-Key` from the command palette to store the key in VS Code's
-SecretStorage instead of `settings.json` (recommended for shared
-machines).
+The active provider catalogue contains 13 exact IDs. Unknown or legacy aliases
+are rejected rather than silently routed elsewhere. See
+[AI providers](./llm-providers.md) for the complete list and Azure, Ollama and
+LM Studio connection fields.
 
 ---
 
 ## 2. Per-line suggestion
 
-| Command | Default keybinding |
-|---|---|
-| `annotations.aiSuggest` | `Ctrl+Alt+I` |
-| `annotations.aiSuggestWithProfile` | - |
+| Command                            | Default keybinding |
+| ---------------------------------- | ------------------ |
+| `annotations.aiSuggest`            | `Ctrl+Alt+I`       |
+| `annotations.aiSuggestWithProfile` | -                  |
 
 Place the cursor on a line, run the command. The extension sends
 the surrounding context to the configured provider and creates an
@@ -55,15 +56,15 @@ architect / custom) so the prompt is tuned to your role.
 
 ## 3. Whole-file analysis
 
-| Command | What it does |
-|---|---|
-| `annotations.aiAnalyzeFile` | Analyses the entire active file with the active profile and creates one annotation per detected issue |
-| `annotations.aiAnalyzeFileWithProfile` | Same, but you pick the profile interactively |
+| Command                                | What it does                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `annotations.aiAnalyzeFile`            | Analyses the entire active file with the active profile and creates one annotation per detected issue |
+| `annotations.aiAnalyzeFileWithProfile` | Same, but you pick the profile interactively                                                          |
 
 Use `Analyze File with Profile` when reviewing a file from a
 perspective different from your default - for instance, a
 developer analysing an architecture-sensitive module with the
-*architect* profile.
+_architect_ profile.
 
 The command shows a progress notification and inserts annotations
 in batch on completion. Each annotation is fully editable
@@ -73,9 +74,9 @@ afterwards.
 
 ## 4. Batch annotation generation
 
-| Command | Behaviour |
-|---|---|
-| `annotations.aiBatchAnnotate` | Generates multiple annotations on a selection or the whole file, scoped to one or more *focus areas* |
+| Command                       | Behaviour                                                                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `annotations.aiBatchAnnotate` | Generates multiple annotations on a selection or the whole file, scoped to one or more _focus areas_ |
 
 When invoked, the command shows a multi-select prompt:
 
@@ -87,7 +88,7 @@ When invoked, the command shows a multi-select prompt:
 - **Architecture** - design patterns, coupling, layering
 
 This is the right command when you want a focused, explicit pass
-(e.g. *security review before merge*) rather than the open-ended
+(e.g. _security review before merge_) rather than the open-ended
 analysis of `Analyze File`.
 
 The related `annotations.batchCreateMixed` lets you mix focus
@@ -97,7 +98,7 @@ areas in a single batch.
 
 ## 5. User profiles and AI prompts
 
-A *profile* shapes the prompt sent to the LLM and the default tags
+A _profile_ shapes the prompt sent to the LLM and the default tags
 and severity assigned to generated annotations. Built-in profiles:
 
 - **Developer** - bugs, fixes, performance, refactors. Severity
@@ -137,14 +138,14 @@ Manage them with `annotations.manageAIProfiles`.
 ### Code review before merge
 
 1. Open the diff or the changed file.
-2. Switch to the *Developer* profile.
-3. Run `Batch Generate Annotations` with focus *Bugs only* +
-   *Security*.
+2. Switch to the _Developer_ profile.
+3. Run `Batch Generate Annotations` with focus _Bugs only_ +
+   _Security_.
 4. Review each annotation, mark resolved when addressed.
 
 ### New-feature documentation
 
-1. Switch to the *Business Analyst* profile.
+1. Switch to the _Business Analyst_ profile.
 2. Open the relevant module.
 3. Run `Analyze File with Profile`.
 4. Convert important annotations to GitHub Issues via the panel
@@ -152,10 +153,10 @@ Manage them with `annotations.manageAIProfiles`.
 
 ### Architectural review
 
-1. Switch to the *Software Architect* profile.
+1. Switch to the _Software Architect_ profile.
 2. Open the entry point of the module.
-3. Run `Batch Generate Annotations` with focus *Architecture* +
-   *Performance*.
+3. Run `Batch Generate Annotations` with focus _Architecture_ +
+   _Performance_.
 4. Use the Linked Annotations feature to connect related findings
    across files.
 

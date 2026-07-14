@@ -7,14 +7,15 @@ extension, debugging, and submitting your first contribution.
 
 ## Prerequisites
 
-| Tool | Minimum version | Notes |
-|---|---|---|
-| VS Code | 1.95.0 | Required as the extension host |
-| Node.js | 18 LTS (20 recommended) | Use `.nvmrc`: `nvm use` |
-| npm | 9+ | Comes with Node.js |
-| git | Any recent version | |
+| Tool    | Minimum version         | Notes                          |
+| ------- | ----------------------- | ------------------------------ |
+| VS Code | 1.95.0                  | Required as the extension host |
+| Node.js | 18 LTS (20 recommended) | Use `.nvmrc`: `nvm use`        |
+| npm     | 9+                      | Comes with Node.js             |
+| git     | Any recent version      |                                |
 
 Install Node with [nvm](https://github.com/nvm-sh/nvm):
+
 ```bash
 nvm install 20
 nvm use
@@ -48,11 +49,13 @@ by VS Code when a TypeScript extension project is opened).
 ## Build
 
 Compile TypeScript sources to `out/` (development, with source maps):
+
 ```bash
 npm run compile
 ```
 
 Watch mode (recompiles on save):
+
 ```bash
 npm run watch:tsc         # TypeScript type-check pass
 npm run watch:webpack     # Webpack bundle
@@ -60,6 +63,7 @@ npm run dev               # Both in parallel (concurrently)
 ```
 
 Production bundle (minified, no source maps):
+
 ```bash
 npm run package
 ```
@@ -84,6 +88,7 @@ npm run format:check      # Check formatting without writing
 ```
 
 Run all checks in one command:
+
 ```bash
 npm run check
 ```
@@ -97,12 +102,14 @@ npm test
 ```
 
 This command:
+
 1. Runs `npm run typecheck` and `npm run compile-tests` (via `pretest`).
 2. Downloads a VS Code binary via `@vscode/test-electron`.
 3. Launches the Mocha test suite inside the VS Code host.
 4. Loads `test-fixtures/` as the test workspace.
 
 To run only unit tests (no VS Code host required):
+
 ```bash
 npm run test:unit
 ```
@@ -125,7 +132,7 @@ src/
   extension.ts            Entry point: activate(), command registration
   common/                 Shared types, localize helper
   managers/               Domain logic (annotations, profiles, kanban, links)
-  providers/              LLM adapters (UnifiedAIAdapter, ClaudeCodeProvider)
+  providers/              Active UnifiedAIAdapter/catalog plus legacy provider files pending cleanup
   tree/                   VS Code TreeView data providers
   views/                  Webview-backed panels (Kanban)
   test/                   Mocha + @vscode/test-electron test suite
@@ -140,9 +147,10 @@ test-fixtures/            Workspace used by the test host
 ## Make a change
 
 1. Create a feature branch from `main`:
-   ```bash
-   git checkout -b feat/your-feature-name
-   ```
+
+    ```bash
+    git checkout -b feat/your-feature-name
+    ```
 
 2. Make your changes. Follow the code style rules in [CONTRIBUTING.md](../CONTRIBUTING.md).
 

@@ -24,28 +24,9 @@
  * means a missing entry in `AnnotationsTreeDataProvider.getChildren()`.
  */
 import * as assert from 'assert';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as vscode from 'vscode';
 
 const EXTENSION_ID = 'JacquesGariepy.out-of-code-insights';
-
-function workspaceRoot(): string {
-    const ws = vscode.workspace.workspaceFolders;
-    assert.ok(ws && ws.length > 0, 'a workspace folder must be open during tests');
-    return ws[0].uri.fsPath;
-}
-
-function annotationsFile(): string {
-    return path.join(workspaceRoot(), '.out-of-code-insights', 'annotations.json');
-}
-
-function clearAnnotationsFile(): void {
-    const file = annotationsFile();
-    if (fs.existsSync(file)) {
-        fs.unlinkSync(file);
-    }
-}
 
 async function closeAllEditors(): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
@@ -96,7 +77,6 @@ suite('reanchor regression: annotations follow real WorkspaceEdits inside the ED
 
     setup(async () => {
         await clearAllAnnotationsViaCommand();
-        clearAnnotationsFile();
         await closeAllEditors();
     });
 

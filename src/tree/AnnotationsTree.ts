@@ -4,10 +4,9 @@
 // migrated from AnnotationManager to AnnotationStore + VisibilityFilter
 // (+ AnnotationPersistence for the drag-and-drop reorder save path).
 //
-// Display-line resolution for AnnotationV2 (which stores offsets, not
-// lines) goes through `store.getLineForAnnotation(id, openDocs)` against
-// `vscode.workspace.textDocuments`. Closed-file annotations fall back to
-// `null`, which the UI renders as `?`.
+// Display lines resolve from offsets. Expanding a closed-file group opens
+// its TextDocument in the background (never an editor), so users see an
+// exact line instead of a misleading fallback.
 
 import * as vscode from 'vscode';
 import { ANNOTATION_DRAG_MIME, parseAnnotationDragIds } from '../commands/AnnotationMoveService';
@@ -102,7 +101,27 @@ export class AnnotationsTreeDataProvider implements vscode.TreeDataProvider<vsco
             return groupedEntries.sort((left, right) => left.file.localeCompare(right.file));
         }
         if (element instanceof FileTreeItem) {
-            return element.entries.map((e) => new AnnotationTreeItem(e.annotation, e.line, resolved));
+            const first = element.entries[0]?.annotation;
+            if (first && element.entries.some(({ line }) => line === null)) {
+                try {
+                    const document = await vscode.workspace.openTextDocument(vscode.Uri.parse(first.fileUri));
+                    const entries = element.entries.map(({ annotation }) => ({
+                        annotation,
+                        line: document.positionAt(annotation.startOffset).line,
+                    }));
+                    const refreshedSiblings = resolved.map((entry) =>
+                        entry.annotation.fileUri === first.fileUri
+                            ? (entries.find(({ annotation }) => annotation.id === entry.annotation.id) ?? entry)
+                            : entry
+                    );
+                    return entries.map(
+                        (entry) => new AnnotationTreeItem(entry.annotation, entry.line, refreshedSiblings)
+                    );
+                } catch {
+                    // Deleted or inaccessible targets remain visible as L?.
+                }
+            }
+            return element.entries.map((entry) => new AnnotationTreeItem(entry.annotation, entry.line, resolved));
         }
         return [];
     }
@@ -123,6 +142,7 @@ export class FileTreeItem extends vscode.TreeItem {
         public readonly entries: ResolvedAnnotation[]
     ) {
         super(file, vscode.TreeItemCollapsibleState.Expanded);
+        this.id = `file:${file}`;
         const resolved = entries.filter(({ annotation }) => annotation.resolved).length;
         const attention = entries.filter(({ annotation }) =>
             ['warning', 'error', 'critical'].includes(annotation.severity ?? 'info')
@@ -160,6 +180,7 @@ export class AnnotationTreeItem extends vscode.TreeItem {
             .find(Boolean);
         const summary = firstLine && firstLine.length > 96 ? `${firstLine.slice(0, 93)}…` : firstLine || annotation.id;
         super(summary, vscode.TreeItemCollapsibleState.None);
+        this.id = `annotation:${annotation.id}`;
 
         const date = new Date(annotation.timestamp);
         const formattedDate = date.toLocaleDateString(undefined, {
@@ -179,15 +200,22 @@ export class AnnotationTreeItem extends vscode.TreeItem {
         // matching once their line drops out of the open-document set.
         let hasIncomingLinks = false;
         const incomingLinkers: ResolvedAnnotation[] = [];
-        if (resolvedLine !== null) {
-            for (const sib of siblings) {
-                const links = sib.annotation.linkedAnnotations ?? [];
-                if (links.some((link) => link.targetFile === annotation.file && link.targetLine === resolvedLine)) {
-                    incomingLinkers.push(sib);
-                }
+        for (const sib of siblings) {
+            const links = sib.annotation.linkedAnnotations ?? [];
+            if (
+                links.some(
+                    (link) =>
+                        link.targetId === annotation.id ||
+                        (!link.targetId &&
+                            resolvedLine !== null &&
+                            link.targetFile === annotation.file &&
+                            link.targetLine === resolvedLine)
+                )
+            ) {
+                incomingLinkers.push(sib);
             }
-            hasIncomingLinks = incomingLinkers.length > 0;
         }
+        hasIncomingLinks = incomingLinkers.length > 0;
 
         const hasLinks = hasOutgoingLinks || hasIncomingLinks;
 
@@ -218,12 +246,16 @@ export class AnnotationTreeItem extends vscode.TreeItem {
                 annotation.linkedAnnotations.length
             );
             for (const link of annotation.linkedAnnotations) {
+                const target = link.targetId
+                    ? siblings.find(({ annotation: candidate }) => candidate.id === link.targetId)
+                    : undefined;
+                const targetLine = target ? target.line : link.targetId ? null : link.targetLine;
                 tooltipContent += loc(
                     'tooltipLinkItem',
                     `  • {0} → {1}:{2}\n`,
                     link.relationship || loc('related', 'related'),
-                    link.targetFile,
-                    link.targetLine
+                    target?.annotation.file ?? link.targetFile,
+                    targetLine === null ? '?' : targetLine + 1
                 );
             }
         }
@@ -232,7 +264,11 @@ export class AnnotationTreeItem extends vscode.TreeItem {
             tooltipContent += loc('tooltipIncomingLinks', `**Incoming Links:** {0}\n`, incomingLinkers.length);
             for (const source of incomingLinkers) {
                 const link = source.annotation.linkedAnnotations?.find(
-                    (l) => l.targetFile === annotation.file && l.targetLine === resolvedLine
+                    (candidate) =>
+                        candidate.targetId === annotation.id ||
+                        (!candidate.targetId &&
+                            candidate.targetFile === annotation.file &&
+                            candidate.targetLine === resolvedLine)
                 );
                 const sourceLineLabel = source.line === null ? '?' : String(source.line + 1);
                 tooltipContent += loc(

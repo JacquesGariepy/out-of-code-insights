@@ -59,9 +59,11 @@ controls.
 
 ## Next focused releases
 
-- **1.4.4:** deterministic annotation-aware copy/paste through
-  `DocumentPasteEditProvider`, plus conflict-safe persistence.
-- **1.4.5:** developer review inbox, changed-file/current-diff filters and
+- **1.4.4:** Documentation Studio, guided source-comment conversion, complete
+  menu discoverability and transactional integrity hardening.
+- **1.4.5:** deterministic annotation-aware copy/paste through
+  `DocumentPasteEditProvider`, plus cross-process revision safety.
+- **1.4.6:** developer review inbox, changed-file/current-diff filters and
   annotation health diagnostics.
 - Desktop **0.1.2:** direct manipulation from the tree, drawer, detail view and
   Kanban into the code preview.

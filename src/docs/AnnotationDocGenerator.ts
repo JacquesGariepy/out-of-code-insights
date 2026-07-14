@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //
-// Pure documentation generator: projects the annotation set into a
-// DocFX-compatible Markdown site. No vscode runtime dependency — the command
+// Pure documentation generator: projects the annotation set into a portable
+// Markdown documentation set. No vscode runtime dependency — the command
 // layer resolves display lines / anchored source text and writes the
 // returned files to disk.
 //
@@ -78,11 +78,9 @@ export interface DocGenOptions {
     includeAuthored?: boolean;
     /** Bucket label for annotations without tags. Default: "untagged". */
     untaggedLabel?: string;
-    /**
-     * Prepend a YAML front-matter block (`title:`) to every generated page —
-     * what DocFX (and most static site generators) use for page metadata.
-     * Default: false (GitHub renders front matter as a visible table).
-     */
+    /** Prepend a YAML page-metadata block (`title:`). Default: false. */
+    pageMetadata?: boolean;
+    /** @deprecated Compatibility input for workspaces created before pageMetadata. */
     frontMatter?: boolean;
 }
 
@@ -94,7 +92,7 @@ interface ResolvedOptions extends DocGenOptions {
     includeInventory: boolean;
     includeAuthored: boolean;
     untaggedLabel: string;
-    frontMatter: boolean;
+    pageMetadata: boolean;
 }
 
 function resolveOptions(options: DocGenOptions): ResolvedOptions {
@@ -109,7 +107,7 @@ function resolveOptions(options: DocGenOptions): ResolvedOptions {
             options.untaggedLabel && options.untaggedLabel.trim().length > 0
                 ? options.untaggedLabel.trim()
                 : 'untagged',
-        frontMatter: options.frontMatter ?? false,
+        pageMetadata: options.pageMetadata ?? options.frontMatter ?? false,
     };
 }
 
@@ -179,18 +177,26 @@ export function extractTitle(message: string): { title: string; body: string } {
 /**
  * Stateful detector for "protected" Markdown regions that generator passes
  * must never rewrite: fenced code blocks (``` / ~~~) and display-math blocks
- * ($$ ... $$, arXiv/GitHub/DocFX-math style). A single-line `$$ ... $$` does
+ * (`$$ ... $$`, a widely supported block-math style). A single-line block does
  * not open a block.
  */
 function createProtectedRegionTracker(): (line: string) => boolean {
-    let inFence = false;
+    let fenceCharacter = '';
+    let fenceLength = 0;
     let inMath = false;
     return (line: string): boolean => {
-        if (!inMath && /^\s*(```|~~~)/.test(line)) {
-            inFence = !inFence;
+        if (fenceCharacter) {
+            const closing = new RegExp(`^\\s{0,3}${fenceCharacter}{${fenceLength},}\\s*$`);
+            if (closing.test(line)) {
+                fenceCharacter = '';
+                fenceLength = 0;
+            }
             return true;
         }
-        if (inFence) {
+        const opening = !inMath ? /^\s{0,3}(`{3,}|~{3,})/.exec(line) : null;
+        if (opening) {
+            fenceCharacter = opening[1][0];
+            fenceLength = opening[1].length;
             return true;
         }
         if (/^\s*\$\$/.test(line)) {
@@ -234,17 +240,60 @@ export function demoteHeadings(content: string, delta: number): string {
 function sourceLink(a: DocAnnotation, prefix: string): string {
     const lineSuffix = a.line >= 0 ? `#L${a.line + 1}` : '';
     const display = a.line >= 0 ? `${a.file}:${a.line + 1}` : a.file;
-    return `[${escapeCell(display)}](<${prefix}${a.file}${lineSuffix}>)`;
+    const normalized = a.file.replace(/\\/g, '/');
+    const segments = normalized.split('/');
+    if (
+        !normalized ||
+        normalized.startsWith('/') ||
+        /^[A-Za-z]:/.test(normalized) ||
+        segments.some(
+            (segment) =>
+                !segment ||
+                segment === '.' ||
+                segment === '..' ||
+                [...segment].some((character) => {
+                    const codePoint = character.codePointAt(0) ?? 0;
+                    return codePoint <= 31 || codePoint === 127;
+                })
+        )
+    ) {
+        return inlineCode(display);
+    }
+    const encoded = segments.map((segment) => encodeURIComponent(segment)).join('/');
+    const label = display.replace(/([\\[\]|])/g, '\\$1');
+    return `[${label}](<${prefix}${encoded}${lineSuffix}>)`;
 }
 
 /** Anchor id used to deep-link an annotation inside the generated pages. */
 function anchorId(a: Pick<DocAnnotation, 'id'>): string {
-    return `ann-${a.id}`;
+    const candidate = `ann-${a.id}`;
+    if (/^[A-Za-z][A-Za-z0-9_.:-]*$/.test(candidate)) {
+        return candidate;
+    }
+    const readable = fileSlug(a.id).slice(0, 48) || 'annotation';
+    return `ann-${readable}-${stablePathSuffix(a.id)}`;
+}
+
+function inlineCode(value: string): string {
+    const longest = Math.max(0, ...[...value.matchAll(/`+/g)].map((match) => match[0].length));
+    const fence = '`'.repeat(longest + 1);
+    const padded = /^\s|\s$|^`|`$/.test(value) ? ` ${value} ` : value;
+    return `${fence}${padded}${fence}`;
 }
 
 /** URL-safe page slug for a workspace-relative file path. */
 export function fileSlug(file: string): string {
     return file.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/** Small deterministic suffix used only when two source paths collapse to the same slug. */
+function stablePathSuffix(file: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < file.length; i++) {
+        hash ^= file.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(36).padStart(7, '0').slice(-7);
 }
 
 function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
@@ -265,12 +314,12 @@ function sortedAnnotations(annotations: DocAnnotation[]): DocAnnotation[] {
     return [...annotations].sort((x, y) => x.file.localeCompare(y.file) || x.line - y.line || x.id.localeCompare(y.id));
 }
 
-function pageHeader(title: string, options: Pick<ResolvedOptions, 'generatedAt' | 'frontMatter'>): string {
+function pageHeader(title: string, options: Pick<ResolvedOptions, 'generatedAt' | 'pageMetadata'>): string {
     const stamp = options.generatedAt ? `\n> Generated on ${options.generatedAt} by Out-of-Code Insights.\n` : '\n';
-    const yaml = options.frontMatter
+    const metadata = options.pageMetadata
         ? `---\ntitle: "${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\n---\n\n`
         : '';
-    return `${yaml}# ${title}\n${stamp}\n`;
+    return `${metadata}# ${title}\n${stamp}\n`;
 }
 
 function tagsOf(a: DocAnnotation, untaggedLabel: string): string[] {
@@ -377,6 +426,7 @@ export function buildApiModel(
     const docAnnotations = sortedAnnotations(annotations).filter((a) => docRoleOf(a, tagPrefix) !== null);
     const guides: DocEntry[] = [];
     const pages: ApiPageModel[] = [];
+    const usedPageSlugs = new Set<string>();
     const byFile = groupBy(
         docAnnotations.filter((a) => docRoleOf(a, tagPrefix) !== 'guide'),
         (a) => a.file
@@ -389,9 +439,23 @@ export function buildApiModel(
     }
 
     for (const [file, anns] of byFile) {
+        const baseSlug = fileSlug(file) || 'annotation';
+        let pageSlug = baseSlug;
+        if (usedPageSlugs.has(pageSlug.toLowerCase())) {
+            const suffix = stablePathSuffix(file);
+            pageSlug = `${baseSlug}-${suffix}`;
+            let counter = 2;
+            while (usedPageSlugs.has(pageSlug.toLowerCase())) {
+                pageSlug = `${baseSlug}-${suffix}-${counter++}`;
+            }
+            warnings.push(
+                `Documentation page slug collision for "${file}"; generated "${pageSlug}.md" with a deterministic suffix`
+            );
+        }
+        usedPageSlugs.add(pageSlug.toLowerCase());
         const model: ApiPageModel = {
             file,
-            page: `${apiFolder}/${fileSlug(file)}.md`,
+            page: `${apiFolder}/${pageSlug}.md`,
             module: null,
             classes: [],
             functions: [],
@@ -504,7 +568,15 @@ function signatureBlock(a: DocAnnotation): string[] {
     if (text.length === 0) {
         return [];
     }
-    return ['```' + (a.language ?? ''), text, '```', ''];
+    return [...fencedBlock(text, a.language), ''];
+}
+
+function fencedBlock(code: string, language?: string): string[] {
+    const normalized = code.replace(/\r\n?/g, '\n').trimEnd();
+    const longest = Math.max(0, ...[...normalized.matchAll(/`+/g)].map((match) => match[0].length));
+    const fence = '`'.repeat(Math.max(3, longest + 1));
+    const safeLanguage = language && /^[A-Za-z0-9_+.-]{1,40}$/.test(language) ? language : '';
+    return [`${fence}${safeLanguage}`, normalized, fence];
 }
 
 function renderBody(entry: DocEntry, page: string, delta: number, ctx: RenderContext): string[] {
@@ -527,9 +599,7 @@ function renderExample(example: DocEntry, page: string, level: number, ctx: Rend
     out.push(...renderBody(example, page, level, ctx));
     const snippet = example.annotation.snippet;
     if (snippet && snippet.code.trim().length > 0) {
-        out.push('```' + (snippet.language || ''));
-        out.push(snippet.code.replace(/\r\n/g, '\n').trimEnd());
-        out.push('```');
+        out.push(...fencedBlock(snippet.code, snippet.language));
         out.push('');
     }
     return out;
@@ -561,6 +631,12 @@ function renderApiPage(model: ApiPageModel, ctx: RenderContext): string {
     out.push(`*File*: \`${model.file}\``);
     out.push('');
     if (model.module) {
+        const prefix = ctx.options.sourceLinkPrefix ?? '';
+        out.push(`<a id="${anchorId(model.module.annotation)}"></a>`);
+        out.push('');
+        out.push(`*Source*: ${sourceLink(model.module.annotation, '../' + prefix)}`);
+        out.push('');
+        out.push(...signatureBlock(model.module.annotation));
         out.push(...renderBody(model.module, model.page, 1, ctx));
         for (const example of model.module.examples) {
             out.push(...renderExample(example, model.page, 2, ctx));
@@ -716,16 +792,14 @@ function renderAnnotationDetail(a: DocAnnotation, prefix: string, untaggedLabel:
         lines.push('');
     }
     if (a.snippet && a.snippet.code.trim().length > 0) {
-        lines.push('```' + (a.snippet.language || ''));
-        lines.push(a.snippet.code.replace(/\r\n/g, '\n').trimEnd());
-        lines.push('```');
+        lines.push(...fencedBlock(a.snippet.code, a.snippet.language));
         lines.push('');
     }
     if (a.linkedAnnotations && a.linkedAnnotations.length > 0) {
         lines.push('**Links**:');
         lines.push('');
         for (const link of a.linkedAnnotations) {
-            const target = `[${escapeCell(link.targetFile)}:${link.targetLine + 1}](<${prefix}${link.targetFile}#L${link.targetLine + 1}>)`;
+            const target = sourceLink({ ...a, file: link.targetFile, line: link.targetLine }, prefix);
             lines.push(`- *${escapeCell(link.relationship)}* → ${target}`);
         }
         lines.push('');
@@ -799,7 +873,7 @@ function renderLinks(annotations: DocAnnotation[], options: ResolvedOptions): st
         for (const link of a.linkedAnnotations ?? []) {
             const from = `[${escapeCell(summarize(a.message))}](by-file.md#${anchorId(a)})`;
             const prefix = options.sourceLinkPrefix ?? '';
-            const to = `[${escapeCell(link.targetFile)}:${link.targetLine + 1}](<${prefix}${link.targetFile}#L${link.targetLine + 1}>)`;
+            const to = sourceLink({ ...a, file: link.targetFile, line: link.targetLine }, prefix);
             out.push(`| ${from} | ${escapeCell(link.relationship)} | ${to} |`);
         }
     }
@@ -814,7 +888,9 @@ function renderToc(pages: ApiPageModel[], guides: DocEntry[], options: ResolvedO
         out.push('  items:');
         for (const model of pages) {
             const label = model.module ? model.module.title : model.file;
-            out.push(`      - name: ${label}`);
+            // JSON double-quoted strings are valid YAML and safely preserve
+            // labels containing colons, hashes, quotes or leading scalars.
+            out.push(`      - name: ${JSON.stringify(label)}`);
             out.push(`        href: ${model.page}`);
         }
     }
@@ -849,19 +925,27 @@ export function generateDocSet(annotations: DocAnnotation[], options: DocGenOpti
     const ctx: RenderContext = { options: resolved, targets, warnings };
 
     const files = new Map<string, string>();
+    const addFile = (filePath: string, content: string): void => {
+        if (files.has(filePath)) {
+            throw new Error(
+                `Documentation output path collision at "${filePath}". Change the guide file or API folder.`
+            );
+        }
+        files.set(filePath, content);
+    };
     for (const model of pages) {
-        files.set(model.page, renderApiPage(model, ctx));
+        addFile(model.page, renderApiPage(model, ctx));
     }
     if (guides.length > 0) {
-        files.set(resolved.guideFile, renderGuidePage(guides, ctx));
+        addFile(resolved.guideFile, renderGuidePage(guides, ctx));
     }
-    files.set('toc.yml', renderToc(pages, guides, resolved));
+    addFile('toc.yml', renderToc(pages, guides, resolved));
     if (resolved.includeInventory) {
-        files.set('by-type.md', renderByType(annotations, resolved));
-        files.set('by-file.md', renderByFile(annotations, resolved));
-        files.set('links.md', renderLinks(annotations, resolved));
+        addFile('by-type.md', renderByType(annotations, resolved));
+        addFile('by-file.md', renderByFile(annotations, resolved));
+        addFile('links.md', renderLinks(annotations, resolved));
     }
     // index LAST: it reports the warnings accumulated by every other page.
-    files.set('index.md', renderIndex(annotations, resolved, pages, guides, warnings));
+    addFile('index.md', renderIndex(annotations, resolved, pages, guides, warnings));
     return files;
 }
