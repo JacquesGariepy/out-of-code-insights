@@ -2130,7 +2130,7 @@
         "typescript": "^6.0.3",
         "webpack": "^5.97.0",
         "webpack-cli": "^7.0.2",
-        "webpack-dev-server": "^5.1.0"
+        "webpack-dev-server": "^5.2.6"
     },
     "dependencies": {
         "@anthropic-ai/claude-code": "^2.1.177",
