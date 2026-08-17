@@ -7,10 +7,16 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-08-17
+
+See the [detailed 1.4.5 release notes](./docs/CHANGELOG-1.4.5.md).
+
 ### Fixed
 
 - Prevent annotations from being spuriously cloned when pasting code blocks whose line contents happen to collide with existing annotations ([#95](https://github.com/JacquesGariepy/out-of-code-insights/issues/95)).
 - Annotations shared through Git (or the sync server) now resolve on every teammate's machine: `fileUri` values recorded on another workstation are rebased onto the current workspace at load time using each annotation's relative path, so decorations attach and `navigate` no longer fails with "Unable to resolve nonexistent file" ([discussion #80](https://github.com/JacquesGariepy/out-of-code-insights/discussions/80)).
+- Integration test runs now rebuild the webpack bundle before launching the
+  extension host, so they can no longer validate a stale `dist/extension.js`.
 
 ## [1.4.4] - 2026-07-14
 

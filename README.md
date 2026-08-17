@@ -34,7 +34,21 @@ when that is the workflow you want.
 | Native VS Code experience     | Interactive Inlay Hints, gutter, CodeLens, Comments, Tree View, grouped menus, commands, and keyboard access |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
 
-## What is new in 1.4.4
+## What is new in 1.4.5
+
+- Annotations shared through Git or the sync server now resolve on every
+  teammate's workstation: file references recorded on another machine are
+  rebased onto your workspace when they load, so decorations attach and
+  **Navigate** works after a `git pull`
+  ([discussion #80](https://github.com/JacquesGariepy/out-of-code-insights/discussions/80)).
+- Pasting code that merely resembles an annotated line no longer clones the
+  annotation onto it; legitimate copy/cut/paste of annotated blocks still
+  carries annotations
+  ([#95](https://github.com/JacquesGariepy/out-of-code-insights/issues/95)).
+
+See the [complete 1.4.5 release notes](./docs/CHANGELOG-1.4.5.md).
+
+## What was new in 1.4.4
 
 - **Documentation Studio** generates managed source pages, technical documents,
   static projects, wiki packages, autonomous HTML and a constrained API
