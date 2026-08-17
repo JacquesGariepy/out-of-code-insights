@@ -1111,6 +1111,413 @@ suite('AnnotationStore — auto paste detection', () => {
         );
     });
 
+    test('pasting an unannotated code block whose line matches an annotation elsewhere does NOT clone it (issue #95)', () => {
+        const store = new AnnotationStore();
+        const doc1 = makeDoc(
+            '{\n' +
+                '  "targets": [\n' +
+                '    {\n' +
+                '      "block": "sculk_vein",\n' +
+                '      "properties": {\n' +
+                '        "down": ["true"]\n' +
+                '      }\n' +
+                '    }\n' +
+                '  ]\n' +
+                '}\n',
+            'file:///test.json'
+        );
+        const original = store.add(
+            { ...defaultDraft('file:///test.json', 'test.json'), message: '_layer 0' },
+            { line: 5 },
+            asDoc(doc1)
+        );
+
+        // doc2 is a different file with similar JSON lines but completely different context
+        const doc2Text =
+            '{\n' +
+            '  "append_models": [\n' +
+            '    {\n' +
+            '      "model": "block/exp/sculk_vein_overlay1",\n' +
+            '      "conditions": {\n' +
+            '        "type": "and",\n' +
+            '        "predicates": [\n' +
+            '          {\n' +
+            '            "type": "not",\n' +
+            '            "predicate": {\n' +
+            '              "type": "match_block",\n' +
+            '              "offset": [0,0,-1],\n' +
+            '              "block": "sculk_vein",\n' +
+            '              "properties": {\n' +
+            '                "down": ["true"]\n' +
+            '              }\n' +
+            '            }\n' +
+            '          }\n' +
+            '        ]\n' +
+            '      }\n' +
+            '    }\n' +
+            '  ]\n' +
+            '}\n';
+        const _doc2 = makeDoc(doc2Text, 'file:///sculk_vein_overlay_test.json');
+
+        // Paste an unannotated block copied from doc2 (lines with "down": ["true"] inside "type": "match_block" and "offset": [0,0,-1])
+        const pastedBlock =
+            '          {\n' +
+            '            "type": "not",\n' +
+            '            "predicate": {\n' +
+            '              "type": "match_block",\n' +
+            '              "offset": [0,0,-1],\n' +
+            '              "block": "sculk_vein",\n' +
+            '              "properties": {\n' +
+            '                "down": ["true"]\n' +
+            '              }\n' +
+            '            }\n' +
+            '          }\n';
+
+        const afterPasteDoc2Text = doc2Text + pastedBlock;
+        const afterPasteDoc2 = makeDoc(afterPasteDoc2Text, 'file:///sculk_vein_overlay_test.json', 2);
+
+        store.applyDocumentChange(
+            makeEvent(afterPasteDoc2, [
+                {
+                    range: { start: { line: 26, character: 0 }, end: { line: 26, character: 0 } },
+                    rangeOffset: doc2Text.length,
+                    rangeLength: 0,
+                    text: pastedBlock,
+                },
+            ]),
+            'sculk_vein_overlay_test.json'
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(
+            all.length,
+            1,
+            'No annotations should be created when pasting an unannotated block whose line happens to collide'
+        );
+        assert.strictEqual(all[0].id, original.id);
+        assert.strictEqual(all[0].fileUri, 'file:///test.json');
+    });
+
+    test('copy starting mid-context-line (partial first clipboard line) still clones', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('aaa\nTARGET\nzzz\n');
+        const original = store.add(defaultDraft(), { line: 1 }, asDoc(doc));
+
+        // Selection started mid-'aaa': clipboard first line is the partial tail 'a'.
+        const after = makeDoc('aaa\nTARGET\nzzz\na\nTARGET\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } },
+                    rangeOffset: 15,
+                    rangeLength: 0,
+                    text: 'a\nTARGET\n',
+                },
+            ])
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 2, 'partial edge line must not veto a legitimate clone');
+        const clone = all.find((a) => a.id !== original.id);
+        assert.ok(clone);
+        assert.strictEqual(clone.origin.kind, 'paste');
+        assert.strictEqual(clone.startOffset, 17);
+    });
+
+    test('copy ending in a whitespace-only partial last clipboard line still clones', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('aaa\nTARGET\n    zzz\n');
+        const original = store.add(defaultDraft(), { line: 1 }, asDoc(doc));
+
+        // Selection extended through the next line's indentation only:
+        // clipboard last line is '    ', which normalizes to ''.
+        const after = makeDoc('aaa\nTARGET\n    zzz\nTARGET\n    ', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } },
+                    rangeOffset: 19,
+                    rangeLength: 0,
+                    text: 'TARGET\n    ',
+                },
+            ])
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 2, 'whitespace-only trailing partial line must not veto the clone');
+        const clone = all.find((a) => a.id !== original.id);
+        assert.ok(clone);
+        assert.strictEqual(clone.origin.kind, 'paste');
+        assert.strictEqual(clone.startOffset, 19);
+    });
+
+    test('same-file copy-paste still clones after a neighbour-line edit left the stored context stale', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('aaa\nTARGET\nzzz\n');
+        const original = store.add(defaultDraft(), { line: 1 }, asDoc(doc));
+
+        // Append '2' to 'zzz': the annotation's stored contextAfter keeps the
+        // stale 'zzz' snapshot (same-line neighbour edits do not refresh it).
+        const edited = makeDoc('aaa\nTARGET\nzzz2\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(edited, [
+                {
+                    range: { start: { line: 2, character: 3 }, end: { line: 2, character: 3 } },
+                    rangeOffset: 14,
+                    rangeLength: 0,
+                    text: '2',
+                },
+            ])
+        );
+
+        // Copy the CURRENT block 'TARGET\nzzz2\n' and paste it at the end:
+        // scoring must use the live same-file neighbourhood, not the stale snapshot.
+        const after = makeDoc('aaa\nTARGET\nzzz2\nTARGET\nzzz2\n', 'file:///test.ts', 3);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } },
+                    rangeOffset: 16,
+                    rangeLength: 0,
+                    text: 'TARGET\nzzz2\n',
+                },
+            ])
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 2, 'stale stored context must not veto a same-file clone');
+        const clone = all.find((a) => a.id !== original.id);
+        assert.ok(clone);
+        assert.strictEqual(clone.origin.kind, 'paste');
+        assert.strictEqual(clone.startOffset, 16);
+    });
+
+    test('co-located companions with divergent stored contexts are cloned together', () => {
+        const store = new AnnotationStore();
+        const doc = makeDoc('aaa\nTARGET\nzzz\n');
+        store.add({ ...defaultDraft(), message: 'first' }, { line: 1 }, asDoc(doc));
+
+        // Same-line neighbour edit ('aaa' -> 'bbb') does not refresh the first
+        // annotation's stored context, so the second annotation captures a
+        // different snapshot at the same location.
+        const edited = makeDoc('bbb\nTARGET\nzzz\n', 'file:///test.ts', 2);
+        store.applyDocumentChange(
+            makeEvent(edited, [
+                {
+                    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } },
+                    rangeOffset: 0,
+                    rangeLength: 3,
+                    text: 'bbb',
+                },
+            ])
+        );
+        store.add({ ...defaultDraft(), message: 'second' }, { line: 1 }, asDoc(edited));
+
+        // Copy-paste the whole block: the first annotation's stale context
+        // ('aaa') mismatches inside the pasted block, but its co-located
+        // companion is compatible — both must carry over together.
+        const after = makeDoc('bbb\nTARGET\nzzz\nbbb\nTARGET\nzzz\n', 'file:///test.ts', 3);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: { start: { line: 3, character: 0 }, end: { line: 3, character: 0 } },
+                    rangeOffset: 15,
+                    rangeLength: 0,
+                    text: 'bbb\nTARGET\nzzz\n',
+                },
+            ])
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 4, 'two originals + two co-located clones');
+        assert.deepStrictEqual(
+            all
+                .filter((a) => a.origin.kind === 'paste')
+                .map((a) => a.message)
+                .sort(),
+            ['first', 'second'],
+            'compatibility is decided per source location, never per individual companion'
+        );
+    });
+
+    // Verbatim head of the sculk_vein_overlay_test.json attached to issue #95:
+    // 13 near-identical "type":"not" predicate blocks that differ only on
+    // their "offset" line, annotated on bare '{' opener lines in the video.
+    const issue95OverlayLines = [
+        '{',
+        '   "targets": [',
+        '      {',
+        '         "block": "sculk_vein",',
+        '         "properties": {',
+        '            "down": ["true"]',
+        '         }',
+        '      }',
+        '   ],',
+        '   "append_models": [',
+        '      {',
+        '         "model": "block/exp/sculk_vein_overlay0",',
+        '         "conditions": {',
+        '            "type": "and",',
+        '            "predicates": [',
+        '               {',
+        '                  "type": "match_block",',
+        '                  "offset": [-1,-1,-1],',
+        '                  "blocks": ["grass_block", "deepslate", "tuff", "sculk"]',
+        '               },',
+        '               {',
+        '                  "type": "not",',
+        '                  "predicate": {',
+        '                     "type": "match_block",',
+        '                     "offset": [-1,0,-1],',
+        '                     "block": "sculk_vein",',
+        '                     "properties": {',
+        '                        "down": ["true"]',
+        '                     }',
+        '                  }',
+        '               },',
+        '               {',
+        '                  "type": "not",',
+        '                  "predicate": {',
+        '                     "type": "match_block",',
+        '                     "offset": [-1,0,0],',
+        '                     "block": "sculk_vein",',
+        '                     "properties": {',
+        '                        "down": ["true"]',
+        '                     }',
+        '                  }',
+        '               }',
+        '            ]',
+        '         }',
+        '      }',
+        '   ]',
+        '}',
+    ];
+
+    test('issue #95 video repro: pasting the targets block into a new file clones nothing', () => {
+        const store = new AnnotationStore();
+        const overlayUri = 'file:///sculk_vein_overlay_test.json';
+        const overlayText = issue95OverlayLines.join('\n') + '\n';
+        const overlayDoc = makeDoc(overlayText, overlayUri);
+
+        // The video's pre-existing annotations sit on bare '{' opener lines.
+        store.add(
+            { ...defaultDraft(overlayUri, 'sculk_vein_overlay_test.json'), message: '__layer 0' },
+            { line: 10 },
+            asDoc(overlayDoc)
+        );
+        store.add(
+            { ...defaultDraft(overlayUri, 'sculk_vein_overlay_test.json'), message: 'tambahkan ke block' },
+            { line: 15 },
+            asDoc(overlayDoc)
+        );
+        store.add(
+            { ...defaultDraft(overlayUri, 'sculk_vein_overlay_test.json'), message: 'tidak, jika ada block' },
+            { line: 20 },
+            asDoc(overlayDoc)
+        );
+
+        // Copy lines 1-9 (the whole "targets" block, '{' openers included)
+        // and paste into a brand-new empty test.json — the video's action.
+        const pasteText = issue95OverlayLines.slice(0, 9).join('\n');
+        const testDoc = makeDoc(pasteText, 'file:///test.json', 2);
+        store.applyDocumentChange(
+            makeEvent(testDoc, [
+                {
+                    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                    rangeOffset: 0,
+                    rangeLength: 0,
+                    text: pasteText,
+                },
+            ]),
+            'test.json'
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 3, 'the pasted { opener lines must not attract any annotation clone');
+        assert.ok(
+            all.every((a) => a.fileUri === overlayUri && a.origin.kind !== 'paste'),
+            'every annotation stays in the overlay file'
+        );
+    });
+
+    test('issue #95 same-file: pasting a near-identical repeated block does not clone the annotation', () => {
+        const store = new AnnotationStore();
+        const overlayUri = 'file:///sculk_vein_overlay_test.json';
+        const overlayText = issue95OverlayLines.join('\n') + '\n';
+        const overlayDoc = makeDoc(overlayText, overlayUri);
+
+        // Annotation on the '{' opening the FIRST "not" predicate (line 20).
+        // The second predicate block (lines 31-41) is identical except for
+        // its "offset" line, which sits 4 lines deep — beyond the persisted
+        // 3-line context snapshot.
+        const original = store.add(
+            { ...defaultDraft(overlayUri, 'sculk_vein_overlay_test.json'), message: 'predicate note' },
+            { line: 20 },
+            asDoc(overlayDoc)
+        );
+
+        const pasteText = issue95OverlayLines.slice(31, 42).join('\n') + '\n';
+        const after = makeDoc(overlayText + pasteText, overlayUri, 2);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: {
+                        start: { line: issue95OverlayLines.length, character: 0 },
+                        end: { line: issue95OverlayLines.length, character: 0 },
+                    },
+                    rangeOffset: overlayText.length,
+                    rangeLength: 0,
+                    text: pasteText,
+                },
+            ]),
+            'sculk_vein_overlay_test.json'
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 1, 'a sibling predicate block differing only by its offset line must not clone');
+        assert.strictEqual(all[0].id, original.id);
+    });
+
+    test('issue #95 same-file positive control: pasting the annotated block itself still clones', () => {
+        const store = new AnnotationStore();
+        const overlayUri = 'file:///sculk_vein_overlay_test.json';
+        const overlayText = issue95OverlayLines.join('\n') + '\n';
+        const overlayDoc = makeDoc(overlayText, overlayUri);
+
+        const original = store.add(
+            { ...defaultDraft(overlayUri, 'sculk_vein_overlay_test.json'), message: 'predicate note' },
+            { line: 20 },
+            asDoc(overlayDoc)
+        );
+
+        // Copy the annotated predicate block (lines 20-30) and paste it at
+        // the end: this is the legitimate duplicate-a-predicate workflow.
+        const pasteText = issue95OverlayLines.slice(20, 31).join('\n') + '\n';
+        const after = makeDoc(overlayText + pasteText, overlayUri, 2);
+        store.applyDocumentChange(
+            makeEvent(after, [
+                {
+                    range: {
+                        start: { line: issue95OverlayLines.length, character: 0 },
+                        end: { line: issue95OverlayLines.length, character: 0 },
+                    },
+                    rangeOffset: overlayText.length,
+                    rangeLength: 0,
+                    text: pasteText,
+                },
+            ]),
+            'sculk_vein_overlay_test.json'
+        );
+
+        const all = store.getAll();
+        assert.strictEqual(all.length, 2, 'copying the annotated block itself must still carry the annotation');
+        const clone = all.find((a) => a.id !== original.id);
+        assert.ok(clone);
+        assert.strictEqual(clone.origin.kind, 'paste');
+        assert.strictEqual(clone.message, 'predicate note');
+        assert.strictEqual(clone.startOffset, overlayText.length);
+    });
+
     test('cut → cross-file paste moves every co-located annotation and updates file metadata', () => {
         const store = new AnnotationStore();
         const source = makeDoc('aaa\nTARGET\nzzz\n', 'file:///source.ts');

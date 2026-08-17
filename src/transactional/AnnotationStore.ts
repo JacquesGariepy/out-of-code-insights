@@ -23,7 +23,14 @@
 
 import { randomUUID } from 'crypto';
 import type * as vscode from 'vscode';
-import { captureAnchor, EMPTY_LINE_HASH, findAnchor, hashLine, type TextDocumentLike } from '../anchoring/anchor';
+import {
+    captureAnchor,
+    EMPTY_LINE_HASH,
+    findAnchor,
+    hashLine,
+    normalizeLine,
+    type TextDocumentLike,
+} from '../anchoring/anchor';
 import { TypedEventEmitter } from './internal/event-emitter';
 import {
     ANNOTATION_SCHEMA_VERSION,
@@ -1964,7 +1971,8 @@ export class AnnotationStore {
         }
 
         let cursor = 0;
-        for (const lineText of lines) {
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            const lineText = lines[lineIndex];
             const lineOffset = baseOffset + cursor;
             const lineHashValue = hashLine(lineText);
             cursor += lineText.length + 1; // +1 for '\n' splitter
@@ -2090,7 +2098,7 @@ export class AnnotationStore {
             // every annotation co-located on the selected source line, while
             // keeping identical lines elsewhere as separate ambiguous groups.
             if (allowClone) {
-                const matchingSources = pasteSources.filter(
+                const rawMatchingSources = pasteSources.filter(
                     (sourceAnn) =>
                         sourceAnn.state === 'active' &&
                         sourceAnn.lineHash === lineHashValue &&
@@ -2103,13 +2111,17 @@ export class AnnotationStore {
                         )
                 );
 
+                if (rawMatchingSources.length === 0) {
+                    continue;
+                }
+
                 // Missed/fragmented multi-line cut safety net. Some editor
                 // hosts can deliver a block deletion in a shape that leaves
                 // the source active even though its stored hash no longer
                 // exists at its live offset. Treat that stale active source
                 // as a move, not a copy, or the paste would create a fresh-id
                 // duplicate while leaving the original behind.
-                const displacedSources = matchingSources.filter(
+                const displacedSources = rawMatchingSources.filter(
                     (sourceAnn) =>
                         sourceAnn.fileUri === document.uri.toString() &&
                         !this.activeAnnotationMatchesDocumentLine(sourceAnn.id, document)
@@ -2135,20 +2147,184 @@ export class AnnotationStore {
                     continue;
                 }
 
-                const primary = matchingSources[0];
-                if (primary) {
-                    const companions = matchingSources.filter(
-                        (sourceAnn) =>
-                            sourceAnn.fileUri === primary.fileUri &&
-                            sourceAnn.startOffset === primary.startOffset &&
-                            sourceAnn.endOffset === primary.endOffset
-                    );
-                    for (const sourceAnn of companions) {
-                        this.cloneAsPaste(sourceAnn, document, lineOffset, relativeFilePath);
+                // Filter candidates by context compatibility with the pasted
+                // block, deciding per source LOCATION rather than per
+                // annotation: co-located companions can carry context
+                // snapshots captured at different times, and splitting them
+                // would break the "clone every annotation co-located on the
+                // source line" invariant. A location survives when ANY of its
+                // annotations is compatible; its score is the best member's.
+                const locationGroups = new Map<string, AnnotationV2[]>();
+                for (const sourceAnn of rawMatchingSources) {
+                    const key = `${sourceAnn.fileUri}:${String(sourceAnn.startOffset)}:${String(sourceAnn.endOffset)}`;
+                    const group = locationGroups.get(key) ?? [];
+                    group.push(sourceAnn);
+                    locationGroups.set(key, group);
+                }
+
+                const scoredGroups: Array<{ annotations: AnnotationV2[]; score: number }> = [];
+                for (const group of locationGroups.values()) {
+                    let groupScore = -1;
+                    for (const sourceAnn of group) {
+                        const { contextBefore, contextAfter } = this.resolvePasteCandidateContext(
+                            sourceAnn,
+                            document,
+                            // Deep enough to reach every line of the pasted
+                            // block from the annotated line: repeated
+                            // near-identical blocks (issue #95's JSON) can
+                            // differ only on a line beyond the persisted
+                            // 3-line snapshot.
+                            Math.min(16, Math.max(3, lineIndex, lines.length - 1 - lineIndex))
+                        );
+                        const context = this.scorePasteCandidateContext(contextBefore, contextAfter, lines, lineIndex);
+                        if (context.compatible && context.score > groupScore) {
+                            groupScore = context.score;
+                        }
                     }
+                    if (groupScore >= 0) {
+                        scoredGroups.push({ annotations: group, score: groupScore });
+                    }
+                }
+
+                if (scoredGroups.length === 0) {
+                    continue;
+                }
+
+                let maxScore = -1;
+                for (const group of scoredGroups) {
+                    if (group.score > maxScore) {
+                        maxScore = group.score;
+                    }
+                }
+                const bestLocationGroups = scoredGroups.filter((group) => group.score === maxScore);
+
+                // If multiple distinct source locations are tied (e.g. single-line paste matching multiple annotated lines),
+                // only clone if all tied candidates share the same file and message (e.g. multi-paste in the same file).
+                if (bestLocationGroups.length > 1) {
+                    const firstAnn = bestLocationGroups[0].annotations[0];
+                    const allShareSameIdentity = bestLocationGroups.every((group) =>
+                        group.annotations.every(
+                            (sourceAnn) =>
+                                sourceAnn.fileUri === firstAnn.fileUri && sourceAnn.message === firstAnn.message
+                        )
+                    );
+                    if (!allShareSameIdentity) {
+                        continue;
+                    }
+                }
+
+                for (const sourceAnn of bestLocationGroups[0].annotations) {
+                    this.cloneAsPaste(sourceAnn, document, lineOffset, relativeFilePath);
                 }
             }
         }
+    }
+
+    /**
+     * Context to compare a paste-clone candidate against. Same-file sources
+     * still anchored to their live line are scored against the document's
+     * CURRENT neighbourhood, recaptured at `contextSize` depth: the stored
+     * snapshot can be stale (neighbour-line edits do not refresh stored
+     * context) and a stale line must not veto a legitimate clone, while a
+     * deeper live capture lets the score reach a discriminating line that
+     * sits beyond the persisted 3-line snapshot. Cross-file sources fall
+     * back to the stored snapshot — the other file's current text is not
+     * available here.
+     */
+    private resolvePasteCandidateContext(
+        sourceAnn: AnnotationV2,
+        document: vscode.TextDocument,
+        contextSize: number
+    ): { contextBefore: readonly string[]; contextAfter: readonly string[] } {
+        if (sourceAnn.fileUri === document.uri.toString()) {
+            const documentLength = document.getText().length;
+            if (sourceAnn.startOffset >= 0 && sourceAnn.startOffset <= documentLength) {
+                const line = document.positionAt(sourceAnn.startOffset).line;
+                if (hashLine(document.lineAt(line).text) === sourceAnn.lineHash) {
+                    const captured = captureAnchor(document as unknown as TextDocumentLike, line, {
+                        contextSize,
+                        walkForward: 0,
+                        walkBackward: 0,
+                    });
+                    return { contextBefore: captured.contextBefore, contextAfter: captured.contextAfter };
+                }
+            }
+        }
+        return { contextBefore: sourceAnn.contextBefore ?? [], contextAfter: sourceAnn.contextAfter ?? [] };
+    }
+
+    /**
+     * Score how well the pasted block's own lines agree with an annotation's
+     * context (live or stored — see resolvePasteCandidateContext). Runs
+     * INSIDE the paste text, not the destination document: for a genuine
+     * copy of the annotated neighbourhood the block's neighbours ARE the
+     * annotation's neighbours, while a hash collision from unrelated code
+     * that merely shares near-identical lines (issue #95) disagrees
+     * somewhere in the surrounding lines.
+     *
+     * Unlike findAnchor's threshold scoring, a full interior line that
+     * contradicts the context is fatal (`compatible: false`) — the paste
+     * block carries the complete neighbourhood, so a real mismatch means
+     * "different code". The block's edge lines are exempt from the hard
+     * fail: the first/last clipboard lines are routinely partial (selection
+     * started or ended mid-line), so they score only on an exact match and
+     * stay neutral when they are a suffix/prefix of the expected line —
+     * including the empty remainder after a trailing newline.
+     */
+    private scorePasteCandidateContext(
+        ctxBefore: readonly string[],
+        ctxAfter: readonly string[],
+        lines: readonly string[],
+        lineIndex: number
+    ): { compatible: boolean; score: number } {
+        let score = 0;
+
+        // Check preceding context lines in the pasted block
+        for (let d = 1; d <= ctxBefore.length; d++) {
+            const pasteIdx = lineIndex - d;
+            if (pasteIdx < 0) {
+                break;
+            }
+            const expected = ctxBefore[ctxBefore.length - d];
+            if (expected === undefined || expected === '') {
+                continue;
+            }
+            const actual = normalizeLine(lines[pasteIdx]);
+            if (actual === expected) {
+                score += 2;
+                continue;
+            }
+            // First clipboard line may be the tail of a mid-line selection.
+            if (pasteIdx === 0 && expected.endsWith(actual)) {
+                continue;
+            }
+            return { compatible: false, score: 0 };
+        }
+
+        // Check succeeding context lines in the pasted block
+        for (let d = 1; d <= ctxAfter.length; d++) {
+            const pasteIdx = lineIndex + d;
+            if (pasteIdx >= lines.length) {
+                break;
+            }
+            const expected = ctxAfter[d - 1];
+            if (expected === undefined || expected === '') {
+                continue;
+            }
+            const actual = normalizeLine(lines[pasteIdx]);
+            if (actual === expected) {
+                score += 2;
+                continue;
+            }
+            // Last clipboard line may be the head of a mid-line selection,
+            // or the empty remainder created by a trailing newline.
+            if (pasteIdx === lines.length - 1 && expected.startsWith(actual)) {
+                continue;
+            }
+            return { compatible: false, score: 0 };
+        }
+
+        return { compatible: true, score };
     }
 
     private activeAnnotationMatchesDocumentLine(id: string, document: vscode.TextDocument): boolean {

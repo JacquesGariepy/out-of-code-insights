@@ -7,6 +7,10 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevent annotations from being spuriously cloned when pasting code blocks whose line contents happen to collide with existing annotations ([#95](https://github.com/JacquesGariepy/out-of-code-insights/issues/95)).
+
 ## [1.4.4] - 2026-07-14
 
 See the [detailed 1.4.4 release notes](./docs/CHANGELOG-1.4.4.md) for the
