@@ -69,6 +69,7 @@ test-fixtures/lot13-*
 test-fixtures/lot14-*
 .lot14-data-*
 test-fixtures/lot15-*.md
+test-fixtures/lot18-*
 test-fixtures/CLAUDE.md
 test-fixtures/AGENTS.md
 .jackaiagent/

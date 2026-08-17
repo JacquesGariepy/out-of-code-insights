@@ -72,7 +72,10 @@ increment.
 4. Enter a note. It appears in the editor and in the Out-of-Code Insights view.
 5. Open the annotations panel to filter, discuss, prioritize, or move the item.
 6. Commit `.out-of-code-insights/annotations.json` only when you want to share
-   annotations with the repository.
+   annotations with the repository. Annotations committed by a teammate are
+   rebased onto your workspace automatically when they load: the file records
+   each author's absolute path, and the extension resolves every entry against
+   your own workspace root using its relative path.
 
 If an annotation loses its target, place the cursor on the intended line and
 run **Re-anchor Annotation to Current Cursor**. For troubleshooting, run

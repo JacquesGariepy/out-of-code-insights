@@ -84,7 +84,14 @@ export class AnnotationSyncService {
     constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly store: AnnotationStore,
-        private readonly persistence: AnnotationPersistence
+        private readonly persistence: AnnotationPersistence,
+        /**
+         * Rebases annotation URIs authored on another workstation onto the
+         * current workspace before a pulled envelope replaces the store
+         * (see AnnotationRehoming). Optional so tests without a workspace
+         * can construct the service unchanged.
+         */
+        private readonly rehomeEnvelope?: (envelope: AnnotationStoreFileV2) => AnnotationStoreFileV2
     ) {
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 90);
         this.statusBarItem.command = 'annotations.syncNow';
@@ -404,7 +411,7 @@ export class AnnotationSyncService {
     private async applyRemote(state: RemoteAnnotationsState): Promise<void> {
         this.applyingRemote = true;
         try {
-            this.store.deserialize(state.envelope);
+            this.store.deserialize(this.rehomeEnvelope ? this.rehomeEnvelope(state.envelope) : state.envelope);
             await this.persistence.save(this.store.serialize());
             // Refresh every store consumer (tree, decorations mirror,
             // CodeLens) off the regular change event.

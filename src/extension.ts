@@ -28,6 +28,7 @@ import { initializeLogger, getLogger } from './utils/logger';
 // ── Lot 5 R2 — new transactional stack ─────────────────────────────────────
 import { AnnotationStore } from './transactional/AnnotationStore';
 import { AnnotationPersistence, DEFAULT_ANNOTATION_FILE_RELATIVE_PATH } from './transactional/AnnotationPersistence';
+import { rehomeAnnotationsPayload } from './transactional/AnnotationRehoming';
 import { AnnotationSaveCoordinator } from './transactional/AnnotationSaveCoordinator';
 import { AnnotationWriteFingerprintTracker } from './transactional/AnnotationWriteFingerprint';
 import type { AnnotationStoreFileV2, AnnotationV2 } from './transactional/types';
@@ -916,6 +917,31 @@ function configuredAnnotationPath(workspaceFolder: vscode.WorkspaceFolder): stri
     return candidate;
 }
 
+/**
+ * Rebase annotations authored on another workstation — absolute fileUri
+ * pointing outside this workspace, e.g. an annotations.json committed to Git
+ * by a teammate — onto the current workspace folder using their persisted
+ * relative path. Applied to every deserialization source: activation load,
+ * external file-watcher reloads, and remote sync pulls.
+ */
+function rehomeLoadedAnnotations(
+    payload: AnnotationStoreFileV2,
+    workspaceFolder: vscode.WorkspaceFolder,
+    logger: ActivationLogger,
+    source: string
+): AnnotationStoreFileV2 {
+    const { payload: rehomed, rehomedCount } = rehomeAnnotationsPayload(payload, {
+        workspaceUri: workspaceFolder.uri.toString(),
+        toUriString: (relativePath) => vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split('/')).toString(),
+    });
+    if (rehomedCount > 0) {
+        logger.info(
+            `AnnotationStore: rebased ${String(rehomedCount)} annotation URI(s) from another workspace onto this one (${source})`
+        );
+    }
+    return rehomed;
+}
+
 async function bootstrapTransactionalStack(context: vscode.ExtensionContext, logger: ActivationLogger): Promise<void> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 
@@ -925,7 +951,7 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
         annotationPersistence = new AnnotationPersistence(workspaceFolder, configuredAnnotationPath(workspaceFolder));
         try {
             const payload = await annotationPersistence.load();
-            annotationStore.deserialize(payload);
+            annotationStore.deserialize(rehomeLoadedAnnotations(payload, workspaceFolder, logger, 'activation load'));
             logger.info(`AnnotationStore: loaded ${String(payload.annotations.length)} annotation(s) from v2 envelope`);
         } catch (err) {
             // Bad/missing/legacy envelope: start empty so the runtime stays
@@ -1132,7 +1158,7 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
                 if (writeFingerprints.isInternalEcho(payload)) {
                     return;
                 }
-                annotationStore.deserialize(payload);
+                annotationStore.deserialize(rehomeLoadedAnnotations(payload, watchedFolder, logger, 'external reload'));
                 sourceConversionUndoJournal.clear();
                 writeFingerprints.observeExternal(payload);
                 annotationStore.notifyChanged();
@@ -1288,8 +1314,11 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     // service stays inert (hidden status bar item, no network) while
     // `annotation.sync.serverUrl` is empty. `start()` performs the one-time
     // activation pull when `annotation.sync.auto` is enabled.
-    if (annotationStore && annotationPersistence) {
-        annotationSyncService = new AnnotationSyncService(context, annotationStore, annotationPersistence);
+    if (annotationStore && annotationPersistence && workspaceFolder) {
+        const syncFolder = workspaceFolder;
+        annotationSyncService = new AnnotationSyncService(context, annotationStore, annotationPersistence, (envelope) =>
+            rehomeLoadedAnnotations(envelope, syncFolder, logger, 'remote sync pull')
+        );
         context.subscriptions.push(annotationSyncService);
         annotationSyncService.start().catch((err: unknown) => {
             logger.error('AnnotationSyncService.start failed', err);

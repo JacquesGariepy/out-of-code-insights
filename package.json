@@ -2088,7 +2088,7 @@
         "format:check": "prettier --check \"src/**/*.{ts,json}\" \"*.{json,md}\"",
         "typecheck": "tsc --noEmit",
         "check": "npm run typecheck && npm run lint:ci && npm run format:check",
-        "pretest": "npm run typecheck && npm run compile-tests",
+        "pretest": "npm run typecheck && npm run compile && npm run compile-tests",
         "compile-tests": "tsc -p ./",
         "test": "node ./out/test/runTest.js",
         "coverage": "c8 --reporter=text --reporter=lcov npm test",
