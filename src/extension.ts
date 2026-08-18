@@ -930,9 +930,30 @@ function rehomeLoadedAnnotations(
     logger: ActivationLogger,
     source: string
 ): AnnotationStoreFileV2 {
+    const allFolders = vscode.workspace.workspaceFolders ?? [workspaceFolder];
+    const workspaceUris = allFolders.map((f) => f.uri.toString());
+
     const { payload: rehomed, rehomedCount } = rehomeAnnotationsPayload(payload, {
         workspaceUri: workspaceFolder.uri.toString(),
-        toUriString: (relativePath) => vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split('/')).toString(),
+        workspaceUris,
+        toUriString: (relativePath) => {
+            if (allFolders.length > 1) {
+                for (const folder of allFolders) {
+                    const folderName = folder.name;
+                    const folderBasename = path.basename(folder.uri.fsPath);
+                    for (const candidate of [folderName, folderBasename]) {
+                        if (candidate && (relativePath === candidate || relativePath.startsWith(`${candidate}/`))) {
+                            const subPath = relativePath.slice(candidate.length).replace(/^\/+/, '');
+                            if (subPath.length > 0) {
+                                return vscode.Uri.joinPath(folder.uri, ...subPath.split('/')).toString();
+                            }
+                            return folder.uri.toString();
+                        }
+                    }
+                }
+            }
+            return vscode.Uri.joinPath(workspaceFolder.uri, ...relativePath.split('/')).toString();
+        },
     });
     if (rehomedCount > 0) {
         logger.info(

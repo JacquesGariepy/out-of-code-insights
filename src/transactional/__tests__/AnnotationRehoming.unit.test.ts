@@ -131,4 +131,51 @@ suite('AnnotationRehoming — rehomeAnnotationsPayload', () => {
         assert.strictEqual(result.rehomedCount, 1);
         assert.strictEqual(result.payload.annotations[0].fileUri, `${LOCAL_WORKSPACE}/src/app.ts`);
     });
+
+    test('multi-root workspace: leaves annotations in secondary workspace folders untouched (issue #100)', () => {
+        const folder1Uri = 'file:///c%3A/Users/user/MarkdownDigit';
+        const folder2Uri = 'file:///c%3A/Users/user/github/markdown-it-digit';
+        const target: RehomingTarget = {
+            workspaceUri: folder1Uri,
+            workspaceUris: [folder1Uri, folder2Uri],
+            toUriString: (relativePath) => `${folder1Uri}/${relativePath}`,
+        };
+
+        const annInFolder2 = makeAnnotation(
+            'a2',
+            `${folder2Uri}/src/index.js`,
+            'markdown-it-digit/src/index.js'
+        );
+        const payload = envelope(annInFolder2);
+        const result = rehomeAnnotationsPayload(payload, target);
+
+        assert.strictEqual(result.rehomedCount, 0, 'must not rebase annotation from secondary workspace folder');
+        assert.strictEqual(result.payload, payload, 'untouched payload returned');
+        assert.strictEqual(result.payload.annotations[0].fileUri, `${folder2Uri}/src/index.js`);
+    });
+
+    test('multi-root workspace: foreign annotation rebased onto matching secondary folder', () => {
+        const folder1Uri = 'file:///c%3A/Users/user/MarkdownDigit';
+        const folder2Uri = 'file:///c%3A/Users/user/github/markdown-it-digit';
+        const target: RehomingTarget = {
+            workspaceUri: folder1Uri,
+            workspaceUris: [folder1Uri, folder2Uri],
+            toUriString: (relativePath) => {
+                if (relativePath.startsWith('markdown-it-digit/')) {
+                    return `${folder2Uri}/${relativePath.slice('markdown-it-digit/'.length)}`;
+                }
+                return `${folder1Uri}/${relativePath}`;
+            },
+        };
+
+        const foreignAnn = makeAnnotation(
+            'a1',
+            'file:///home/teammate/repos/markdown-it-digit/src/index.js',
+            'markdown-it-digit/src/index.js'
+        );
+        const result = rehomeAnnotationsPayload(envelope(foreignAnn), target);
+
+        assert.strictEqual(result.rehomedCount, 1);
+        assert.strictEqual(result.payload.annotations[0].fileUri, `${folder2Uri}/src/index.js`);
+    });
 });

@@ -27,6 +27,12 @@ export interface RehomingTarget {
      */
     workspaceUri: string;
     /**
+     * Optional list of all workspace folder URIs in the current workspace (multi-root).
+     * If provided, annotations whose fileUri lives under ANY of these folders are
+     * recognized as local and left untouched.
+     */
+    workspaceUris?: string[];
+    /**
      * Build the canonical URI string for a workspace-relative POSIX path.
      * Production callers back this with
      * `vscode.Uri.joinPath(folder.uri, ...relativePath.split('/')).toString()`
@@ -77,12 +83,15 @@ export function sanitizeRelativeAnnotationPath(candidate: string | undefined): s
  * than dropped, so no data is lost by loading a file authored elsewhere.
  */
 export function rehomeAnnotationsPayload(payload: AnnotationStoreFileV2, target: RehomingTarget): RehomingResult {
-    const prefix = target.workspaceUri.endsWith('/') ? target.workspaceUri : `${target.workspaceUri}/`;
+    const allRoots =
+        target.workspaceUris && target.workspaceUris.length > 0 ? target.workspaceUris : [target.workspaceUri];
+    const prefixes = allRoots.map((root) => (root.endsWith('/') ? root : `${root}/`));
 
     let rehomedCount = 0;
     const annotations = payload.annotations.map((annotation): AnnotationV2 => {
         const { fileUri } = annotation;
-        if (fileUri === target.workspaceUri || fileUri.startsWith(prefix)) {
+        const isLocal = allRoots.some((root, idx) => fileUri === root || fileUri.startsWith(prefixes[idx]));
+        if (isLocal) {
             return annotation;
         }
         const relativePath = sanitizeRelativeAnnotationPath(annotation.file);

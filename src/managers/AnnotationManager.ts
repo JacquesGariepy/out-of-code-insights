@@ -1083,8 +1083,10 @@ export class AnnotationManager extends EventEmitter {
             return;
         }
 
-        const absoluteFilePath = this.getAbsolutePath(annotation.file);
-        const document = await vscode.workspace.openTextDocument(absoluteFilePath);
+        const uri = annotation.fileUri
+            ? vscode.Uri.parse(annotation.fileUri)
+            : vscode.Uri.file(this.getAbsolutePath(annotation.file));
+        const document = await vscode.workspace.openTextDocument(uri);
         this.setAnnotationLine(annotation, annotation.line - 1, document);
         await this.saveAnnotations();
         await this.refreshAnnotations();
@@ -1114,8 +1116,10 @@ export class AnnotationManager extends EventEmitter {
         const annotation = this.annotations.get(annotationId);
         if (!annotation) return;
 
-        const absoluteFilePath = this.getAbsolutePath(annotation.file);
-        const document = await vscode.workspace.openTextDocument(absoluteFilePath);
+        const uri = annotation.fileUri
+            ? vscode.Uri.parse(annotation.fileUri)
+            : vscode.Uri.file(this.getAbsolutePath(annotation.file));
+        const document = await vscode.workspace.openTextDocument(uri);
 
         if (annotation.line >= document.lineCount - 1) {
             vscode.window.showWarningMessage(
@@ -2203,13 +2207,18 @@ export class AnnotationManager extends EventEmitter {
             vscode.window.showErrorMessage(`Annotation not found for id: ${annotationId}`);
             return;
         }
-        const absoluteFilePath = this.getAbsolutePath(annotation.file);
-        const uri = vscode.Uri.file(absoluteFilePath);
-        let document = vscode.workspace.textDocuments.find((doc) => doc.uri.fsPath === uri.fsPath);
+        const uri = annotation.fileUri
+            ? vscode.Uri.parse(annotation.fileUri)
+            : vscode.Uri.file(this.getAbsolutePath(annotation.file));
+        let document = vscode.workspace.textDocuments.find(
+            (doc) => doc.uri.fsPath === uri.fsPath || doc.uri.toString() === uri.toString()
+        );
         if (!document) {
             document = await vscode.workspace.openTextDocument(uri);
         }
-        let editor = vscode.window.visibleTextEditors.find((e) => e.document.uri.fsPath === uri.fsPath);
+        let editor = vscode.window.visibleTextEditors.find(
+            (e) => e.document.uri.fsPath === uri.fsPath || e.document.uri.toString() === uri.toString()
+        );
         if (!editor) {
             editor = await vscode.window.showTextDocument(document);
         } else {
@@ -4054,7 +4063,7 @@ export class AnnotationManager extends EventEmitter {
             const wsFolders = vscode.workspace.workspaceFolders ?? [];
             if (wsFolders.length >= 1) {
                 try {
-                    const fsPath = path.join(wsFolders[0].uri.fsPath, a.file);
+                    const fsPath = this.getAbsolutePath(a.file);
                     a.fileUri = vscode.Uri.file(fsPath).toString();
                 } catch {
                     /* leave undefined */
@@ -4152,10 +4161,26 @@ export class AnnotationManager extends EventEmitter {
 
     private getAbsolutePath(relativePath: string): string {
         const workspaceFolders = vscode.workspace.workspaceFolders;
-        if (workspaceFolders && workspaceFolders.length > 0) {
-            return path.join(workspaceFolders[0].uri.fsPath, relativePath).split(path.sep).join(path.posix.sep);
+        if (!workspaceFolders || workspaceFolders.length === 0) {
+            return relativePath;
         }
-        return relativePath;
+        if (path.isAbsolute(relativePath)) {
+            return relativePath;
+        }
+        if (workspaceFolders.length > 1) {
+            const normalized = relativePath.split(path.sep).join('/');
+            for (const folder of workspaceFolders) {
+                const folderName = folder.name;
+                const folderBasename = path.basename(folder.uri.fsPath);
+                for (const candidate of [folderName, folderBasename]) {
+                    if (candidate && (normalized === candidate || normalized.startsWith(`${candidate}/`))) {
+                        const subPath = normalized.slice(candidate.length).replace(/^\/+/, '');
+                        return path.join(folder.uri.fsPath, ...subPath.split('/')).split(path.sep).join(path.posix.sep);
+                    }
+                }
+            }
+        }
+        return path.join(workspaceFolders[0].uri.fsPath, relativePath).split(path.sep).join(path.posix.sep);
     }
 
     public getAnnotationsForFile(fileName: string): Annotation[] {
