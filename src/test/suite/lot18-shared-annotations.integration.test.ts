@@ -167,4 +167,53 @@ suite('Lot 18 — teammate annotations.json rehomes onto this workspace (discuss
         assert.strictEqual(editor.selection.start.line, 1, 'the annotated line (beta line) must be selected');
         assert.strictEqual(editor.document.lineAt(editor.selection.start.line).text, 'beta line');
     });
+
+    test('navigate preserves fileUri without corrupting it when reloading annotations (issue #100)', async function () {
+        this.timeout(45000);
+
+        const subfolderUri = vscode.Uri.file(path.join(workspaceRoot(), 'subpkg', 'index.js'));
+        fs.mkdirSync(path.dirname(subfolderUri.fsPath), { recursive: true });
+        const content = 'console.log("hello");\nconsole.log("target");\n';
+        await vscode.workspace.fs.writeFile(subfolderUri, Buffer.from(content, 'utf8'));
+
+        const annotationId = 'a100-test-id-preserve-fileuri';
+        const targetLineStart = 'console.log("hello");\n'.length;
+        const envelope = {
+            schemaVersion: 2,
+            annotations: [
+                {
+                    id: annotationId,
+                    schemaVersion: 2,
+                    fileUri: subfolderUri.toString(),
+                    file: 'subpkg/index.js',
+                    startOffset: targetLineStart,
+                    endOffset: targetLineStart + 'console.log("target");'.length,
+                    lineHash: hashLine('console.log("target");'),
+                    contextBefore: ['console.log("hello");'],
+                    contextAfter: [''],
+                    state: 'active',
+                    origin: { kind: 'manual' },
+                    message: 'issue-100-preserve-target',
+                    timestamp: new Date().toISOString(),
+                },
+            ],
+        };
+        fs.writeFileSync(annotationsFilePath(), JSON.stringify(envelope, null, 2), 'utf8');
+
+        await delay(2000);
+
+        const store = api.getAnnotationStore();
+        assert.ok(store, 'annotation store must be available');
+        const item = store.getAll().find((a) => a.message === 'issue-100-preserve-target');
+        assert.ok(item, 'the annotation must be loaded into the live store');
+        assert.strictEqual(item.fileUri, subfolderUri.toString(), 'fileUri must be preserved exactly');
+
+        await vscode.commands.executeCommand('annotations.navigate', annotationId);
+        await delay(500);
+
+        const editor = vscode.window.activeTextEditor;
+        assert.ok(editor, 'navigate must open an editor for the preserved annotation');
+        assert.strictEqual(editor.document.uri.fsPath, subfolderUri.fsPath);
+        assert.strictEqual(editor.selection.start.line, 1);
+    });
 });
