@@ -55,9 +55,7 @@ export interface OpenApiContentParameterMetadata extends OpenApiInlineParameterB
 
 /** Inline parameters use exactly one serialization strategy: `schema` or `content`. */
 export type OpenApiParameterMetadata =
-    | OpenApiParameterReference
-    | OpenApiSchemaParameterMetadata
-    | OpenApiContentParameterMetadata;
+    OpenApiParameterReference | OpenApiSchemaParameterMetadata | OpenApiContentParameterMetadata;
 
 export interface OpenApiOperationMetadata {
     /** Existing annotation that owns and documents this operation. */

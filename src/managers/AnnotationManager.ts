@@ -4175,7 +4175,10 @@ export class AnnotationManager extends EventEmitter {
                 for (const candidate of [folderName, folderBasename]) {
                     if (candidate && (normalized === candidate || normalized.startsWith(`${candidate}/`))) {
                         const subPath = normalized.slice(candidate.length).replace(/^\/+/, '');
-                        return path.join(folder.uri.fsPath, ...subPath.split('/')).split(path.sep).join(path.posix.sep);
+                        return path
+                            .join(folder.uri.fsPath, ...subPath.split('/'))
+                            .split(path.sep)
+                            .join(path.posix.sep);
                     }
                 }
             }

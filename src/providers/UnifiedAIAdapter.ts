@@ -19,9 +19,7 @@ import {
 class UnsupportedAIProviderError extends Error {}
 
 export type AIProviderCredentialMutation =
-    | { kind: 'remove' }
-    | { kind: 'settings'; apiKey: string }
-    | { kind: 'secrets'; apiKey: string };
+    { kind: 'remove' } | { kind: 'settings'; apiKey: string } | { kind: 'secrets'; apiKey: string };
 
 export interface AIProviderCredentialStorage {
     readSettings(): Record<string, string> | undefined | PromiseLike<Record<string, string> | undefined>;

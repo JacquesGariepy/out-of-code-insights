@@ -141,11 +141,7 @@ suite('AnnotationRehoming — rehomeAnnotationsPayload', () => {
             toUriString: (relativePath) => `${folder1Uri}/${relativePath}`,
         };
 
-        const annInFolder2 = makeAnnotation(
-            'a2',
-            `${folder2Uri}/src/index.js`,
-            'markdown-it-digit/src/index.js'
-        );
+        const annInFolder2 = makeAnnotation('a2', `${folder2Uri}/src/index.js`, 'markdown-it-digit/src/index.js');
         const payload = envelope(annInFolder2);
         const result = rehomeAnnotationsPayload(payload, target);
 

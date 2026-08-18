@@ -2,24 +2,12 @@
 
 /** Output profiles supported by the documentation studio. */
 export type DocumentationFormat =
-    | 'markdown'
-    | 'static-site'
-    | 'wiki'
-    | 'hosted-wiki'
-    | 'ordered-wiki'
-    | 'html'
-    | 'openapi';
+    'markdown' | 'static-site' | 'wiki' | 'hosted-wiki' | 'ordered-wiki' | 'html' | 'openapi';
 
 export type BuiltInDocumentTemplateId = 'complete' | 'api-reference' | 'team-wiki' | 'knowledge-base';
 
 export type TechnicalDocumentKind =
-    | 'readme'
-    | 'changelog'
-    | 'architecture'
-    | 'adr'
-    | 'onboarding'
-    | 'runbook'
-    | 'reference';
+    'readme' | 'changelog' | 'architecture' | 'adr' | 'onboarding' | 'runbook' | 'reference';
 
 export const SUPPORTED_TECHNICAL_DOCUMENT_KINDS: readonly TechnicalDocumentKind[] = [
     'readme',

@@ -7,6 +7,15 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.6] - 2026-08-18
+
+See the [detailed 1.4.6 release notes](./docs/CHANGELOG-1.4.6.md).
+
+### Fixed
+
+- Preserve multi-root workspace `fileUri` during rehoming and navigation: in multi-folder workspaces (`.code-workspace`), annotations belonging to secondary workspace folders are no longer erroneously rebased onto the primary workspace folder when reopening the workspace, preventing navigation failures and "Unable to resolve nonexistent file" errors ([#100](https://github.com/JacquesGariepy/out-of-code-insights/issues/100)).
+- Consolidated Dependabot configuration with grouped updates to significantly reduce PR noise across the extension and MCP server ecosystems.
+
 ## [1.4.5] - 2026-08-17
 
 See the [detailed 1.4.5 release notes](./docs/CHANGELOG-1.4.5.md).

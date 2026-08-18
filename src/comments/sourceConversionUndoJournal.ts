@@ -6,11 +6,7 @@ import { sameConversionBusinessSnapshot } from './sourceConversionSnapshot';
 
 export type SourceConversionDirection = 'comments-to-annotations' | 'annotations-to-comments';
 export type SourceConversionHistoryPhase =
-    | 'applied'
-    | 'undone'
-    | 'transitioning-undo'
-    | 'transitioning-redo'
-    | 'diverged';
+    'applied' | 'undone' | 'transitioning-undo' | 'transitioning-redo' | 'diverged';
 export type SourceHistoryReason = 'undo' | 'redo';
 
 export interface AnnotationHistorySnapshot {
