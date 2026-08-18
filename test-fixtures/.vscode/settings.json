@@ -2,5 +2,14 @@
     "annotation.path": ".out-of-code-insights/annotations.json",
     "editor.formatOnPaste": false,
     "editor.formatOnType": false,
-    "workbench.localHistory.enabled": false
+    "workbench.localHistory.enabled": false,
+    "files.exclude": {
+        "lot*": true,
+        "anchoring": true,
+        "docs": true,
+        "reanchor-scenario-*": true,
+        "subpkg": true,
+        ".writer-security-tests": true,
+        "image.png": true
+    }
 }
