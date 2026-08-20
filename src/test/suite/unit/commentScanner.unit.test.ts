@@ -58,3 +58,38 @@ suite('commentScanner — markers and languages', () => {
         assert.strictEqual(m.length, 2);
     });
 });
+
+suite('commentScanner - prefixes for the widened workspace-import glob', () => {
+    test('shell dialects use # like shellscript', () => {
+        for (const languageId of ['shellscript', 'bash', 'zsh']) {
+            const matches = scanLineComments(['curl https://example.com # TODO: pin the version'], languageId);
+            assert.deepStrictEqual(
+                matches.map((m) => ({ tag: m.tag, text: m.text })),
+                [{ tag: 'todo', text: 'pin the version' }],
+                `${languageId} must scan # comments`
+            );
+        }
+    });
+
+    test('lisp-family dialects use ;', () => {
+        for (const languageId of ['clojure', 'clojurescript', 'lisp', 'scheme']) {
+            const matches = scanLineComments(['(def x 1) ; FIXME wrong default'], languageId);
+            assert.deepStrictEqual(
+                matches.map((m) => ({ tag: m.tag, text: m.text })),
+                [{ tag: 'fixme', text: 'wrong default' }],
+                `${languageId} must scan ; comments`
+            );
+        }
+    });
+
+    test('ini accepts both ; and #', () => {
+        const matches = scanLineComments(['; TODO: move to defaults', 'key = 1 # ! never lower this'], 'ini');
+        assert.deepStrictEqual(
+            matches.map((m) => ({ line: m.line, tag: m.tag, text: m.text })),
+            [
+                { line: 0, tag: 'todo', text: 'move to defaults' },
+                { line: 1, tag: 'alert', text: 'never lower this' },
+            ]
+        );
+    });
+});

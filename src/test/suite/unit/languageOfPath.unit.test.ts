@@ -48,8 +48,13 @@ suite('languageOfPath — extension to languageId', () => {
         assert.strictEqual(languageOfPath('archive.tar.gz'), DEFAULT_LANGUAGE_ID);
     });
 
+    test('maps well-known file names without extensions', () => {
+        assert.strictEqual(languageOfPath('Makefile'), 'makefile');
+        assert.strictEqual(languageOfPath('Dockerfile'), 'dockerfile');
+    });
+
     test('unknown, missing or degenerate extensions fall back to plaintext', () => {
-        assert.strictEqual(languageOfPath('Makefile'), DEFAULT_LANGUAGE_ID);
+        assert.strictEqual(languageOfPath('LICENSE'), DEFAULT_LANGUAGE_ID);
         assert.strictEqual(languageOfPath('.gitignore'), DEFAULT_LANGUAGE_ID);
         assert.strictEqual(languageOfPath('trailing.'), DEFAULT_LANGUAGE_ID);
         assert.strictEqual(languageOfPath(''), DEFAULT_LANGUAGE_ID);

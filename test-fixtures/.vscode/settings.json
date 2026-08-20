@@ -4,7 +4,6 @@
     "editor.formatOnType": false,
     "workbench.localHistory.enabled": false,
     "files.exclude": {
-        "lot*": true,
         "anchoring": true,
         "docs": true,
         "reanchor-scenario-*": true,

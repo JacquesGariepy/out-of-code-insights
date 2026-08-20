@@ -35,10 +35,16 @@ const MARKERS: MarkerSpec[] = [
     { pattern: /^(?:hack|xxx)\b:?\s*/i, tag: 'hack', severity: 'warning' },
 ];
 
+// Every languageId reachable from the workspace-import glob whose line
+// comment is not `//`. Anything absent falls back to DEFAULT_PREFIXES, so a
+// language added to the glob without an entry here would be scanned with the
+// wrong prefix and silently import nothing.
 const LINE_COMMENT_PREFIXES: Record<string, string[]> = {
     python: ['#'],
     ruby: ['#'],
     shellscript: ['#'],
+    bash: ['#'],
+    zsh: ['#'],
     yaml: ['#'],
     toml: ['#'],
     dockerfile: ['#'],
@@ -49,6 +55,11 @@ const LINE_COMMENT_PREFIXES: Record<string, string[]> = {
     sql: ['--'],
     lua: ['--'],
     haskell: ['--'],
+    clojure: [';'],
+    clojurescript: [';'],
+    lisp: [';'],
+    scheme: [';'],
+    ini: [';', '#'],
     html: ['<!--'],
     xml: ['<!--'],
     svg: ['<!--'],

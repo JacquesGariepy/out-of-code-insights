@@ -907,6 +907,11 @@ retry.
     - Enter the desired path in the **`Path to annotations file`** field. Include the file name (e.g., `annotations.json`), if you not specify the file name, the extension will use the default name (`annotations.json`).
     - Per default, the annotations file is located in the **`.out-of-code-insights/annotations.json`** directory of your project.
     - If you change the path, ensure that the directory exists and is accessible. All project using the extension will use this path after the change, else the extension will use the default path in each project.
+- **Accepted forms**:
+    - _Workspace-relative_ (default), e.g. `.out-of-code-insights/annotations.json`. The path must stay inside the workspace: `..` segments are refused.
+    - _Home-relative_, e.g. `~/Cloud/my-project/annotations.json`.
+    - _Absolute_, e.g. `D:/Sync/my-project/annotations.json` or `/home/me/Sync/my-project/annotations.json`.
+- **Keeping annotations out of the repository**: point `annotation.path` at a synced folder (Dropbox, OneDrive, iCloud, Syncthing…) to keep personal notes outside version control while sharing them across machines. The extension watches that file and hot-reloads the annotations when your sync client updates it. Symbolic links, junctions and reparse points on the target are still refused, and writes remain atomic.
 
 ### Default Severity Setting
 
@@ -1027,7 +1032,7 @@ You can customize Out-of-Code Insights using the following settings (available i
 - **annotation.codelens.showCommands**: Show or hide commands in CodeLens.
 - **annotation.github.repository**: GitHub repository (format: `owner/repo`) for creating issues from annotations.
 - **annotation.enableAiSuggest**: Enable or disable the AI Suggest Annotation feature.
-- **annotation.path**: Custom path to the annotations file or directory.
+- **annotation.path**: Custom path to the annotations file or directory (supports workspace-relative paths, home-relative paths with `~`, and explicit absolute paths for multi-machine cloud sync).
 - **annotation.defaultSeverity**: Default severity for new annotations (`info`, `warning`, `error`).
 
 ---

@@ -3,21 +3,45 @@
 // AnnotationPersistence - load/save the v2 envelope to disk.
 //
 // Persistence is deliberately implemented without a vscode dependency so it
-// can be security-tested with the native file system. Configured paths are
-// workspace-relative, physically confined, and committed through a same-
-// directory temporary file so a failed save never truncates the last good
-// annotations file.
+// can be security-tested with the native file system. A configured path is
+// either workspace-relative - confined to the workspace root - or an explicit
+// absolute/home-relative path whose own parent directory becomes the
+// confinement boundary (issue #101). Either way the target is physically
+// confined and committed through a same-directory temporary file so a failed
+// save never truncates the last good annotations file.
 
 import { randomUUID } from 'crypto';
 import { constants, promises as fs } from 'fs';
 import type { Stats } from 'fs';
 import type { FileHandle } from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import { TypedEventEmitter } from './internal/event-emitter';
 import { ANNOTATION_SCHEMA_VERSION, type AnnotationStoreFileV2 } from './types';
 
+/** File name used when a configured `annotation.path` names a directory. */
+export const DEFAULT_ANNOTATION_FILE_NAME = 'annotations.json';
+
 /** Default location relative to the workspace root. */
-export const DEFAULT_ANNOTATION_FILE_RELATIVE_PATH = '.out-of-code-insights/annotations.json';
+export const DEFAULT_ANNOTATION_FILE_RELATIVE_PATH = `.out-of-code-insights/${DEFAULT_ANNOTATION_FILE_NAME}`;
+
+/**
+ * Expand a leading `~` to the current user's home directory.
+ *
+ * Only a bare `~` or a `~` followed by a separator is expanded: `~team/notes`
+ * stays a plain relative path, never another user's home. Everything else is
+ * returned untouched so the caller's relative and absolute branches keep
+ * their normal meaning.
+ */
+export function expandHomePath(candidate: string): string {
+    if (candidate === '~') {
+        return os.homedir();
+    }
+    if (candidate.startsWith('~/') || candidate.startsWith('~\\')) {
+        return path.join(os.homedir(), candidate.slice(2));
+    }
+    return candidate;
+}
 
 /**
  * Structural shape used by AnnotationPersistence - matches
@@ -143,29 +167,35 @@ export class AnnotationPersistence {
 
     constructor(
         workspaceFolder: PersistenceWorkspaceFolder,
-        relativePath: string = DEFAULT_ANNOTATION_FILE_RELATIVE_PATH,
+        customPath: string = DEFAULT_ANNOTATION_FILE_RELATIVE_PATH,
         ioOverrides: Partial<AnnotationPersistenceIo> = {}
     ) {
         if (!workspaceFolder.uri.fsPath) {
             throw new Error('AnnotationPersistence: workspace path must not be empty');
         }
-        if (!relativePath) {
-            throw new Error('AnnotationPersistence: relative path must not be empty');
-        }
-        if (path.isAbsolute(relativePath)) {
-            throw new Error(`AnnotationPersistence: relative path must not be absolute (got ${relativePath})`);
-        }
-        const segments = relativePath.split(/[\\/]/);
-        if (segments.includes('..')) {
-            throw new Error(
-                `AnnotationPersistence: relative path must not contain '..' segments (got ${relativePath})`
-            );
+        const candidate = expandHomePath(customPath.trim());
+        if (!candidate) {
+            throw new Error('AnnotationPersistence: path must not be empty');
         }
 
-        this.workspaceRoot = path.resolve(workspaceFolder.uri.fsPath);
-        this.absolutePath = path.resolve(this.workspaceRoot, relativePath);
-        if (!isInsideNativePath(this.workspaceRoot, this.absolutePath) || this.absolutePath === this.workspaceRoot) {
-            throw new Error(`AnnotationPersistence: relative path escapes the workspace (got ${relativePath})`);
+        if (path.isAbsolute(candidate)) {
+            this.absolutePath = path.resolve(candidate);
+            this.workspaceRoot = path.dirname(this.absolutePath);
+        } else {
+            const segments = candidate.split(/[\\/]/);
+            if (segments.includes('..')) {
+                throw new Error(
+                    `AnnotationPersistence: relative path must not contain '..' segments (got ${customPath})`
+                );
+            }
+            this.workspaceRoot = path.resolve(workspaceFolder.uri.fsPath);
+            this.absolutePath = path.resolve(this.workspaceRoot, candidate);
+            if (
+                !isInsideNativePath(this.workspaceRoot, this.absolutePath) ||
+                this.absolutePath === this.workspaceRoot
+            ) {
+                throw new Error(`AnnotationPersistence: relative path escapes the workspace (got ${customPath})`);
+            }
         }
         this.io = { ...NODE_IO, ...ioOverrides };
     }

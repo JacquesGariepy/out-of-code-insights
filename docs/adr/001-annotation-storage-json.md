@@ -29,8 +29,11 @@ Key constraints:
 Annotations are stored in a JSON array at
 `<workspace>/.out-of-code-insights/annotations.json`.
 
-The path is configurable via the `annotation.path` VS Code setting. Custom
-paths are validated to prevent traversal outside the workspace root.
+The path is configurable via the `annotation.path` VS Code setting. A
+workspace-relative value is validated to prevent traversal outside the
+workspace root. An explicit absolute or `~`-prefixed value is accepted and
+confined to its own parent directory instead, so annotations can be kept in a
+personal, cloud-synced folder outside the repository (issue #101).
 
 When no workspace folder is open, persistence is a no-op; annotations
 accumulate in memory and are discarded when the window closes.

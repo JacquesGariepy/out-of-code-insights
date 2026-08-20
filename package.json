@@ -1729,7 +1729,7 @@
                 "annotation.path": {
                     "type": "string",
                     "default": ".out-of-code-insights/annotations.json",
-                    "description": "Custom path to the annotations file or directory. If a directory is given, an annotations.json file will be created inside it."
+                    "description": "Custom path to the annotations file or directory. Accepts a workspace-relative path (confined to the workspace root), a home-relative path such as ~/Cloud/project/annotations.json, or an explicit absolute path so annotations can live outside the repository and be synchronized across machines. If a directory is given, an annotations.json file is created inside it."
                 },
                 "annotation.defaultSeverity": {
                     "type": "string",

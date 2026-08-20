@@ -58,10 +58,12 @@ Annotations are persisted as a JSON array in
 }
 ```
 
-The path is configurable via `annotation.path` (absolute, relative to the
-workspace, or pointing directly at a `.json` file). The path resolver enforces
-that relative custom paths cannot escape the workspace root (path-traversal
-guard). See [ADR-001](./adr/001-annotation-storage-json.md) for the rationale
+The path is configurable via `annotation.path` (workspace-relative, home-relative
+via `~`, absolute, or pointing directly at a `.json` file). The resolver enforces
+that a workspace-relative value cannot escape the workspace root (path-traversal
+guard), while an explicit absolute or `~` value is honoured as-is and confined to
+its own parent directory instead - that is what lets personal notes live in a
+synced folder outside the repository (issue #101). See [ADR-001](./adr/001-annotation-storage-json.md) for the rationale
 behind file-based storage.
 
 `AnnotationManager.loadAnnotations()` and `saveAnnotations()` are the only

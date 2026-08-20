@@ -7,6 +7,7 @@ import {
     AnnotationPersistence,
     AnnotationPersistenceError,
     DEFAULT_ANNOTATION_FILE_RELATIVE_PATH,
+    expandHomePath,
     type AnnotationPersistenceIo,
     type PersistenceWorkspaceFolder,
 } from '../AnnotationPersistence';
@@ -108,15 +109,53 @@ suite('AnnotationPersistence — path resolution', () => {
         assert.strictEqual(persistence.getPath(), path.join(ws.uri.fsPath, DEFAULT_ANNOTATION_FILE_RELATIVE_PATH));
     });
 
-    test('rejects an absolute relative path', async () => {
+    test('accepts an explicit absolute path outside the workspace', async () => {
         const ws = await makeWorkspaceAsync();
-        assert.throws(() => new AnnotationPersistence(ws, '/etc/passwd'), /must not be absolute/);
+        const external = await makeExternalDirectory();
+        const absolutePath = path.join(external, 'custom-annotations.json');
+        const persistence = new AnnotationPersistence(ws, absolutePath);
+        assert.strictEqual(persistence.getPath(), absolutePath);
+    });
+
+    test('supports tilde (~) expansion for home directory', async () => {
+        const ws = await makeWorkspaceAsync();
+        const tildePath = '~/custom-notes/annotations.json';
+        const expected = path.join(os.homedir(), 'custom-notes', 'annotations.json');
+        const persistence = new AnnotationPersistence(ws, tildePath);
+        assert.strictEqual(persistence.getPath(), expected);
     });
 
     test("rejects a relative path with '..' segments", async () => {
         const ws = await makeWorkspaceAsync();
         assert.throws(() => new AnnotationPersistence(ws, '../../etc/passwd'), /must not contain '\.\.'/);
         assert.throws(() => new AnnotationPersistence(ws, 'safe/../../etc/passwd'), /must not contain '\.\.'/);
+    });
+
+    test('rejects an empty or blank path', async () => {
+        const ws = await makeWorkspaceAsync();
+        assert.throws(() => new AnnotationPersistence(ws, ''), /must not be empty/);
+        assert.throws(() => new AnnotationPersistence(ws, '   '), /must not be empty/);
+    });
+});
+
+suite('expandHomePath', () => {
+    test('expands a bare tilde and a tilde followed by a separator', () => {
+        assert.strictEqual(expandHomePath('~'), os.homedir());
+        assert.strictEqual(expandHomePath('~/Cloud/project.json'), path.join(os.homedir(), 'Cloud', 'project.json'));
+        assert.strictEqual(expandHomePath('~\\Cloud'), path.join(os.homedir(), 'Cloud'));
+    });
+
+    test('leaves every other value untouched', () => {
+        // `~name` is another user's home on some shells but not in Node; it
+        // must stay a plain relative segment so the caller's confinement
+        // rules still apply to it.
+        assert.strictEqual(expandHomePath('~team/notes.json'), '~team/notes.json');
+        assert.strictEqual(
+            expandHomePath('.out-of-code-insights/annotations.json'),
+            '.out-of-code-insights/annotations.json'
+        );
+        assert.strictEqual(expandHomePath('notes/~/annotations.json'), 'notes/~/annotations.json');
+        assert.strictEqual(expandHomePath(''), '');
     });
 });
 
@@ -139,6 +178,30 @@ suite('AnnotationPersistence — physical workspace confinement', () => {
                 /symbolic link|junction|reparse point/i
             );
             assert.strictEqual(await fs.readFile(externalTarget, 'utf8'), sentinel);
+            await assertNoAtomicTemporaryFiles(target);
+        } finally {
+            await removeLink(target);
+        }
+    });
+
+    test('refuses a hostile link at an explicit absolute target outside the workspace', async () => {
+        const ws = await makeWorkspaceAsync();
+        const external = await makeExternalDirectory();
+        const victim = await makeExternalDirectory();
+        const target = path.join(external, 'annotations.json');
+        const victimTarget = path.join(victim, 'victim.json');
+        const sentinel = JSON.stringify({ outside: 'absolute target sentinel' });
+        await fs.writeFile(victimTarget, sentinel, 'utf8');
+        await createHostileFileLink(victimTarget, target);
+        const persistence = new AnnotationPersistence(ws, target);
+
+        try {
+            await assert.rejects(persistence.load(), /symbolic link|junction|reparse point/i);
+            await assert.rejects(
+                persistence.save({ schemaVersion: ANNOTATION_SCHEMA_VERSION, annotations: [] }),
+                /symbolic link|junction|reparse point/i
+            );
+            assert.strictEqual(await fs.readFile(victimTarget, 'utf8'), sentinel);
             await assertNoAtomicTemporaryFiles(target);
         } finally {
             await removeLink(target);
@@ -244,6 +307,21 @@ suite('AnnotationPersistence — save', () => {
         await persistence.save(original);
         const reloaded = await persistence.load();
         assert.deepStrictEqual(reloaded, original);
+    });
+
+    test('round-trip in an external directory outside the workspace', async () => {
+        const ws = await makeWorkspaceAsync();
+        const external = await makeExternalDirectory();
+        const externalPath = path.join(external, 'synced', 'annotations.json');
+        const persistence = new AnnotationPersistence(ws, externalPath);
+        const original: AnnotationStoreFileV2 = {
+            schemaVersion: ANNOTATION_SCHEMA_VERSION,
+            annotations: [sampleAnnotation('ext-1'), sampleAnnotation('ext-2', 'external note')],
+        };
+        await persistence.save(original);
+        const reloaded = await persistence.load();
+        assert.deepStrictEqual(reloaded, original);
+        assert.strictEqual(persistence.getPath(), externalPath);
     });
 
     test('a partial temporary write failure preserves the last good file and removes the temporary', async () => {

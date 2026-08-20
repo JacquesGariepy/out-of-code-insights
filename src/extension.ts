@@ -27,7 +27,12 @@ import { initializeLogger, getLogger } from './utils/logger';
 
 // ── Lot 5 R2 — new transactional stack ─────────────────────────────────────
 import { AnnotationStore } from './transactional/AnnotationStore';
-import { AnnotationPersistence, DEFAULT_ANNOTATION_FILE_RELATIVE_PATH } from './transactional/AnnotationPersistence';
+import {
+    AnnotationPersistence,
+    DEFAULT_ANNOTATION_FILE_NAME,
+    DEFAULT_ANNOTATION_FILE_RELATIVE_PATH,
+    expandHomePath,
+} from './transactional/AnnotationPersistence';
 import { rehomeAnnotationsPayload } from './transactional/AnnotationRehoming';
 import { AnnotationSaveCoordinator } from './transactional/AnnotationSaveCoordinator';
 import { AnnotationWriteFingerprintTracker } from './transactional/AnnotationWriteFingerprint';
@@ -165,11 +170,24 @@ const DOCS_WATCH_DEBOUNCE_MS = 2000;
 let docsWatchDenialNotified = false;
 
 // `annotations.importCommentsWorkspace` scan bounds.
-/** Include glob: every comment syntax the scanner knows how to read. */
+/**
+ * Include glob: every file name the line scanner can classify. Adding an entry
+ * here requires `languageOfPath` to map it and `commentScanner`'s
+ * LINE_COMMENT_PREFIXES to know its line-comment prefix - otherwise the file is
+ * scanned with the default `//`/`#` prefixes and imports nothing. Languages
+ * whose only comment form is a block (plain CSS) stay out: the scanner is
+ * line-based.
+ */
 const WORKSPACE_IMPORT_INCLUDE_GLOB =
-    '**/*.{ts,tsx,js,jsx,py,rb,go,rs,java,c,cpp,h,cs,sh,ps1,sql,lua,yaml,yml,toml,html,vue,md}';
-/** Exclude glob: dependency, VCS and build-output folders. */
-const WORKSPACE_IMPORT_EXCLUDE_GLOB = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/coverage/**}';
+    '**/{*.ts,*.mts,*.cts,*.tsx,*.js,*.mjs,*.cjs,*.jsx,*.java,*.c,*.h,*.cc,*.cpp,*.cxx,*.hpp,*.cs,*.go,*.rs,*.swift,*.kt,*.kts,*.dart,*.php,*.py,*.rb,*.sh,*.bash,*.zsh,*.ps1,*.pl,*.r,*.yaml,*.yml,*.toml,*.sql,*.lua,*.hs,*.html,*.htm,*.xml,*.svg,*.md,*.markdown,*.vue,*.scss,*.clj,*.cljs,*.lisp,*.scm,*.ini,*.cfg,Dockerfile,Makefile}';
+/**
+ * Exclude glob: dependency, VCS and build-output folders. This must stay a
+ * glob rather than a post-filter - `findFiles` applies `maxResults` while it
+ * searches, so anything filtered afterwards would still consume the budget
+ * (one `node_modules` can exhaust it before a single source file is seen).
+ */
+const WORKSPACE_IMPORT_EXCLUDE_GLOB =
+    '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/coverage/**,**/.vscode-test/**}';
 /** Hard cap on the number of files visited per run. */
 const WORKSPACE_IMPORT_MAX_FILES = 2000;
 /** Files larger than this are skipped (likely generated/minified). */
@@ -898,21 +916,40 @@ function readCutRecoveryWindowMs(): number {
     return Math.min(600, Math.max(5, seconds)) * 1000;
 }
 
+/**
+ * Resolve `annotation.path` into the value handed to {@link AnnotationPersistence}.
+ *
+ * Two shapes are accepted (issue #101):
+ *  - workspace-relative - kept relative, must stay inside the workspace root,
+ *    `..` segments are refused before any resolution;
+ *  - explicit absolute or home-relative (`~/...`) - returned absolute and used
+ *    as-is, so personal notes can live in a synced folder outside the repo.
+ *    Physical confinement to that file's own parent directory is then enforced
+ *    by AnnotationPersistence.
+ *
+ * A value without a `.json` extension is treated as a directory and receives
+ * the default file name.
+ */
 function configuredAnnotationPath(workspaceFolder: vscode.WorkspaceFolder): string {
     const configured = vscode.workspace
         .getConfiguration('annotation')
         .get<string>('path', DEFAULT_ANNOTATION_FILE_RELATIVE_PATH)
         .trim();
-    let candidate = configured || DEFAULT_ANNOTATION_FILE_RELATIVE_PATH;
-    if (path.isAbsolute(candidate)) {
-        const relative = path.relative(workspaceFolder.uri.fsPath, candidate);
-        if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-            throw new Error(loc('annotationPathOutsideWorkspace', 'Annotation path must stay inside the workspace.'));
-        }
-        candidate = relative;
+    let candidate = expandHomePath(configured || DEFAULT_ANNOTATION_FILE_RELATIVE_PATH);
+    const absolute = path.isAbsolute(candidate);
+    if (!absolute && candidate.split(/[\\/]/).includes('..')) {
+        throw new Error(loc('annotationPathOutsideWorkspace', 'Annotation path must stay inside the workspace.'));
     }
     if (path.extname(candidate).toLowerCase() !== '.json') {
-        candidate = path.join(candidate, 'annotations.json');
+        candidate = path.join(candidate, DEFAULT_ANNOTATION_FILE_NAME);
+    }
+    if (absolute) {
+        return candidate;
+    }
+    const workspaceRoot = path.resolve(workspaceFolder.uri.fsPath);
+    const resolved = path.resolve(workspaceRoot, candidate);
+    if (!resolved.startsWith(workspaceRoot + path.sep)) {
+        throw new Error(loc('annotationPathOutsideWorkspace', 'Annotation path must stay inside the workspace.'));
     }
     return candidate;
 }
@@ -1163,10 +1200,9 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
     if (annotationPersistence && workspaceFolder) {
         const persistence = annotationPersistence;
         const watchedFolder = workspaceFolder;
-        const relativeAnnotationsPath = path
-            .relative(watchedFolder.uri.fsPath, persistence.getPath())
-            .split(path.sep)
-            .join('/');
+        const persistencePath = persistence.getPath();
+        const parentDir = path.dirname(persistencePath);
+        const fileName = path.basename(persistencePath);
         const externalReload = async (): Promise<void> => {
             if (!annotationStore) {
                 return;
@@ -1191,7 +1227,7 @@ async function bootstrapTransactionalStack(context: vscode.ExtensionContext, log
             }
         };
         const watcher = vscode.workspace.createFileSystemWatcher(
-            new vscode.RelativePattern(watchedFolder, relativeAnnotationsPath)
+            new vscode.RelativePattern(vscode.Uri.file(parentDir), fileName)
         );
         watcher.onDidChange(() => void externalReload());
         watcher.onDidCreate(() => void externalReload());

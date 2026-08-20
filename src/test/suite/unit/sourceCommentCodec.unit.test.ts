@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import * as assert from 'assert';
+import { createHash } from 'crypto';
 import {
     SOURCE_COMMENT_SAFE_INSERTION_LANGUAGE_IDS,
     canSafelyRemoveSourceComment,
@@ -1062,5 +1063,43 @@ suite('sourceCommentCodec — safe encoder', () => {
             () => encodeSourceComment('message', 'css', { annotationId: 'id', style: 'line' }),
             /does not support line comments/
         );
+    });
+});
+
+suite('sourceCommentCodec - digest parity with crypto', () => {
+    // The codec hashes without `crypto` so the file stays importable from a
+    // browser/webview context, but its digests are persisted inside
+    // deduplication tags: any drift from Node's SHA-256 would silently
+    // duplicate every previously imported comment.
+    const reference = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex');
+
+    const samples: readonly string[] = [
+        '',
+        'a',
+        'abc',
+        'x'.repeat(55),
+        'x'.repeat(56),
+        'x'.repeat(64),
+        'x'.repeat(4096),
+        'accents: \u00e9\u00e8\u00e0\u00fc\u00f6',
+        'CJK: \u65e5\u672c\u8a9e',
+        'astral pair: \ud83d\ude00',
+        'unpaired high surrogate: \ud83d',
+        'unpaired low surrogate: \udc00',
+        JSON.stringify({ uri: 'file:///a/b.ts', language: 'typescript', kind: 'line', occurrence: 0 }),
+    ];
+
+    test('annotation id fingerprints match crypto SHA-256 byte for byte', () => {
+        for (const sample of samples) {
+            assert.strictEqual(
+                sourceCommentAnnotationIdFingerprint(sample),
+                reference(sample).slice(0, 32),
+                `fingerprint drift for ${JSON.stringify(sample)}`
+            );
+        }
+    });
+
+    test('reproduces the published SHA-256 vector for "abc"', () => {
+        assert.strictEqual(sourceCommentAnnotationIdFingerprint('abc'), 'ba7816bf8f01cfea414140de5dae2223');
     });
 });

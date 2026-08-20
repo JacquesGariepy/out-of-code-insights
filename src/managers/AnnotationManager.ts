@@ -14,6 +14,11 @@ import { TemplateManager, AnnotationTemplate } from './TemplateManager';
 import { ReviewModeManager } from './ReviewModeManager';
 import { AnnotationNavigation } from '../transactional/AnnotationNavigation';
 import { SnippetManager, SnippetHistoryEntry } from './SnippetManager';
+import {
+    DEFAULT_ANNOTATION_FILE_NAME,
+    DEFAULT_ANNOTATION_FILE_RELATIVE_PATH,
+    expandHomePath,
+} from '../transactional/AnnotationPersistence';
 import { AnnotationStore } from '../transactional/AnnotationStore';
 import type { VisibilityFilter } from '../transactional/VisibilityFilter';
 import { AnnotationManagerErrorHandling } from './AnnotationManagerErrorHandling';
@@ -5641,24 +5646,33 @@ export class AnnotationManager extends EventEmitter {
         return false;
     }
 
+    /**
+     * Legacy (pre-v2) annotation file location, resolved from `annotation.path`
+     * with the same rules as the transactional stack: workspace-relative values
+     * stay confined to the first workspace root, while an explicit absolute or
+     * `~`-prefixed value is honoured as-is so notes can live in a synced folder
+     * outside the repository (issue #101).
+     */
     private getProjectAnnotationsPath(): string | null {
         // Read configuration from the 'annotation' block
         const config = vscode.workspace.getConfiguration('annotation');
-        let customPath = config.get<string>('path', '').trim();
+        let customPath = expandHomePath(config.get<string>('path', '').trim());
 
         let annotationFilePath: string;
         if (customPath) {
             // If a custom path is set via `annotation.path`, decide whether
             // it is absolute or relative to the workspace root.
             if (!path.isAbsolute(customPath)) {
+                if (customPath.split(/[\\/]/).includes('..')) {
+                    throw new Error(`Annotation path must stay inside workspace: ${customPath}`);
+                }
                 const workspaceFolders = vscode.workspace.workspaceFolders;
                 if (!workspaceFolders || workspaceFolders.length === 0) {
                     return null;
                 }
-                customPath = path.join(workspaceFolders[0].uri.fsPath, customPath);
-                const wsRoot = workspaceFolders[0].uri.fsPath;
-                const resolved = path.resolve(customPath);
-                if (!resolved.startsWith(wsRoot + path.sep) && resolved !== wsRoot) {
+                const wsRoot = path.resolve(workspaceFolders[0].uri.fsPath);
+                const resolved = path.resolve(wsRoot, customPath);
+                if (!resolved.startsWith(wsRoot + path.sep)) {
                     throw new Error(`Annotation path is outside workspace: ${resolved}`);
                 }
                 customPath = resolved;
@@ -5669,7 +5683,7 @@ export class AnnotationManager extends EventEmitter {
             if (path.extname(customPath).toLowerCase() === '.json') {
                 annotationFilePath = customPath;
             } else {
-                annotationFilePath = path.join(customPath, 'annotations.json');
+                annotationFilePath = path.join(customPath, DEFAULT_ANNOTATION_FILE_NAME);
             }
         } else {
             // No custom config: use the first workspace folder.
@@ -5677,7 +5691,7 @@ export class AnnotationManager extends EventEmitter {
             if (!workspaceFolders || workspaceFolders.length === 0) {
                 return null;
             }
-            annotationFilePath = path.join(workspaceFolders[0].uri.fsPath, '.out-of-code-insights', 'annotations.json');
+            annotationFilePath = path.join(workspaceFolders[0].uri.fsPath, DEFAULT_ANNOTATION_FILE_RELATIVE_PATH);
         }
 
         return annotationFilePath;

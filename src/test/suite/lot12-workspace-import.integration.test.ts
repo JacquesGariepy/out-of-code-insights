@@ -66,9 +66,17 @@ function lineStartOffset(source: string, line: number): number {
 async function clearAllAnnotationsViaCommand(): Promise<void> {
     const original = vscode.window.showWarningMessage;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (vscode.window as any).showWarningMessage = async () => 'Yes';
+    (vscode.window as any).showWarningMessage = async (_msg: string, ...items: any[]) => items[0];
     try {
         await vscode.commands.executeCommand('annotations.clearAll');
+        const ext = findExtension();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (ext && ext.exports && typeof (ext.exports as any).__flushAnnotationPersistenceForTest === 'function') {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (ext.exports as any).__flushAnnotationPersistenceForTest();
+        } else {
+            await delay(800);
+        }
     } catch {
         /* best-effort */
     } finally {
@@ -83,7 +91,14 @@ async function runWorkspaceImport(): Promise<void> {
     (vscode.window as any).showInformationMessage = async () => undefined;
     try {
         await vscode.commands.executeCommand('annotations.importCommentsWorkspace');
-        await delay(800);
+        const ext = findExtension();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (ext && ext.exports && typeof (ext.exports as any).__flushAnnotationPersistenceForTest === 'function') {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (ext.exports as any).__flushAnnotationPersistenceForTest();
+        } else {
+            await delay(800);
+        }
     } finally {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (vscode.window as any).showInformationMessage = original;
@@ -125,6 +140,13 @@ suite('Lot 12 — workspace-wide comment import', () => {
         const sourceB = 'def beta():\n' + '    # FIXME broken rounding\n' + '    return 2  # plain comment\n';
         await vscode.workspace.fs.writeFile(uriA, Buffer.from(sourceA, 'utf8'));
         await vscode.workspace.fs.writeFile(uriB, Buffer.from(sourceB, 'utf8'));
+        await delay(500);
+
+        // `findFiles` honours the workspace `files.exclude`; a local settings
+        // file that hides these fixtures would otherwise turn every assertion
+        // below into an unexplained "0 !== 2".
+        const visible = await vscode.workspace.findFiles('{lot12-a.ts,lot12-b.py}', null, 10);
+        assert.strictEqual(visible.length, 2, 'both import fixtures must be visible to workspace search');
 
         await runWorkspaceImport();
 
