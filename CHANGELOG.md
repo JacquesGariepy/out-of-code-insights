@@ -7,6 +7,21 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.4.7] - 2026-08-20
+
+See the [detailed 1.4.7 release notes](./docs/CHANGELOG-1.4.7.md).
+
+### Added
+
+- Support for explicit absolute and home-relative (`~`) paths in `annotation.path` setting: developers can now store annotations outside the repository (e.g. `~/Cloud/<project>/annotations.json` or an external synced folder) to synchronize personal notes across multiple machines without committing them to version control ([#101](https://github.com/JacquesGariepy/out-of-code-insights/issues/101)).
+- External file system watcher automatically hot-reloads annotations when updated by cloud synchronization tools outside the workspace folder.
+- Workspace comment import covers many more languages: Swift, Kotlin, Dart, PHP, Perl, R, Haskell, Clojure/ClojureScript, Lisp, Scheme, SCSS, XML/SVG, INI, `Dockerfile`, `Makefile`, plus the `.mjs`/`.cjs`/`.mts`/`.cts`, `.cc`/`.cxx`/`.hpp`, `.bash`/`.zsh` and `.htm`/`.markdown` variants. The marker scanner learned the matching line-comment prefixes (`#` for `bash`/`zsh`, `;` for the Lisp family, `;`/`#` for INI).
+
+### Fixed
+
+- Workspace comment import no longer loses its file budget to dependency folders: the dependency/VCS/build-output filter is applied by the search engine again instead of after the fact, so `node_modules` can no longer consume the 2000-file scan cap before a single source file is seen.
+- Deduplication digests for imported source comments are byte-identical to Node's SHA-256 for every input, including unpaired surrogates, so re-importing a file cannot duplicate previously imported comments.
+
 ## [1.4.6] - 2026-08-18
 
 See the [detailed 1.4.6 release notes](./docs/CHANGELOG-1.4.6.md).
