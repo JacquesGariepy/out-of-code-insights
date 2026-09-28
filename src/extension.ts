@@ -17,6 +17,7 @@ import {
 } from './tree/AnnotationsTree';
 import { NavigationStackDataProvider } from './tree/NavigationStackTree';
 import { KANBAN_HIDDEN_COLUMN_ID, KanbanView } from './views/KanbanView';
+import { registerInsightsCommands } from './commands/insightsCommands';
 import { localize } from './common/localize';
 import { LocalizationManager, loc } from './managers/LocalizationManager';
 import { UserProfileManager } from './managers/UserProfileManager';
@@ -2522,6 +2523,8 @@ function registerStoreCommands(context: vscode.ExtensionContext): void {
             }
         })
     );
+
+    registerInsightsCommands(context, () => annotationStore);
 
     context.subscriptions.push(
         vscode.commands.registerCommand('annotations.showTrackingDiagnostics', async () => {

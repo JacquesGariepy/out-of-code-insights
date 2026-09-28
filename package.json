@@ -4,7 +4,7 @@
     "description": "Enhance your workflow with contextual annotations and collaborative comments stored outside the codebase, with AI integration and a dedicated chat participant.",
     "icon": "media/logo.png",
     "publisher": "jacquesgariepy",
-    "version": "1.4.7",
+    "version": "1.5.0",
     "license": "MPL-2.0",
     "author": {
         "name": "Jacques Gariépy",
@@ -101,6 +101,30 @@
                 "title": "Show Annotation Tracking Diagnostics",
                 "category": "Out-of-Code Insights",
                 "icon": "$(pulse)"
+            },
+            {
+                "command": "annotations.showStatistics",
+                "title": "Show Annotation Statistics Dashboard",
+                "category": "Out-of-Code Insights",
+                "icon": "$(graph)"
+            },
+            {
+                "command": "annotations.exportStatisticsCsv",
+                "title": "Export Annotations as CSV",
+                "category": "Out-of-Code Insights",
+                "icon": "$(table)"
+            },
+            {
+                "command": "annotations.exportReport",
+                "title": "Export Annotation Report (Markdown or HTML)",
+                "category": "Out-of-Code Insights",
+                "icon": "$(file-text)"
+            },
+            {
+                "command": "annotations.importDiagnostics",
+                "title": "Import Diagnostics as Annotations",
+                "category": "Out-of-Code Insights",
+                "icon": "$(bug)"
             },
             {
                 "command": "annotations.bulkActions",
@@ -831,6 +855,18 @@
                 {
                     "command": "annotations.showTrackingDiagnostics",
                     "group": "3_diagnostics@1"
+                },
+                {
+                    "command": "annotations.showStatistics",
+                    "group": "4_insights@1"
+                },
+                {
+                    "command": "annotations.exportReport",
+                    "group": "4_insights@2"
+                },
+                {
+                    "command": "annotations.exportStatisticsCsv",
+                    "group": "4_insights@3"
                 }
             ],
             "outOfCodeInsightsEditOrganizeSubMenu": [
@@ -1072,6 +1108,10 @@
                 {
                     "command": "annotations.clearAll",
                     "group": "9_danger@1"
+                },
+                {
+                    "command": "annotations.importDiagnostics",
+                    "group": "1_import@5"
                 }
             ],
             "outOfCodeInsightsDocumentationSubMenu": [
@@ -1959,6 +1999,32 @@
                     "minimum": 0,
                     "description": "Number of days a successfully validated license keeps unlocking Pro features while the license server is unreachable."
                 },
+                "annotation.diagnostics.minSeverity": {
+                    "type": "string",
+                    "enum": [
+                        "error",
+                        "warning",
+                        "information",
+                        "hint"
+                    ],
+                    "default": "warning",
+                    "description": "Least severe diagnostic that \"Import Diagnostics as Annotations\" will convert. Default: warning (errors and warnings)."
+                },
+                "annotation.diagnostics.maxPerFile": {
+                    "type": "integer",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 1000,
+                    "description": "Maximum number of annotations created per file by one diagnostics import, most severe first."
+                },
+                "annotation.diagnostics.sourceTags": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    },
+                    "default": {},
+                    "description": "Extra tag to apply per diagnostic source, e.g. {\"eslint\": \"lint\", \"sonarlint\": \"security\"}. Overrides the built-in mapping (eslint/pylint: style, tsc: types, bandit/semgrep: security...)."
+                },
                 "annotation.pro.gatedFeatures": {
                     "type": "array",
                     "items": {
@@ -2093,7 +2159,7 @@
         "test": "node ./out/test/runTest.js",
         "coverage": "c8 --reporter=text --reporter=lcov npm test",
         "coverage:check": "c8 check-coverage --lines 15 --functions 15 --branches 10",
-        "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" \"out/transactional/__tests__/**/*.js\" --timeout 5000"
+        "test:unit": "mocha --ui tdd \"out/test/suite/unit/**/*.js\" \"out/anchoring/__tests__/**/*.js\" \"out/test/integration/**/*.js\" \"out/transactional/__tests__/**/*.js\" \"out/insights/__tests__/**/*.js\" --timeout 5000"
     },
     "overrides": {
         "serialize-javascript": "^7.0.5",

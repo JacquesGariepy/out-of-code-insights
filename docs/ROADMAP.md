@@ -33,7 +33,7 @@ tags, both already present.
 
 ---
 
-### 2. Annotations from VS Code diagnostics
+### 2. Annotations from VS Code diagnostics  -  *shipped in 1.5.0*
 
 **What**  -  Listen to the VS Code Diagnostics API (ESLint, TSLint,
 Pylint, SonarQube, the TypeScript compiler itself) and convert
@@ -75,7 +75,7 @@ profile lookup, command dispatch.
 
 ## v1.2  -  Production / collaboration (target: ~18h)
 
-### 4. Multi-format reports (PDF / Markdown / HTML)
+### 4. Multi-format reports (PDF / Markdown / HTML)  -  *Markdown and HTML shipped in 1.5.0*
 
 **What**  -  Export annotations as a structured report (PDF for
 audits, Markdown for issue trackers, HTML for sharing) with
@@ -95,7 +95,7 @@ store.
 
 ---
 
-### 5. Real-time statistics dashboard
+### 5. Real-time statistics dashboard  -  *shipped in 1.5.0*
 
 **What**  -  A dedicated webview displaying live metrics: total
 annotations, breakdown by severity / author / file, time-series
