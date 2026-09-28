@@ -11,6 +11,7 @@ import {
     dashboardFilterToAnnotationFilter,
     parseDashboardMessage,
     renderDashboardHtml,
+    shortPath,
     trendSvg,
 } from '../dashboardHtml';
 import { DIAGNOSTIC_IMPORT_TAG, draftsFromDiagnostics, tagForSource, tagSlug } from '../diagnosticImport';
@@ -270,6 +271,12 @@ suite('dashboardHtml', () => {
         });
         assert.ok(html.includes('No annotations yet.'));
         assert.ok(!html.includes('class="cards"'));
+    });
+
+    test('shortens file paths to their file name', () => {
+        assert.strictEqual(shortPath('a.ts'), 'a.ts');
+        assert.strictEqual(shortPath('src/managers/AnnotationManager.ts'), 'AnnotationManager.ts');
+        assert.strictEqual(shortPath('(none)'), '(none)');
     });
 
     test('trendSvg handles a single day and empty input', () => {

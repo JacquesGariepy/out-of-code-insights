@@ -94,8 +94,19 @@ export function parseDashboardMessage(
     return undefined;
 }
 
+/** Keep the informative end of a path: `src/managers/Store.ts` becomes `Store.ts` (full path stays in the tooltip). */
+export function shortPath(path: string): string {
+    const parts = path.split('/').filter(Boolean);
+    return parts.length === 0 ? path : parts[parts.length - 1];
+}
+
 /** Bar widths are emitted as classes (`w42`) because CSP forbids inline style attributes. */
-function barChart(entries: readonly CountEntry[], empty: string, widths: Set<number>): string {
+function barChart(
+    entries: readonly CountEntry[],
+    empty: string,
+    widths: Set<number>,
+    display: (key: string) => string = (key) => key
+): string {
     if (entries.length === 0) {
         return `<p class="muted">${escapeHtml(empty)}</p>`;
     }
@@ -104,7 +115,7 @@ function barChart(entries: readonly CountEntry[], empty: string, widths: Set<num
         .map((e) => {
             const width = max === 0 ? 0 : Math.max(2, Math.round((e.count / max) * 100));
             widths.add(width);
-            return `<li><span class="label" title="${escapeHtml(e.key)}">${escapeHtml(e.key)}</span><span class="track"><span class="fill w${width}"></span></span><span class="value">${e.count}</span></li>`;
+            return `<li><span class="label" title="${escapeHtml(e.key)}">${escapeHtml(display(e.key))}</span><span class="track"><span class="fill w${width}"></span></span><span class="value">${e.count}</span></li>`;
         })
         .join('')}</ul>`;
 }
@@ -149,7 +160,7 @@ export function renderDashboardHtml(
         [s.bySeverity, barChart(stats.bySeverity, s.empty, widths)],
         [s.byAuthor, barChart(stats.byAuthor, s.empty, widths)],
         [s.byTag, barChart(stats.byTag.slice(0, 10), s.empty, widths)],
-        [s.topFiles, barChart(stats.topFiles, s.empty, widths)],
+        [s.topFiles, barChart(stats.topFiles, s.empty, widths, shortPath)],
         [s.trend, trendSvg(stats.trend, s.trend)],
     ]
         .map(([heading, body]) => `<section><h2>${escapeHtml(heading)}</h2>${body}</section>`)
@@ -201,7 +212,7 @@ button:hover{background:var(--vscode-button-hoverBackground)}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(20rem,1fr));gap:1.25rem}
 section{border:1px solid var(--line);border-radius:6px;padding:.75rem 1rem}
 .bars{list-style:none;margin:0;padding:0}
-.bars li{display:grid;grid-template-columns:minmax(4rem,9rem) 1fr 2.5rem;gap:.5rem;align-items:center;margin:.25rem 0}
+.bars li{display:grid;grid-template-columns:minmax(4rem,11rem) 1fr 2.5rem;gap:.5rem;align-items:center;margin:.25rem 0}
 .label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .track{background:var(--line);border-radius:3px;height:.6rem;display:block}
 .fill{background:var(--accent);border-radius:3px;height:100%;display:block}
