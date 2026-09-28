@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0
 import * as assert from 'assert';
 import { renderHtmlReport, renderMarkdownReport } from '../annotationReport';
 import {
