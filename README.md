@@ -33,8 +33,27 @@ when that is the workflow you want.
 | One workspace for discussion  | Threads, tags, severities, filters, pagination, review mode, and Kanban                                      |
 | Native VS Code experience     | Interactive Inlay Hints, gutter, CodeLens, Comments, Tree View, grouped menus, commands, and keyboard access |
 | Automation and AI             | MCP tools, generated documentation, comment import, sync, and optional multi-provider AI features            |
+| Insights and reporting        | Live statistics dashboard, Markdown/HTML reports, CSV export, and diagnostics imported as annotations        |
 
-## What is new in 1.4.5
+## What is new in 1.5.0
+
+- **Statistics dashboard.** Open a live panel with totals, open and resolved
+  counts, the resolution rate, breakdowns by severity, author and tag, the most
+  annotated files and a cumulative trend. Filter by severity and status; the
+  figures update as annotations change.
+- **Reports and CSV.** Export a Markdown or self-contained HTML report (summary
+  statistics plus the annotation list) for audits, retrospectives and issue
+  trackers, or a CSV file for spreadsheets.
+- **Diagnostics as annotations.** Turn the problems ESLint, TypeScript, Pylint,
+  SonarLint or any other language server already reports into annotations, in
+  one command. Imports are tagged, capped per file and never duplicated.
+
+See the [complete 1.5.0 release notes](./docs/CHANGELOG-1.5.0.md). The
+[1.4.7](./docs/CHANGELOG-1.4.7.md) and [1.4.6](./docs/CHANGELOG-1.4.6.md) notes
+cover annotation storage outside the workspace, the wider comment import and
+multi-root fixes.
+
+## What was new in 1.4.5
 
 - Annotations shared through Git or the sync server now resolve on every
   teammate's workstation: file references recorded on another machine are
@@ -105,6 +124,8 @@ run **Re-anchor Annotation to Current Cursor**. For troubleshooting, run
   and a companion [desktop application](https://github.com/JacquesGariepy/out-of-code-insights-desktop).
 - **Automate:** MCP server, AI-agent instructions, documentation generation,
   workspace comment import, and multi-provider AI profiles.
+- **Measure:** statistics dashboard, Markdown/HTML reports, CSV export, and
+  diagnostics imported as annotations.
 - **Recover:** automatic movement tracking, orphan preservation, manual
   re-anchoring, and privacy-preserving diagnostics.
 
@@ -191,6 +212,18 @@ Manage annotations visually with a dedicated Kanban board:
 - **Intelligent deletion**: Choose to remove from kanban or delete completely
 - **Custom columns**: Create workflow-specific columns for your team
 - **Quick navigation**: Double-click cards to jump to code location
+
+### 📊 Statistics, Reports and Diagnostics
+
+Measure the annotation backlog and share it outside the editor:
+
+- **Statistics dashboard** (**Show Annotation Statistics Dashboard**): total, open and resolved counts, resolution rate, breakdowns by severity, author and tag, the ten most annotated files and a cumulative trend line. Severity and status filters narrow every figure; the panel refreshes as annotations are added or resolved.
+- **Reports** (**Export Annotation Report**): choose Markdown or HTML, and all annotations or open ones only. The report starts with the summary statistics, then lists annotations with unresolved and most severe first. The HTML file is self-contained and follows the reader's light or dark mode.
+- **CSV export** (**Export Annotations as CSV**): one row per annotation for spreadsheets. Values a spreadsheet would run as formulas are neutralised.
+- **Import diagnostics** (**Import Diagnostics as Annotations**): converts the diagnostics currently reported for workspace files into annotations, most severe first. Each one is tagged `imported-diagnostic` plus a category (`style`, `types`, `security` or `quality`) and its source. Running the command again creates nothing new.
+- **Safe by default**: the dashboard runs under a strict Content-Security-Policy with no external scripts, and every annotation text is escaped in the dashboard and in reports.
+
+Find the dashboard and exports under **View & Search**, and the diagnostics import under **Import/Export & Tools**. See the [1.5.0 release notes](./docs/CHANGELOG-1.5.0.md) for details.
 
 ### ⚡ Executable Code Snippets
 
@@ -560,7 +593,7 @@ available by right-clicking a file in Explorer. Choose a built-in or
 workspace-owned JSON preset, then run **Generate Annotation Documentation**
 from the same menu. `Ctrl+Shift+P` remains an alternative for both commands.
 
-All 86 contributed commands are categorized under **Out-of-Code Insights** and
+All 90 contributed commands are categorized under **Out-of-Code Insights** and
 have a native menu home. The editor hub uses 11 task groups; tree rows use
 focused **Move & Re-anchor**, **State & Metadata**, **Links & Collaboration**
 and **Documentation** submenus; the tree `...` menu holds workspace tools; and
@@ -733,6 +766,15 @@ For the full command reference grouped by feature, see
 | `annotations.importCommentsWorkspace`        | Import Code Comments from Workspace            | -                  |
 | `annotations.convertCodeComments`            | Convert Code Comments & Headers to Annotations | -                  |
 | `annotations.writeAnnotationsToCodeComments` | Write Annotations into Code Comments           | -                  |
+
+### Insights
+
+| Command ID                        | Title                                       | Default keybinding |
+| --------------------------------- | ------------------------------------------- | ------------------ |
+| `annotations.showStatistics`      | Show Annotation Statistics Dashboard        | -                  |
+| `annotations.exportReport`        | Export Annotation Report (Markdown or HTML) | -                  |
+| `annotations.exportStatisticsCsv` | Export Annotations as CSV                   | -                  |
+| `annotations.importDiagnostics`   | Import Diagnostics as Annotations           | -                  |
 
 ### User profiles
 
@@ -979,6 +1021,7 @@ Customize the extension according to your needs by modifying the available setti
 - **Cut recovery window** (`annotation.cutRecoveryWindowSeconds`): Controls how long a cut annotation waits for a matching paste.
 - **External store watcher** (`annotation.watchExternalChanges`): Reloads annotations written by MCP or another process.
 - **Documentation watch** (`annotation.docs.watch`): Regenerates annotation documentation after changes.
+- **Diagnostics import**: `annotation.diagnostics.minSeverity` (least severe diagnostic imported, default `warning`), `annotation.diagnostics.maxPerFile` (cap per file, default `50`) and `annotation.diagnostics.sourceTags` (per-source tag overrides, e.g. `{"eslint": "lint"}`).
 - **Advanced settings**:
     - **Change detection delay** (`annotation.debounceDelay`)
     - **Maximum annotations per file** (`annotation.maxAnnotationsPerFile`)

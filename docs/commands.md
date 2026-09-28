@@ -1,6 +1,6 @@
 # Command and Menu Reference
 
-Out-of-Code Insights contributes 86 categorized commands. Every one has a
+Out-of-Code Insights contributes 90 categorized commands. Every one has a
 visible native menu home, so knowing a command ID or shortcut is optional.
 
 ## Start from the surface you are using
