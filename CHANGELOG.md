@@ -7,6 +7,17 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-09-28
+
+See the [detailed 1.5.0 release notes](./docs/CHANGELOG-1.5.0.md).
+
+### Added
+
+- **Statistics dashboard** (`annotations.showStatistics`): a live webview with totals, open/resolved counts, resolution rate, breakdowns by severity, author and tag, the most annotated files and a cumulative trend. Charts are inline SVG under a nonce-only Content-Security-Policy, filterable by severity and status, and refreshed as the annotation store changes.
+- **Annotation reports** (`annotations.exportReport`): export a structured Markdown or self-contained HTML report with summary statistics and the annotation list, for audits, retrospectives and issue trackers. Roadmap item #4 (PDF is not included).
+- **CSV export** (`annotations.exportStatisticsCsv`): RFC 4180 output with spreadsheet formula-injection protection.
+- **Import diagnostics as annotations** (`annotations.importDiagnostics`): converts diagnostics reported by ESLint, TypeScript, Pylint, SonarLint and any other language server into annotations, tagged `imported-diagnostic` plus a per-source tag (`style`, `types`, `security`, `quality`). Never duplicates an identical annotation and never touches files outside the workspace. New settings: `annotation.diagnostics.minSeverity`, `annotation.diagnostics.maxPerFile` and `annotation.diagnostics.sourceTags`. Roadmap item #2.
+
 ## [1.4.7] - 2026-08-20
 
 See the [detailed 1.4.7 release notes](./docs/CHANGELOG-1.4.7.md).

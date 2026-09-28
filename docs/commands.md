@@ -413,3 +413,15 @@ Tools** for logs. Common settings are repeated in the tree and Explorer hubs.
 | `annotations.showInitializationReport` | Show Initialization Report           | --                 |
 | `annotations.retryInitialization`      | Retry Extension Initialization       | --                 |
 | `annotations.showTrackingDiagnostics`  | Show Annotation Tracking Diagnostics | --                 |
+
+## Insights (1.5.0)
+
+Menu home: editor → **View & Search** for statistics and exports, editor →
+**Import/Export & Tools** for the diagnostics import.
+
+| Command ID                          | Title                                        | Default keybinding |
+| ----------------------------------- | -------------------------------------------- | ------------------ |
+| `annotations.showStatistics`        | Show Annotation Statistics Dashboard         | --                 |
+| `annotations.exportReport`          | Export Annotation Report (Markdown or HTML)  | --                 |
+| `annotations.exportStatisticsCsv`   | Export Annotations as CSV                    | --                 |
+| `annotations.importDiagnostics`     | Import Diagnostics as Annotations            | --                 |
