@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 import * as assert from 'assert';
-import { renderHtmlReport, renderMarkdownReport } from '../annotationReport';
+import { escapeMarkdownText, renderHtmlReport, renderMarkdownReport } from '../annotationReport';
 import {
     annotationsToCsv,
     computeStatistics,
@@ -149,6 +149,13 @@ suite('annotationReport', () => {
         assert.ok(!/<script/i.test(html));
     });
 
+    test('escapes backslashes and pipes so a cell cannot be broken out of', () => {
+        assert.strictEqual(escapeMarkdownText('a\\|b'), 'a\\\\\\|b');
+        const md = renderMarkdownReport([ann({ id: 'p', file: 'dir\\|x.ts' })]);
+        assert.ok(md.includes('| dir\\\\\\|x.ts | 1 |'));
+        assert.ok(!md.includes('| dir\\|x.ts'));
+    });
+
     test('caps detailed entries but keeps totals', () => {
         const many = Array.from({ length: 5 }, (_, i) => ann({ id: String(i), message: `m${i}` }));
         const md = renderMarkdownReport(many, { maxEntries: 2 });
@@ -245,8 +252,12 @@ suite('dashboardHtml', () => {
         const html = render();
         assert.ok(html.includes("default-src 'none'; style-src 'nonce-NONCE123'; script-src 'nonce-NONCE123';"));
         assert.ok(!/\sstyle="/.test(html), 'inline style attributes are blocked by the CSP');
-        assert.ok(!/\son[a-z]+=/i.test(html.replace(/<script[\s\S]*?<\/script>/g, '')), 'no inline event handlers');
-        assert.strictEqual((html.match(/<script/g) ?? []).length, 1);
+        const scriptStart = html.indexOf('<script');
+        const scriptEnd = html.indexOf('</script>');
+        assert.ok(scriptStart >= 0 && scriptEnd > scriptStart, 'exactly one nonce-guarded script block');
+        assert.strictEqual(html.indexOf('<script', scriptStart + 1), -1, 'a single script element');
+        const markup = html.slice(0, scriptStart) + html.slice(scriptEnd + '</script>'.length);
+        assert.ok(!/\son[a-z]+=/i.test(markup), 'no inline event handlers');
     });
 
     test('escapes annotation-derived text', () => {

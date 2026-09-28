@@ -52,6 +52,11 @@ function oneLine(text: string, max = 200): string {
     return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+/** Backslash-escape every Markdown metacharacter, backslash included, so text cannot break out of a cell or span. */
+export function escapeMarkdownText(value: string): string {
+    return value.replace(/[\\`*_{}[\]<>#|]/g, '\\$&');
+}
+
 function markdownTable(title: string, entries: readonly CountEntry[]): string[] {
     if (entries.length === 0) {
         return [];
@@ -61,7 +66,7 @@ function markdownTable(title: string, entries: readonly CountEntry[]): string[] 
         '',
         '| Name | Count |',
         '| --- | ---: |',
-        ...entries.map((e) => `| ${markdownCodeSpan(e.key).replace(/\|/g, '\\|')} | ${e.count} |`),
+        ...entries.map((e) => `| ${escapeMarkdownText(e.key)} | ${e.count} |`),
         '',
     ];
 }
@@ -97,7 +102,7 @@ export function renderMarkdownReport(items: readonly StatisticsInput[], options:
         const box = item.resolved ? '[x]' : '[ ]';
         const meta = [item.severity, item.author, item.timestamp.slice(0, 10)].filter(Boolean).join(' · ');
         out.push(`- ${box} ${markdownCodeSpan(item.file)}${meta ? ` (${meta})` : ''}`);
-        out.push(`  ${oneLine(item.message).replace(/([\\`*_{}[\]<>#|])/g, '\\$1')}`);
+        out.push(`  ${escapeMarkdownText(oneLine(item.message))}`);
     }
     if (detailed.length > shown.length) {
         out.push('', `_${detailed.length - shown.length} more annotation(s) omitted from this listing._`);
