@@ -76,3 +76,6 @@ test-fixtures/CLAUDE.md
 test-fixtures/AGENTS.md
 .jackaiagent/
 todo.md
+AGENTS.md
+CLAUDE.md
+.gitignore
