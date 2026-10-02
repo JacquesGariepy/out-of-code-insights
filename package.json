@@ -2169,7 +2169,7 @@
         "sockjs": {
             "uuid": "^11.1.1"
         },
-        "brace-expansion": "^1.1.18 || ^2.1.5 || ^5.0.10"
+        "brace-expansion": "^5.0.12 || ^2.1.5 || ^5.0.10"
     },
     "devDependencies": {
         "@types/diff": "^8.0.0",
