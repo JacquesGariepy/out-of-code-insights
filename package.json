@@ -2184,7 +2184,7 @@
         "@vscode/test-electron": "^2.5.2",
         "@vscode/vsce": "^3.9.2",
         "c8": "^11.0.0",
-        "concurrently": "^10.0.3",
+        "concurrently": "^10.0.6",
         "esbuild": "^0.28.1",
         "eslint": "^8.13.0",
         "eslint-config-prettier": "^10.1.8",
