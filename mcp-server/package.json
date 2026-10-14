@@ -16,7 +16,7 @@
         "start": "node bin/out-of-code-insights-mcp.js"
     },
     "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.17.0",
+        "@modelcontextprotocol/sdk": "^1.31.0",
         "diff": "^9.0.0",
         "zod": "^3.25.0"
     },
